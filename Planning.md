@@ -1,27 +1,38 @@
 # Split into primary services:
 
-API Edge: routes, auth? basic hosting and such happens here. Maybe login for the website.
+## API Edg
 
-MQTT Edge: Can also pass to same data intake.
+## MQTT Edge
+Can also pass to same data intake.
 
-Data intake: any data cleaning that is needed + saving in postgresql
+## Data intake:
 
-Database layer: for inserting data. Needs to handle various schemas and not be hard-coded.
+any data cleaning that is needed + saving in postgresql
 
-Initialization: allow us to define a config file for a water treatment system with all appropriate objects. Yaml?
+## Database layer:
 
-Alerts: Schedule alerts and send out email informations
+for inserting data. Needs to handle various schemas and not be hard-coded.
 
-Communications: Send emails, maybe SMS messages
+## Initialization:
+allow us to define a config file for a water treatment system with all appropriate objects. Yaml?
 
-Amazon layer:
+## Alerts:
+Schedule alerts and send out email informations
+Basic idea: place scheduled alert check on postgres, inspect it every so often, claim posesison, make alert
+
+
+## Communications
+Send emails, maybe SMS messages
+
+## Amazon layer:
  - Handle backups in S3 bucket
 
 Secrets in .env for now.
 
-System monitoring logs
+## System monitoring logs
 
-Database API
- - Basic queries
+## Database API
+ - Basic queries, ranged stuff
+ - 
  - Calculations
  - Hard stuff passed off to Python libraries
