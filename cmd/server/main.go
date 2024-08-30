@@ -6,7 +6,6 @@ import (
     "github.com/cbaguilar/svwatergo/config"
     "github.com/cbaguilar/svwatergo/pkg/server"
     "github.com/cbaguilar/svwatergo/internal/database"
-    "github.com/cbaguilar/svwatergo/internal/sensor"
 )
 
 func main() {
