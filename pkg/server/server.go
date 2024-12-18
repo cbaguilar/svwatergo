@@ -1,32 +1,32 @@
 package server
 
 import (
-    "net/http"
-    "log"
-    "github.com/cbaguilar/svwatergo/internal/api"
-    "github.com/cbaguilar/svwatergo/internal/sensor"
+	"log"
+
+	"github.com/cbaguilar/svwatergo/internal/api"
+	"github.com/cbaguilar/svwatergo/internal/sensor"
+	"github.com/gin-gonic/gin"
 )
 
 type Server struct {
-    config        *Config
-    sensorService sensor.Service
+	config        *Config
+	sensorService sensor.SensorService
 }
 
 type Config struct {
-    Port string
+	Port string
 }
 
-func New(cfg *Config, sensorService sensor.Service) *Server {
-    return &Server{
-        config:        cfg,
-        sensorService: sensorService,
-    }
+func New(cfg *Config) *Server {
+	return &Server{
+		config: cfg,
+	}
 }
 
 func (s *Server) Start() error {
-    mux := http.NewServeMux()
-    api.RegisterRoutes(mux, s.sensorService)
+	router := gin.Default()
+	api.SetupRouter(s.sensorService)
 
-    log.Printf("Server starting on port %s", s.config.Port)
-    return http.ListenAndServe(":"+s.config.Port, mux)
+	log.Printf("Server starting on port %s", s.config.Port)
+	return router.Run(":" + s.config.Port)
 }
