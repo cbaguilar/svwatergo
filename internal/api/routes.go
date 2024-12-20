@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(sensorService sensor.SensorService) *gin.Engine {
+func SetupRouter(sensorService sensor.DataIngestionService) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -19,7 +19,9 @@ func SetupRouter(sensorService sensor.SensorService) *gin.Engine {
 
 	// This is the v0 route, which we will re-implement for backwards compatibility
 	// with the old Javascript server.
-	r.POST("/uploadSensorDataNew", SaveSensorDataHandler)
+	r.POST("/uploadSensorDataNew", func(c *gin.Context) {
+		SaveSensorDataHandler(c, sensorService)
+	})
 
 	return r
 }

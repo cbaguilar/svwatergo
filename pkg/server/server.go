@@ -9,8 +9,8 @@ import (
 )
 
 type Server struct {
-	config        *Config
-	sensorService sensor.SensorService
+	config               *Config
+	dataIngestionService sensor.DataIngestionService
 }
 
 type Config struct {
@@ -25,7 +25,7 @@ func New(cfg *Config) *Server {
 
 func (s *Server) Start() error {
 	router := gin.Default()
-	api.SetupRouter(s.sensorService)
+	api.SetupRouter(s.dataIngestionService)
 
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)

@@ -7,6 +7,8 @@ package datamodels
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/cbaguilar/svwatergo/internal/sensor"
 )
 
 // PryorFarmSystemManager
@@ -133,6 +135,13 @@ type PryorFarmSystemState struct {
 	PowerMeter               int64   `json:"powerMeter"`
 	FlushDurET               string  `json:"flushDurET"`
 	ProductTds               float64 `json:"productTds"`
+}
+
+// Constructor for PryorFarmSystemManager
+
+func NewPryorFarmsSystemManager() sensor.SystemManager {
+	return &sensor.SystemManager{
+		
 }
 
 // Implement RemoteSystem interface for PryorFarmParsedPost

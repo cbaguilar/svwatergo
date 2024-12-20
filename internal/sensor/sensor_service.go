@@ -11,7 +11,7 @@ import (
 
 // SensorService describes the service for handling sensor data.
 
-type SystemManager interface {
+type SystemManager struct {
 	ParseAndNormalizeData(rawJson []byte) (datamodels.RemoteSystemState, error)
 	StoreData(data datamodels.RemoteSystemState) error
 	LoadDataAtTime(time time.Time) (datamodels.RemoteSystemState, error)
@@ -58,4 +58,14 @@ func (di *DataIngestionService) HandleData(rawJson []byte) error {
 		return fmt.Errorf("failed to store data: %w", storeErr)
 	}
 	return nil
+}
+
+// GetDataIngestionService creates a new DataIngestionService
+// with maps of systrem locations to their respective managers
+
+//default map of system locations to their respective managers
+
+func GetDataIngestionService() *DataIngestionService {
+	var managers = make(map[string]SystemManager)
+	managers["pryorfarms"] = NewPryorFarmsManager()
 }
