@@ -4,13 +4,11 @@ import (
 	"log"
 
 	"github.com/cbaguilar/svwatergo/internal/api"
-	"github.com/cbaguilar/svwatergo/internal/sensor"
 	"github.com/gin-gonic/gin"
 )
 
 type Server struct {
-	config               *Config
-	dataIngestionService sensor.DataIngestionService
+	config *Config
 }
 
 type Config struct {
@@ -25,7 +23,7 @@ func New(cfg *Config) *Server {
 
 func (s *Server) Start() error {
 	router := gin.Default()
-	api.SetupRouter(s.dataIngestionService)
+	api.SetupRouter()
 
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
