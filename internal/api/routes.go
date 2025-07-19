@@ -3,10 +3,11 @@ package api
 import (
 	"net/http"
 
+	systemservice "github.com/cbaguilar/svwatergo/internal/system_service"
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter() *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -19,7 +20,7 @@ func SetupRouter() *gin.Engine {
 	// This is the v0 route, which we will re-implement for backwards compatibility
 	// with the old Javascript server.
 	r.POST("/uploadSensorDataNew", func(c *gin.Context) {
-		SaveSensorDataHandler(c)
+		SaveSensorDataHandler(c, ingestion)
 	})
 
 	return r
