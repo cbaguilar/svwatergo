@@ -23,7 +23,7 @@ func New(cfg *Config) *Server {
 
 func (s *Server) Start() error {
 	router := gin.Default()
-	api.SetupRouter()
+	api.SetupRouter(router)
 
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)

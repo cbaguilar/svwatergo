@@ -35,5 +35,14 @@ func (s *DataIngestionService) Consume(rawData []byte) error {
 		return fmt.Errorf("no manager found for location: %s", location)
 	}
 
-	return manager.ConsumeData(rawData)
+	return manager.SaveData(rawData)
+}
+
+func DefaultIngestionService() *DataIngestionService {
+	defaultService = &DataIngestionService{
+		Managers: map[string]system_contract.SystemManager{
+			"bluerock": NewBluerockManager(),
+		},
+	}
+	return defaultService
 }

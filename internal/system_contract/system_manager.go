@@ -7,8 +7,9 @@ import (
 // Common interface for System Managers
 
 type SystemManager interface {
-	ConsumeData(rawData []byte) error
-	GetRange(start, end time.Time) ([]SystemState, error)
-	GetLatest() (SystemState, error)
-	ValidateState(state SystemState) error
+	SaveData(rawData []byte) error
+	// get range and return json serializable data
+	GetRange(start, end time.Time) ([]interface{}, error)
+	GetLatest() (map[string]interface{}, error)
+	ValidateState(state any) error
 }
