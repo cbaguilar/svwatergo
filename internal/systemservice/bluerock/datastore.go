@@ -8,6 +8,10 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/database"
 )
 
+const (
+	DefaultTableName = "bluerock_plc_data"
+)
+
 type BluerockDatastore interface {
 	SaveState(state *BluerockState) error
 	// GetRange now returns the concrete type, making the manager's job easier
@@ -20,10 +24,10 @@ type BluerockDBStore struct {
 	TableName string
 }
 
-func NewBluerockDBStore(client database.SQLXClient, tableName string) *BluerockDBStore {
+func NewBluerockDBStore(client database.SQLXClient) *BluerockDBStore {
 	return &BluerockDBStore{
 		Client:    client,
-		TableName: tableName,
+		TableName: DefaultTableName,
 	}
 }
 

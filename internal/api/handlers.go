@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	systemservice "github.com/cbaguilar/svwatergo/internal/system_service"
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/gin-gonic/gin"
 )
 

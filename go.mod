@@ -8,6 +8,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jmoiron/sqlx v1.4.0 // indirect
+	github.com/mattn/go-sqlite3 v1.14.32 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 )

@@ -4,13 +4,11 @@ package systemservice
 import (
 	"encoding/json"
 	"fmt"
-
-	"github.com/cbaguilar/svwatergo/internal/system_contract"
 )
 
 // Data ingestion type
 type DataIngestionService struct {
-	Managers map[string]system_contract.SystemManager
+	Managers map[string]SystemManager
 }
 
 func (s *DataIngestionService) Consume(rawData []byte) error {
@@ -36,13 +34,4 @@ func (s *DataIngestionService) Consume(rawData []byte) error {
 	}
 
 	return manager.SaveData(rawData)
-}
-
-func DefaultIngestionService() *DataIngestionService {
-	defaultService = &DataIngestionService{
-		Managers: map[string]system_contract.SystemManager{
-			"bluerock": NewBluerockManager(),
-		},
-	}
-	return defaultService
 }
