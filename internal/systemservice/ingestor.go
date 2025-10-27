@@ -4,6 +4,7 @@ package systemservice
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 )
 
 // Data ingestion type
@@ -28,10 +29,13 @@ func (s *DataIngestionService) Consume(rawData []byte) error {
 		return fmt.Errorf("invalid 'location' field type")
 	}
 
+	// This is where we route to the correct system manager
+	// logic is slightly different based on different locations
 	manager, exists := s.Managers[location]
 	if !exists {
 		return fmt.Errorf("no manager found for location: %s", location)
 	}
 
+	log.Printf("Routing data to manager for location: %s", location)
 	return manager.SaveData(rawData)
 }

@@ -32,13 +32,38 @@ func NewBluerockDBStore(client database.SQLXClient) *BluerockDBStore {
 }
 
 func (b *BluerockDBStore) SaveState(state *BluerockState) error {
-	// Minimal example; expand columns as needed (you can also use NamedExec)
-	const q = `
-		INSERT INTO %s (location, totalroflow, plctime, recordtime)
-		VALUES ($1, $2, $3, $4)
-	`
-	_, err := b.Client.DB.Exec(fmt.Sprintf(q, b.TableName),
-		state.Location, state.TotalROFlow, state.PLCTime, state.RecordTime)
+	q := fmt.Sprintf(`
+INSERT INTO %s (
+  location, totalroflow, totalfeedflow, totalrecycleflow, totaldelflow,
+  dumpproduct, wellpumprun, wellpumpauto, feedpumprun, ropumprun,
+  deliveryrun, deliveryauto, inletrun, concbypassrun, proddiversionrun,
+  plctime, permeateflow, deliveryflow, feedflow, concentrateflow,
+  recycleflow, feedtanklevel, dailypermflow, alarm, alarmword,
+  rostandby, state, lockout, runflush, warnword0, warnword1, totalhrs,
+  permtds, feedtds, permnitrate, permtemp, prodtanklevel, prodtankdisable,
+  prodtankdepth, feedtankdepth, residualtankdepth, inletpressure,
+  concentratepressure, permeatepressure, ropressure, deliverypressure,
+  feedpressure, recyclevalveposition, ropressctrlvalveposition,
+  ropumpspeed, powermeter, flushduret, producttds, chlorinepumprun,
+  residtankvalverun, residualtanklevel, recordtime, flushrun
+)
+VALUES (
+  :location, :totalroflow, :totalfeedflow, :totalrecycleflow, :totaldelflow,
+  :dumpproduct, :wellpumprun, :wellpumpauto, :feedpumprun, :ropumprun,
+  :deliveryrun, :deliveryauto, :inletrun, :concbypassrun, :proddiversionrun,
+  :plctime, :permeateflow, :deliveryflow, :feedflow, :concentrateflow,
+  :recycleflow, :feedtanklevel, :dailypermflow, :alarm, :alarmword,
+  :rostandby, :state, :lockout, :runflush, :warnword0, :warnword1, :totalhrs,
+  :permtds, :feedtds, :permnitrate, :permtemp, :prodtanklevel, :prodtankdisable,
+  :prodtankdepth, :feedtankdepth, :residualtankdepth, :inletpressure,
+  :concentratepressure, :permeatepressure, :ropressure, :deliverypressure,
+  :feedpressure, :recyclevalveposition, :ropressctrlvalveposition,
+  :ropumpspeed, :powermeter, :flushduret, :producttds, :chlorinepumprun,
+  :residtankvalverun, :residualtanklevel, :recordtime, :flushrun
+)
+`, b.TableName)
+
+	_, err := b.Client.DB.NamedExec(q, state)
 	return err
 }
 

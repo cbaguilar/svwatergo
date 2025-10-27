@@ -74,64 +74,64 @@ type RawBluerockState struct {
 }
 
 type BluerockState struct {
-	Location                 string    `json:"location"`
-	TotalROFlow              int64     `json:"totalroflow"`
-	TotalFeedFlow            int64     `json:"totalfeedflow"`
-	TotalRecycleFlow         int64     `json:"totalrecycleflow"`
-	TotalDelFlow             int64     `json:"totaldelflow"`
-	DumpProduct              bool      `json:"dumpproduct"`
-	WellPumpRun              bool      `json:"wellpumprun"`
-	WellPumpAuto             bool      `json:"wellpumpauto"`
-	FeedPumpRun              bool      `json:"feedpumprun"`
-	ROPumpRun                bool      `json:"ropumprun"`
-	DeliveryRun              bool      `json:"deliveryrun"`
-	DeliveryAuto             bool      `json:"deliveryauto"`
-	InletRun                 bool      `json:"inletrun"`
-	ConcBypassRun            bool      `json:"concbypassrun"`
-	ProdDiversionRun         bool      `json:"proddiversionrun"`
-	PLCTime                  time.Time `json:"plctime"`
-	PermeateFlow             int64     `json:"permeateflow"`
-	DeliveryFlow             int64     `json:"deliveryflow"`
-	FeedFlow                 float64   `json:"feedflow"`
-	ConcentrateFlow          float64   `json:"concentrateflow"`
-	RecycleFlow              int64     `json:"recycleflow"`
-	FeedTankLevel            float64   `json:"feedtanklevel"`
-	DailyPermFlow            float64   `json:"dailypermflow"`
-	Alarm                    bool      `json:"alarm"`
-	AlarmWord                int64     `json:"alarmword"`
-	ROStandby                bool      `json:"rostandby"`
-	State                    int64     `json:"state"`
-	Lockout                  bool      `json:"lockout"`
-	RunFlush                 bool      `json:"runflush"`
-	WarnWord0                int64     `json:"warnword0"`
-	WarnWord1                int64     `json:"warnword1"`
-	TotalHrs                 int64     `json:"totalhrs"`
-	PermTDS                  float64   `json:"permtds"`
-	FeedTDS                  float64   `json:"feedtds"`
-	PermNitrate              float64   `json:"permnitrate"`
-	PermTemp                 float64   `json:"permtemp"`
-	ProdTankLevel            float64   `json:"prodtanklevel"`
-	ProdTankDisable          bool      `json:"prodtankdisable"`
-	ProdTankDepth            float64   `json:"prodtankdepth"`
-	FeedTankDepth            float64   `json:"feedtankdepth"`
-	ResidualTankDepth        float64   `json:"residualtankdepth"`
-	InletPressure            float64   `json:"inletpressure"`
-	ConcentratePressure      float64   `json:"concentratepressure"`
-	PermeatePressure         float64   `json:"permeatepressure"`
-	ROPressure               float64   `json:"ropressure"`
-	DeliveryPressure         float64   `json:"deliverypressure"`
-	FeedPressure             float64   `json:"feedpressure"`
-	RecycleValvePosition     int64     `json:"recyclevalveposition"`
-	ROPressCtrlValvePosition int64     `json:"ropressctrlvalveposition"`
-	ROPumpSpeed              int64     `json:"ropumpspeed"`
-	PowerMeter               int64     `json:"powermeter"`
-	FlushDuret               int64     `json:"flushduret"`
-	ProductTDS               float64   `json:"producttds"`
-	ChlorinePumpRun          bool      `json:"chlorinepumprun"`
-	ResidTankValveRun        bool      `json:"residtankvalverun"`
-	ResidualTankLevel        float64   `json:"residualtanklevel"`
-	RecordTime               time.Time `json:"recordtime"`
-	FlushRun                 bool      `json:"flushrun"`
+	Location                 string    `json:"location" db:"location"`
+	TotalROFlow              int64     `json:"totalroflow" db:"totalroflow"`
+	TotalFeedFlow            int64     `json:"totalfeedflow" db:"totalfeedflow"`
+	TotalRecycleFlow         int64     `json:"totalrecycleflow" db:"totalrecycleflow"`
+	TotalDelFlow             int64     `json:"totaldelflow" db:"totaldelflow"`
+	DumpProduct              bool      `json:"dumpproduct" db:"dumpproduct"`
+	WellPumpRun              bool      `json:"wellpumprun" db:"wellpumprun"`
+	WellPumpAuto             bool      `json:"wellpumpauto" db:"wellpumpauto"`
+	FeedPumpRun              bool      `json:"feedpumprun" db:"feedpumprun"`
+	ROPumpRun                bool      `json:"ropumprun" db:"ropumprun"`
+	DeliveryRun              bool      `json:"deliveryrun" db:"deliveryrun"`
+	DeliveryAuto             bool      `json:"deliveryauto" db:"deliveryauto"`
+	InletRun                 bool      `json:"inletrun" db:"inletrun"`
+	ConcBypassRun            bool      `json:"concbypassrun" db:"concbypassrun"`
+	ProdDiversionRun         bool      `json:"proddiversionrun" db:"proddiversionrun"`
+	PLCTime                  time.Time `json:"plctime" db:"plctime"`
+	PermeateFlow             int64     `json:"permeateflow" db:"permeateflow"`
+	DeliveryFlow             int64     `json:"deliveryflow" db:"deliveryflow"`
+	FeedFlow                 float64   `json:"feedflow" db:"feedflow"`
+	ConcentrateFlow          float64   `json:"concentrateflow" db:"concentrateflow"`
+	RecycleFlow              int64     `json:"recycleflow" db:"recycleflow"`
+	FeedTankLevel            float64   `json:"feedtanklevel" db:"feedtanklevel"`
+	DailyPermFlow            float64   `json:"dailypermflow" db:"dailypermflow"`
+	Alarm                    bool      `json:"alarm" db:"alarm"`
+	AlarmWord                int64     `json:"alarmword" db:"alarmword"`
+	ROStandby                bool      `json:"rostandby" db:"rostandby"`
+	State                    int64     `json:"state" db:"state"`
+	Lockout                  bool      `json:"lockout" db:"lockout"`
+	RunFlush                 bool      `json:"runflush" db:"runflush"`
+	WarnWord0                int64     `json:"warnword0" db:"warnword0"`
+	WarnWord1                int64     `json:"warnword1" db:"warnword1"`
+	TotalHrs                 int64     `json:"totalhrs" db:"totalhrs"`
+	PermTDS                  float64   `json:"permtds" db:"permtds"`
+	FeedTDS                  float64   `json:"feedtds" db:"feedtds"`
+	PermNitrate              float64   `json:"permnitrate" db:"permnitrate"`
+	PermTemp                 float64   `json:"permtemp" db:"permtemp"`
+	ProdTankLevel            float64   `json:"prodtanklevel" db:"prodtanklevel"`
+	ProdTankDisable          bool      `json:"prodtankdisable" db:"prodtankdisable"`
+	ProdTankDepth            float64   `json:"prodtankdepth" db:"prodtankdepth"`
+	FeedTankDepth            float64   `json:"feedtankdepth" db:"feedtankdepth"`
+	ResidualTankDepth        float64   `json:"residualtankdepth" db:"residualtankdepth"`
+	InletPressure            float64   `json:"inletpressure" db:"inletpressure"`
+	ConcentratePressure      float64   `json:"concentratepressure" db:"concentratepressure"`
+	PermeatePressure         float64   `json:"permeatepressure" db:"permeatepressure"`
+	ROPressure               float64   `json:"ropressure" db:"ropressure"`
+	DeliveryPressure         float64   `json:"deliverypressure" db:"deliverypressure"`
+	FeedPressure             float64   `json:"feedpressure" db:"feedpressure"`
+	RecycleValvePosition     int64     `json:"recyclevalveposition" db:"recyclevalveposition"`
+	ROPressCtrlValvePosition int64     `json:"ropressctrlvalveposition" db:"ropressctrlvalveposition"`
+	ROPumpSpeed              int64     `json:"ropumpspeed" db:"ropumpspeed"`
+	PowerMeter               int64     `json:"powermeter" db:"powermeter"`
+	FlushDuret               int64     `json:"flushduret" db:"flushduret"`
+	ProductTDS               float64   `json:"producttds" db:"producttds"`
+	ChlorinePumpRun          bool      `json:"chlorinepumprun" db:"chlorinepumprun"`
+	ResidTankValveRun        bool      `json:"residtankvalverun" db:"residtankvalverun"`
+	ResidualTankLevel        float64   `json:"residualtanklevel" db:"residualtanklevel"`
+	RecordTime               time.Time `json:"recordtime" db:"recordtime"`
+	FlushRun                 bool      `json:"flushrun" db:"flushrun"`
 }
 
 func (b *BluerockState) ValidateState() error {

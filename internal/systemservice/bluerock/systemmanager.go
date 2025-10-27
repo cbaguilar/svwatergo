@@ -1,6 +1,7 @@
 package bluerock
 
 import (
+	"log"
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
@@ -13,7 +14,9 @@ type BluerockManager struct {
 }
 
 func NewBluerockManager(client database.SQLXClient) *BluerockManager {
+	log.Default().Println("Initializing BluerockManager with database client.")
 	ourDbstore := NewBluerockDBStore(client)
+	EnsureSchema(&client, ourDbstore.TableName)
 	return &BluerockManager{
 		DB: ourDbstore,
 	}
@@ -31,6 +34,7 @@ func (b *BluerockManager) GetLatest() (map[string]interface{}, error) {
 func (b *BluerockManager) SaveData(rawData []byte) error { //unmarshal rawData into raw
 
 	state, err := FromRawData(rawData)
+	log.Println("Saving Bluerock state:", state)
 	if err != nil {
 		return err
 	}

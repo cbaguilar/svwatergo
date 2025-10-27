@@ -9,16 +9,17 @@ import (
 )
 
 type SQLXClient struct {
-	DB *sqlx.DB
+	DB     *sqlx.DB
+	Driver string
 }
 
-func NewSQLXClient(conn string) (*SQLXClient, error) {
-	db, err := sqlx.Connect("postgres", conn)
+func NewSQLXClient(driver string, conn string) (*SQLXClient, error) {
+	db, err := sqlx.Connect(driver, conn)
 	if err != nil {
 		return nil, err
 	}
 	db.Exec("SET TIME ZONE 'UTC'")
-	return &SQLXClient{DB: db}, nil
+	return &SQLXClient{DB: db, Driver: driver}, nil
 }
 
 func NewSQLiteClient(path string) (*SQLXClient, error) {
@@ -39,5 +40,5 @@ func NewSQLiteClient(path string) (*SQLXClient, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	return &SQLXClient{DB: db}, nil
+	return &SQLXClient{DB: db, Driver: "sqlite3"}, nil
 }
