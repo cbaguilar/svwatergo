@@ -1,4 +1,4 @@
-package bluerock
+package pryorfarm
 
 import (
 	"encoding/json"
@@ -8,14 +8,15 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/util"
 )
 
-// RawBluerockState schema for raw ingestion data has the same fields as BluerockState
-// but all the data are strings
+// NOTE: For consistency with your Bluerock ingestion path, RawPryorFarmState uses string fields.
+// If a producer sends numeric/boolean JSON, keep your existing ingestion client sending strings,
+// or add a shim to coerce to strings before unmarshaling into this type.
 
-type RawBluerockState struct {
+type RawPryorFarmState struct {
 	Location                 string `json:"location"`
 	TotalROFlow              string `json:"totalroflow"`
-	TotalFeedFlow            string `json:"totalfeedflow"`
-	TotalRecycleFlow         string `json:"totalrecycleflow"`
+	TotalInletFlow           string `json:"totalinletflow"`
+	TotalConcFlow            string `json:"totalconcflow"`
 	TotalDelFlow             string `json:"totaldelflow"`
 	DumpProduct              string `json:"dumpproduct"`
 	WellPumpRun              string `json:"wellpumprun"`
@@ -25,16 +26,19 @@ type RawBluerockState struct {
 	DeliveryRun              string `json:"deliveryrun"`
 	DeliveryAuto             string `json:"deliveryauto"`
 	InletRun                 string `json:"inletrun"`
+	FlushRun                 string `json:"flushrun"`
 	ConcBypassRun            string `json:"concbypassrun"`
 	ProdDiversionRun         string `json:"proddiversionrun"`
+	FlushDiversionRun        string `json:"flushdiversionrun"`
 	PLCTime                  string `json:"plctime"`
 	PermeateFlow             string `json:"permeateflow"`
 	DeliveryFlow             string `json:"deliveryflow"`
-	FeedFlow                 string `json:"feedflow"`
+	InletFlow                string `json:"inletflow"`
 	ConcentrateFlow          string `json:"concentrateflow"`
 	RecycleFlow              string `json:"recycleflow"`
 	FeedTankLevel            string `json:"feedtanklevel"`
 	DailyPermFlow            string `json:"dailypermflow"`
+	DailyInletFlow           string `json:"dailyinletflow"`
 	Alarm                    string `json:"alarm"`
 	AlarmWord                string `json:"alarmword"`
 	ROStandby                string `json:"rostandby"`
@@ -52,7 +56,9 @@ type RawBluerockState struct {
 	ProdTankDisable          string `json:"prodtankdisable"`
 	ProdTankDepth            string `json:"prodtankdepth"`
 	FeedTankDepth            string `json:"feedtankdepth"`
-	ResidualTankDepth        string `json:"residualtankdepth"`
+	FlushTankLevel           string `json:"flushtanklevel"`
+	FlushTankDepth           string `json:"flushtankdepth"`
+	FlushTankFull            string `json:"flushtankfull"`
 	InletPressure            string `json:"inletpressure"`
 	ConcentratePressure      string `json:"concentratepressure"`
 	PermeatePressure         string `json:"permeatepressure"`
@@ -65,19 +71,13 @@ type RawBluerockState struct {
 	PowerMeter               string `json:"powermeter"`
 	FlushDuret               string `json:"flushduret"`
 	ProductTDS               string `json:"producttds"`
-	ChlorinePumpRun          string `json:"chlorinepumprun"`
-	ResidTankValveRun        string `json:"residtankvalverun"`
-	ResidualTankLevel        string `json:"residualtanklevel"`
-	SchemaVersion            string `json:"schema_version"`
-	Extras                   string `json:"extras"`
-	FlushRun                 string `json:"flushrun"`
 }
 
-type BluerockState struct {
+type PryorFarmState struct {
 	Location                 string    `json:"location" db:"location"`
 	TotalROFlow              int64     `json:"totalroflow" db:"totalroflow"`
-	TotalFeedFlow            int64     `json:"totalfeedflow" db:"totalfeedflow"`
-	TotalRecycleFlow         int64     `json:"totalrecycleflow" db:"totalrecycleflow"`
+	TotalInletFlow           int64     `json:"totalinletflow" db:"totalinletflow"`
+	TotalConcFlow            int64     `json:"totalconcflow" db:"totalconcflow"`
 	TotalDelFlow             int64     `json:"totaldelflow" db:"totaldelflow"`
 	DumpProduct              bool      `json:"dumpproduct" db:"dumpproduct"`
 	WellPumpRun              bool      `json:"wellpumprun" db:"wellpumprun"`
@@ -87,16 +87,19 @@ type BluerockState struct {
 	DeliveryRun              bool      `json:"deliveryrun" db:"deliveryrun"`
 	DeliveryAuto             bool      `json:"deliveryauto" db:"deliveryauto"`
 	InletRun                 bool      `json:"inletrun" db:"inletrun"`
+	FlushRun                 bool      `json:"flushrun" db:"flushrun"`
 	ConcBypassRun            bool      `json:"concbypassrun" db:"concbypassrun"`
 	ProdDiversionRun         bool      `json:"proddiversionrun" db:"proddiversionrun"`
+	FlushDiversionRun        bool      `json:"flushdiversionrun" db:"flushdiversionrun"`
 	PLCTime                  time.Time `json:"plctime" db:"plctime"`
 	PermeateFlow             float64   `json:"permeateflow" db:"permeateflow"`
 	DeliveryFlow             float64   `json:"deliveryflow" db:"deliveryflow"`
-	FeedFlow                 float64   `json:"feedflow" db:"feedflow"`
+	InletFlow                float64   `json:"inletflow" db:"inletflow"`
 	ConcentrateFlow          float64   `json:"concentrateflow" db:"concentrateflow"`
 	RecycleFlow              int64     `json:"recycleflow" db:"recycleflow"`
 	FeedTankLevel            float64   `json:"feedtanklevel" db:"feedtanklevel"`
 	DailyPermFlow            float64   `json:"dailypermflow" db:"dailypermflow"`
+	DailyInletFlow           float64   `json:"dailyinletflow" db:"dailyinletflow"`
 	Alarm                    bool      `json:"alarm" db:"alarm"`
 	AlarmWord                int64     `json:"alarmword" db:"alarmword"`
 	ROStandby                bool      `json:"rostandby" db:"rostandby"`
@@ -114,7 +117,9 @@ type BluerockState struct {
 	ProdTankDisable          bool      `json:"prodtankdisable" db:"prodtankdisable"`
 	ProdTankDepth            float64   `json:"prodtankdepth" db:"prodtankdepth"`
 	FeedTankDepth            float64   `json:"feedtankdepth" db:"feedtankdepth"`
-	ResidualTankDepth        float64   `json:"residualtankdepth" db:"residualtankdepth"`
+	FlushTankLevel           float64   `json:"flushtanklevel" db:"flushtanklevel"`
+	FlushTankDepth           float64   `json:"flushtankdepth" db:"flushtankdepth"`
+	FlushTankFull            bool      `json:"flushtankfull" db:"flushtankfull"`
 	InletPressure            float64   `json:"inletpressure" db:"inletpressure"`
 	ConcentratePressure      float64   `json:"concentratepressure" db:"concentratepressure"`
 	PermeatePressure         float64   `json:"permeatepressure" db:"permeatepressure"`
@@ -127,25 +132,17 @@ type BluerockState struct {
 	PowerMeter               int64     `json:"powermeter" db:"powermeter"`
 	FlushDuret               int64     `json:"flushduret" db:"flushduret"`
 	ProductTDS               float64   `json:"producttds" db:"producttds"`
-	ChlorinePumpRun          bool      `json:"chlorinepumprun" db:"chlorinepumprun"`
-	ResidTankValveRun        bool      `json:"residtankvalverun" db:"residtankvalverun"`
-	ResidualTankLevel        float64   `json:"residualtanklevel" db:"residualtanklevel"`
 	RecordTime               time.Time `json:"recordtime" db:"recordtime"`
-	FlushRun                 bool      `json:"flushrun" db:"flushrun"`
 }
 
-func (b *BluerockState) ValidateState() error {
-	// Validate the state
-	// TODO: Do rule-based checking for this
+func (s *PryorFarmState) ValidateState() error {
+	// TODO: add site-specific checks
 	return nil
 }
 
-func FromRawData(rawData []byte) (*BluerockState, error) {
-	var raw RawBluerockState
-	//unmarshal rawData into raw
-	err := json.Unmarshal(rawData, &raw)
-	fmt.Printf("Raw data unmarshalled: %+v\n", raw)
-	if err != nil {
+func FromRawData(rawData []byte) (*PryorFarmState, error) {
+	var raw RawPryorFarmState
+	if err := json.Unmarshal(rawData, &raw); err != nil {
 		return nil, err
 	}
 
@@ -154,12 +151,11 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 		return nil, fmt.Errorf("failed to parse time %s, %w ", raw.PLCTime, err)
 	}
 
-	//parse raw into parsed
-	parsed := BluerockState{
+	out := PryorFarmState{
 		Location:                 raw.Location,
 		TotalROFlow:              util.ParseStringToInt(raw.TotalROFlow),
-		TotalFeedFlow:            util.ParseStringToInt(raw.TotalFeedFlow),
-		TotalRecycleFlow:         util.ParseStringToInt(raw.TotalRecycleFlow),
+		TotalInletFlow:           util.ParseStringToInt(raw.TotalInletFlow),
+		TotalConcFlow:            util.ParseStringToInt(raw.TotalConcFlow),
 		TotalDelFlow:             util.ParseStringToInt(raw.TotalDelFlow),
 		DumpProduct:              util.ParseStringToBool(raw.DumpProduct),
 		WellPumpRun:              util.ParseStringToBool(raw.WellPumpRun),
@@ -169,16 +165,19 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 		DeliveryRun:              util.ParseStringToBool(raw.DeliveryRun),
 		DeliveryAuto:             util.ParseStringToBool(raw.DeliveryAuto),
 		InletRun:                 util.ParseStringToBool(raw.InletRun),
+		FlushRun:                 util.ParseStringToBool(raw.FlushRun),
 		ConcBypassRun:            util.ParseStringToBool(raw.ConcBypassRun),
 		ProdDiversionRun:         util.ParseStringToBool(raw.ProdDiversionRun),
+		FlushDiversionRun:        util.ParseStringToBool(raw.FlushDiversionRun),
 		PLCTime:                  parsedTime,
 		PermeateFlow:             util.ParseStringToFloat(raw.PermeateFlow),
 		DeliveryFlow:             util.ParseStringToFloat(raw.DeliveryFlow),
-		FeedFlow:                 util.ParseStringToFloat(raw.FeedFlow),
+		InletFlow:                util.ParseStringToFloat(raw.InletFlow),
 		ConcentrateFlow:          util.ParseStringToFloat(raw.ConcentrateFlow),
 		RecycleFlow:              util.ParseStringToInt(raw.RecycleFlow),
 		FeedTankLevel:            util.ParseStringToFloat(raw.FeedTankLevel),
 		DailyPermFlow:            util.ParseStringToFloat(raw.DailyPermFlow),
+		DailyInletFlow:           util.ParseStringToFloat(raw.DailyInletFlow),
 		Alarm:                    util.ParseStringToBool(raw.Alarm),
 		AlarmWord:                util.ParseStringToInt(raw.AlarmWord),
 		ROStandby:                util.ParseStringToBool(raw.ROStandby),
@@ -196,7 +195,9 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 		ProdTankDisable:          util.ParseStringToBool(raw.ProdTankDisable),
 		ProdTankDepth:            util.ParseStringToFloat(raw.ProdTankDepth),
 		FeedTankDepth:            util.ParseStringToFloat(raw.FeedTankDepth),
-		ResidualTankDepth:        util.ParseStringToFloat(raw.ResidualTankDepth),
+		FlushTankLevel:           util.ParseStringToFloat(raw.FlushTankLevel),
+		FlushTankDepth:           util.ParseStringToFloat(raw.FlushTankDepth),
+		FlushTankFull:            util.ParseStringToBool(raw.FlushTankFull),
 		InletPressure:            util.ParseStringToFloat(raw.InletPressure),
 		ConcentratePressure:      util.ParseStringToFloat(raw.ConcentratePressure),
 		PermeatePressure:         util.ParseStringToFloat(raw.PermeatePressure),
@@ -209,11 +210,7 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 		PowerMeter:               util.ParseStringToInt(raw.PowerMeter),
 		FlushDuret:               util.ParseStringToInt(raw.FlushDuret),
 		ProductTDS:               util.ParseStringToFloat(raw.ProductTDS),
-		ChlorinePumpRun:          util.ParseStringToBool(raw.ChlorinePumpRun),
-		ResidTankValveRun:        util.ParseStringToBool(raw.ResidTankValveRun),
-		ResidualTankLevel:        util.ParseStringToFloat(raw.ResidualTankLevel),
-		RecordTime:               time.Now(),
-		FlushRun:                 util.ParseStringToBool(raw.FlushRun),
+		RecordTime:               time.Now().UTC(),
 	}
-	return &parsed, nil
+	return &out, nil
 }
