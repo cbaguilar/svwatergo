@@ -77,11 +77,8 @@ func (b *BluerockDBStore) GetLatest() (BluerockState, error) {
 }
 
 func (b *BluerockDBStore) GetRange(start, end time.Time) ([]BluerockState, error) {
-	q := fmt.Sprintf(`
-		SELECT * FROM %s
-		WHERE recordtime BETWEEN $1 AND $2
-		ORDER BY recordtime ASC
-	`, b.TableName)
+	q := fmt.Sprintf(`SELECT * FROM %s WHERE recordtime BETWEEN ? AND ? ORDER BY recordtime ASC`, b.TableName)
+	q = b.Client.DB.Rebind(q)
 	var out []BluerockState
 	if err := b.Client.DB.Select(&out, q, start, end); err != nil {
 		return nil, err

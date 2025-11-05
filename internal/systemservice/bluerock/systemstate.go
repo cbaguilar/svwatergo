@@ -2,6 +2,7 @@ package bluerock
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/util"
@@ -150,8 +151,7 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 
 	parsedTime, err := util.ParsePlcTime(raw.PLCTime)
 	if err != nil {
-		print("Error parsing time")
-		return nil, err
+		return nil, fmt.Errorf("failed to parse time %s, %w ", raw.PLCTime, err)
 	}
 
 	//parse raw into parsed

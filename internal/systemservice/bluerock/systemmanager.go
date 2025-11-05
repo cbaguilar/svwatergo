@@ -1,6 +1,8 @@
 package bluerock
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -28,7 +30,22 @@ func (b *BluerockManager) GetLatestBluerock() BluerockState {
 }
 
 func (b *BluerockManager) GetLatest() (map[string]interface{}, error) {
-	return nil, nil
+	latest, err := b.DB.GetLatest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest Bluerock state: %w", err)
+	}
+	// convert latest to json
+	result := make(map[string]interface{})
+	result["location"] = latest.Location
+	jsonified, err := json.Marshal(latest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal latest Bluerock state: %w", err)
+	}
+	err = json.Unmarshal(jsonified, &result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal latest Bluerock state: %w", err)
+	}
+	return result, nil
 }
 
 func (b *BluerockManager) SaveData(rawData []byte) error { //unmarshal rawData into raw

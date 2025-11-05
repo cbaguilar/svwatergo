@@ -42,3 +42,18 @@ func NewSQLiteClient(path string) (*SQLXClient, error) {
 	}
 	return &SQLXClient{DB: db, Driver: "sqlite3"}, nil
 }
+
+func NewPostgresClient(conn string) (*SQLXClient, error) {
+	db, err := sqlx.Open("postgres", conn)
+	if err != nil {
+		return nil, err
+	}
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+	return &SQLXClient{DB: db, Driver: "postgres"}, nil
+}
