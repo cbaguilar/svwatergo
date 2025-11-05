@@ -36,7 +36,7 @@ func (s *Server) Start() error {
 
 	digestionService := systemservice.DataIngestionService{
 		Managers: map[string]systemservice.SystemManager{
-			"bluerock": bluerock.NewBluerockManager(*sqliteDb),
+			"Bluerock": bluerock.NewBluerockManager(*sqliteDb),
 		},
 	}
 

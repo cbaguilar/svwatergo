@@ -19,7 +19,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService) *gin.Engine {
 
 	// This is the v0 route, which we will re-implement for backwards compatibility
 	// with the old Javascript server.
-	r.POST("/uploadDataNew", SaveSensorDataHandler(ingestion))
+	r.POST("/UploadDataNew", SaveSensorDataHandler(ingestion))
 
 	return r
 }
