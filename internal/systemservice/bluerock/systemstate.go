@@ -145,7 +145,7 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 	var raw RawBluerockState
 	//unmarshal rawData into raw
 	err := json.Unmarshal(rawData, &raw)
-	logger.info("Raw data unmarshalled: %+v", raw)
+	fmt.Printf("Raw data unmarshalled: %+v\n", raw)
 	if err != nil {
 		return nil, err
 	}
