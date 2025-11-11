@@ -36,7 +36,7 @@ type RawBluerockState struct {
 	FeedTankLevel            string `json:"feedtanklevel"`
 	DailyPermFlow            string `json:"dailypermflow"`
 	Alarm                    string `json:"alarm"`
-	AlarmWord                string `json:"alarmword"`
+	AlarmWord                string `json:"alarmWord"`
 	ROStandby                string `json:"rostandby"`
 	State                    string `json:"state"`
 	Lockout                  string `json:"lockout"`
