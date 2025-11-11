@@ -44,7 +44,7 @@ func (s *Server) Start() error {
 		},
 	}
 
-	router := api.SetupRouter(&digestionService)
+	router := api.SetupRouter(&digestionService, digestionService.Managers)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }
