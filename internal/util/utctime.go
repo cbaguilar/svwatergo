@@ -11,17 +11,26 @@ import (
 
 type UTCTime struct{ time.Time }
 
-var timeLayouts = append([]string{
-	time.RFC3339Nano, time.RFC3339,
-},
-	// your noZoneLayouts:
+// Known layouts (zoned and non-zoned), including "space + zone" variants.
+var timeLayouts = []string{
+	// RFC3339 family (with 'T')
+	time.RFC3339Nano, // 2006-01-02T15:04:05.999999999Z07:00
+	time.RFC3339,     // 2006-01-02T15:04:05Z07:00
+
+	// Space + zone (what you're seeing from SQLite rows)
+	"2006-01-02 15:04:05Z07:00",
+	"2006-01-02 15:04:05.999Z07:00",
+	"2006-01-02 15:04:05.999999Z07:00",
+	"2006-01-02 15:04:05.999999999Z07:00",
+
+	// Space, no zone
 	"2006-01-02-15:04:05.999999999",
 	"2006-01-02-15:04:05.999",
 	"2006-01-02-15:04:05",
 	"2006-01-02 15:04:05.999999999",
 	"2006-01-02 15:04:05.999",
 	"2006-01-02 15:04:05",
-)
+}
 
 func parseAnyUTC(s string) (time.Time, error) {
 	s = strings.TrimSpace(s) // ✅ simplest and cleanest
