@@ -4,7 +4,10 @@ Utility functions that are used by the datamodels package.
 package util
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +26,6 @@ func ParseStringToFloat(s string) float64 {
 	v, _ := strconv.ParseFloat(s, 64)
 	return v
 }
-
 
 var zonedLayouts = []string{
 	time.RFC3339Nano, // 2006-01-02T15:04:05.999999999Z07:00
@@ -59,3 +61,40 @@ func ParsePlcTime(s string) (time.Time, error) {
 	return time.Time{}, errors.New("unsupported time format: " + s)
 }
 
+// UnmarshalCaseInsensitive lowers all JSON keys before decoding into v.
+// v should use lowercase json tags (e.g., json:"totalroflow").
+func UnmarshalCaseInsensitive(data []byte, v any, aliases map[string][]string) error {
+	// 1) decode into a generic map
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+
+	// 2) normalize keys to lowercase
+	lc := make(map[string]any, len(m))
+	for k, val := range m {
+		lc[strings.ToLower(k)] = val
+	}
+
+	// 3) apply alias mapping (e.g., "dailyinletflow" <= ["dailyinletFlow","DailyInletFlow"])
+	for canonical, alts := range aliases {
+		if _, ok := lc[canonical]; ok {
+			continue
+		}
+		for _, a := range alts {
+			if v, ok := lc[strings.ToLower(a)]; ok {
+				lc[canonical] = v
+				break
+			}
+		}
+	}
+
+	// 4) re-encode and unmarshal into the strongly-typed struct
+	buf, err := json.Marshal(lc)
+	if err != nil {
+		return fmt.Errorf("re-marshal: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(buf))
+	dec.UseNumber() // optional: preserve number precision
+	return dec.Decode(v)
+}
