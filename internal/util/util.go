@@ -98,3 +98,29 @@ func UnmarshalCaseInsensitive(data []byte, v any, aliases map[string][]string) e
 	dec.UseNumber() // optional: preserve number precision
 	return dec.Decode(v)
 }
+
+func StructToMap(v any) (map[string]any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	m := make(map[string]any)
+	if err := dec.Decode(&m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func StructsToMaps[T any](items []T) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		m, err := StructToMap(it)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}

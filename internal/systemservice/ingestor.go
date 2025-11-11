@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // Data ingestion type
@@ -24,14 +25,15 @@ func (s *DataIngestionService) Consume(rawData []byte) error {
 		return fmt.Errorf("missing 'location' field")
 	}
 
-	location, ok := locationRaw.(string)
+	location, ok := strings.ToLower(locationRaw.(string)
+	key := strings.ToLower(strings.TrimSpace(location))
 	if !ok {
 		return fmt.Errorf("invalid 'location' field type")
 	}
 
 	// This is where we route to the correct system manager
 	// logic is slightly different based on different locations
-	manager, exists := s.Managers[location]
+	manager, exists := s.Managers[key]
 	if !exists {
 		return fmt.Errorf("no manager found for location: %s", location)
 	}

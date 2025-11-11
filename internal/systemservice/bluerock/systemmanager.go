@@ -1,12 +1,12 @@
 package bluerock
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/util"
 )
 
 //systemmanager.go
@@ -34,18 +34,11 @@ func (b *BluerockManager) GetLatest() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest Bluerock state: %w", err)
 	}
-	// convert latest to json
-	result := make(map[string]interface{})
-	result["location"] = latest.Location
-	jsonified, err := json.Marshal(latest)
+	m, err := util.StructToMap(latest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal latest Bluerock state: %w", err)
+		return nil, fmt.Errorf("StructToMap failed: %w", err)
 	}
-	err = json.Unmarshal(jsonified, &result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal latest Bluerock state: %w", err)
-	}
-	return result, nil
+	return m, nil
 }
 
 func (b *BluerockManager) SaveData(rawData []byte) error { //unmarshal rawData into raw

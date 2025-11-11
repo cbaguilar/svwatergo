@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/util"
 )
 
 // (same surface as BluerockManager so it plugs straight into DataIngestionService).
@@ -34,20 +35,8 @@ func (m *PryorFarmManager) GetLatest() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest PryorFarm state: %w", err)
 	}
-
-	// convert to generic JSON-serializable map (same trick as Bluerock)
-	out := make(map[string]interface{})
-	out["location"] = latest.Location
-	b, err := json.Marshal(latest)
-	if err != nil {
-		return nil, fmt.Errorf("marshal latest: %w", err)
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, fmt.Errorf("unmarshal latest to map: %w", err)
-	}
-	return out, nil
+	return util.StructToMap(latest)
 }
-
 func (m *PryorFarmManager) SaveData(rawData []byte) error {
 	state, err := FromRawData(rawData)
 	log.Println("Saving PryorFarm state:", state)
