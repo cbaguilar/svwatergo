@@ -73,6 +73,7 @@ type RawBluerockState struct {
 }
 
 type BluerockState struct {
+	ID                       *int64    `json:"id,omitempty" db:"id"` // <— NEW, optional
 	Location                 string    `json:"location" db:"location"`
 	TotalROFlow              int64     `json:"totalroflow" db:"totalroflow"`
 	TotalFeedFlow            int64     `json:"totalfeedflow" db:"totalfeedflow"`

@@ -71,6 +71,7 @@ type RawPryorFarmState struct {
 }
 
 type PryorFarmState struct {
+	ID                       *int64    `json:"id,omitempty" db:"id"` // <— NEW, optional
 	Location                 string    `json:"location" db:"location"`
 	TotalROFlow              int64     `json:"totalroflow" db:"totalroflow"`
 	TotalInletFlow           int64     `json:"totalinletflow" db:"totalinletflow"`
