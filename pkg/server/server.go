@@ -36,18 +36,16 @@ func (s *Server) Start() error {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	reg := systemservice.NewRegistry(map[string]systemservice.SystemManager
-	{
-		"bluerock":    bluerock.NewBluerockManager(sqliteDb),
-		"pryorfarm":   pryorfarm.NewPryorFarmManager(sqliteDb),
-		"santateresa": santateresa.NewSantaTeresaManager(sqliteDb),
-	})
+	reg := systemservice.NewRegistry(map[string]systemservice.SystemManager{
+		"bluerock":    bluerock.NewBluerockManager(*sqliteDb),
+		"pryorfarm":   pryorfarm.NewPryorFarmManager(*sqliteDb),
+		"santateresa": santateresa.NewSantaTeresaManager(*sqliteDb)})
 
-	ing :=  &systemservice.DataIngestionService{
-		Registry: reg,
-	}	
+	ing := &systemservice.DataIngestionService{
+		Reg: reg,
+	}
 
-	router := api.SetupRouter(ing, digestionService.Managers)
+	router := api.SetupRouter(ing, ing.Reg)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }

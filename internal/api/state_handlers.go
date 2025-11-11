@@ -18,14 +18,14 @@ func NewStateAPI(reg systemservice.Registry) *StateAPI {
 	return &StateAPI{Reg: reg}
 }
 
-func parseSite(c *gin.Context) (string, systemservice.SystemManager, bool) {
+func (a *StateAPI) parseSite(c *gin.Context) (string, systemservice.SystemManager, bool) {
 	site := strings.ToLower(c.Param("site"))
-	mgr, ok := =a.Reg.Get(site)
+	mgr, ok := a.Reg.Get(site)
 	return site, mgr, ok
 }
 
 func (a *StateAPI) GetLatest(c *gin.Context) {
-	site, mgr, ok := parseSite(c)
+	site, mgr, ok := a.parseSite(c)
 	if !ok {
 		c.JSON(http.StatusNotFound, errJSON("NotFound", "unknown site", gin.H{"site": site}))
 		return
@@ -53,7 +53,7 @@ func (a *StateAPI) GetLatest(c *gin.Context) {
 }
 
 func (a *StateAPI) GetRange(c *gin.Context) {
-	site, mgr, ok := parseSite(c)
+	site, mgr, ok := a.parseSite(c)
 	if !ok {
 		c.JSON(http.StatusNotFound, errJSON("NotFound", "unknown site", gin.H{"site": site}))
 		return
