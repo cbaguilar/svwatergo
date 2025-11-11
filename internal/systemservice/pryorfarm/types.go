@@ -71,66 +71,66 @@ type RawPryorFarmState struct {
 }
 
 type PryorFarmState struct {
-	ID                       *int64    `json:"id,omitempty" db:"id"` // <— NEW, optional
-	Location                 string    `json:"location" db:"location"`
-	TotalROFlow              int64     `json:"totalroflow" db:"totalroflow"`
-	TotalInletFlow           int64     `json:"totalinletflow" db:"totalinletflow"`
-	TotalConcFlow            int64     `json:"totalconcflow" db:"totalconcflow"`
-	TotalDelFlow             int64     `json:"totaldelflow" db:"totaldelflow"`
-	DumpProduct              bool      `json:"dumpproduct" db:"dumpproduct"`
-	WellPumpRun              bool      `json:"wellpumprun" db:"wellpumprun"`
-	WellPumpAuto             bool      `json:"wellpumpauto" db:"wellpumpauto"`
-	FeedPumpRun              bool      `json:"feedpumprun" db:"feedpumprun"`
-	ROPumpRun                bool      `json:"ropumprun" db:"ropumprun"`
-	DeliveryRun              bool      `json:"deliveryrun" db:"deliveryrun"`
-	DeliveryAuto             bool      `json:"deliveryauto" db:"deliveryauto"`
-	InletRun                 bool      `json:"inletrun" db:"inletrun"`
-	FlushRun                 bool      `json:"flushrun" db:"flushrun"`
-	ConcBypassRun            bool      `json:"concbypassrun" db:"concbypassrun"`
-	ProdDiversionRun         bool      `json:"proddiversionrun" db:"proddiversionrun"`
-	FlushDiversionRun        bool      `json:"flushdiversionrun" db:"flushdiversionrun"`
-	PLCTime                  time.Time `json:"plctime" db:"plctime"`
-	PermeateFlow             float64   `json:"permeateflow" db:"permeateflow"`
-	DeliveryFlow             float64   `json:"deliveryflow" db:"deliveryflow"`
-	InletFlow                float64   `json:"inletflow" db:"inletflow"`
-	ConcentrateFlow          float64   `json:"concentrateflow" db:"concentrateflow"`
-	RecycleFlow              int64     `json:"recycleflow" db:"recycleflow"`
-	FeedTankLevel            float64   `json:"feedtanklevel" db:"feedtanklevel"`
-	DailyPermFlow            float64   `json:"dailypermflow" db:"dailypermflow"`
-	DailyInletFlow           float64   `json:"dailyinletflow" db:"dailyinletflow"`
-	Alarm                    bool      `json:"alarm" db:"alarm"`
-	AlarmWord                int64     `json:"alarmword" db:"alarmword"`
-	ROStandby                bool      `json:"rostandby" db:"rostandby"`
-	State                    int64     `json:"state" db:"state"`
-	Lockout                  bool      `json:"lockout" db:"lockout"`
-	RunFlush                 bool      `json:"runflush" db:"runflush"`
-	WarnWord0                int64     `json:"warnword0" db:"warnword0"`
-	WarnWord1                int64     `json:"warnword1" db:"warnword1"`
-	TotalHrs                 int64     `json:"totalhrs" db:"totalhrs"`
-	PermTDS                  float64   `json:"permtds" db:"permtds"`
-	FeedTDS                  float64   `json:"feedtds" db:"feedtds"`
-	PermNitrate              float64   `json:"permnitrate" db:"permnitrate"`
-	PermTemp                 float64   `json:"permtemp" db:"permtemp"`
-	ProdTankLevel            float64   `json:"prodtanklevel" db:"prodtanklevel"`
-	ProdTankDisable          bool      `json:"prodtankdisable" db:"prodtankdisable"`
-	ProdTankDepth            float64   `json:"prodtankdepth" db:"prodtankdepth"`
-	FeedTankDepth            float64   `json:"feedtankdepth" db:"feedtankdepth"`
-	FlushTankLevel           float64   `json:"flushtanklevel" db:"flushtanklevel"`
-	FlushTankDepth           float64   `json:"flushtankdepth" db:"flushtankdepth"`
-	FlushTankFull            bool      `json:"flushtankfull" db:"flushtankfull"`
-	InletPressure            float64   `json:"inletpressure" db:"inletpressure"`
-	ConcentratePressure      float64   `json:"concentratepressure" db:"concentratepressure"`
-	PermeatePressure         float64   `json:"permeatepressure" db:"permeatepressure"`
-	ROPressure               float64   `json:"ropressure" db:"ropressure"`
-	DeliveryPressure         float64   `json:"deliverypressure" db:"deliverypressure"`
-	FeedPressure             float64   `json:"feedpressure" db:"feedpressure"`
-	RecycleValvePosition     int64     `json:"recyclevalveposition" db:"recyclevalveposition"`
-	ROPressCtrlValvePosition int64     `json:"ropressctrlvalveposition" db:"ropressctrlvalveposition"`
-	ROPumpSpeed              int64     `json:"ropumpspeed" db:"ropumpspeed"`
-	PowerMeter               int64     `json:"powermeter" db:"powermeter"`
-	FlushDuret               int64     `json:"flushduret" db:"flushduret"`
-	ProductTDS               float64   `json:"producttds" db:"producttds"`
-	RecordTime               time.Time `json:"recordtime" db:"recordtime"`
+	ID                       *int64       `json:"id,omitempty" db:"id"` // <— NEW, optional
+	Location                 string       `json:"location" db:"location"`
+	TotalROFlow              int64        `json:"totalroflow" db:"totalroflow"`
+	TotalInletFlow           int64        `json:"totalinletflow" db:"totalinletflow"`
+	TotalConcFlow            int64        `json:"totalconcflow" db:"totalconcflow"`
+	TotalDelFlow             int64        `json:"totaldelflow" db:"totaldelflow"`
+	DumpProduct              bool         `json:"dumpproduct" db:"dumpproduct"`
+	WellPumpRun              bool         `json:"wellpumprun" db:"wellpumprun"`
+	WellPumpAuto             bool         `json:"wellpumpauto" db:"wellpumpauto"`
+	FeedPumpRun              bool         `json:"feedpumprun" db:"feedpumprun"`
+	ROPumpRun                bool         `json:"ropumprun" db:"ropumprun"`
+	DeliveryRun              bool         `json:"deliveryrun" db:"deliveryrun"`
+	DeliveryAuto             bool         `json:"deliveryauto" db:"deliveryauto"`
+	InletRun                 bool         `json:"inletrun" db:"inletrun"`
+	FlushRun                 bool         `json:"flushrun" db:"flushrun"`
+	ConcBypassRun            bool         `json:"concbypassrun" db:"concbypassrun"`
+	ProdDiversionRun         bool         `json:"proddiversionrun" db:"proddiversionrun"`
+	FlushDiversionRun        bool         `json:"flushdiversionrun" db:"flushdiversionrun"`
+	PLCTime                  util.UTCTime `json:"plctime" db:"plctime"`
+	PermeateFlow             float64      `json:"permeateflow" db:"permeateflow"`
+	DeliveryFlow             float64      `json:"deliveryflow" db:"deliveryflow"`
+	InletFlow                float64      `json:"inletflow" db:"inletflow"`
+	ConcentrateFlow          float64      `json:"concentrateflow" db:"concentrateflow"`
+	RecycleFlow              int64        `json:"recycleflow" db:"recycleflow"`
+	FeedTankLevel            float64      `json:"feedtanklevel" db:"feedtanklevel"`
+	DailyPermFlow            float64      `json:"dailypermflow" db:"dailypermflow"`
+	DailyInletFlow           float64      `json:"dailyinletflow" db:"dailyinletflow"`
+	Alarm                    bool         `json:"alarm" db:"alarm"`
+	AlarmWord                int64        `json:"alarmword" db:"alarmword"`
+	ROStandby                bool         `json:"rostandby" db:"rostandby"`
+	State                    int64        `json:"state" db:"state"`
+	Lockout                  bool         `json:"lockout" db:"lockout"`
+	RunFlush                 bool         `json:"runflush" db:"runflush"`
+	WarnWord0                int64        `json:"warnword0" db:"warnword0"`
+	WarnWord1                int64        `json:"warnword1" db:"warnword1"`
+	TotalHrs                 int64        `json:"totalhrs" db:"totalhrs"`
+	PermTDS                  float64      `json:"permtds" db:"permtds"`
+	FeedTDS                  float64      `json:"feedtds" db:"feedtds"`
+	PermNitrate              float64      `json:"permnitrate" db:"permnitrate"`
+	PermTemp                 float64      `json:"permtemp" db:"permtemp"`
+	ProdTankLevel            float64      `json:"prodtanklevel" db:"prodtanklevel"`
+	ProdTankDisable          bool         `json:"prodtankdisable" db:"prodtankdisable"`
+	ProdTankDepth            float64      `json:"prodtankdepth" db:"prodtankdepth"`
+	FeedTankDepth            float64      `json:"feedtankdepth" db:"feedtankdepth"`
+	FlushTankLevel           float64      `json:"flushtanklevel" db:"flushtanklevel"`
+	FlushTankDepth           float64      `json:"flushtankdepth" db:"flushtankdepth"`
+	FlushTankFull            bool         `json:"flushtankfull" db:"flushtankfull"`
+	InletPressure            float64      `json:"inletpressure" db:"inletpressure"`
+	ConcentratePressure      float64      `json:"concentratepressure" db:"concentratepressure"`
+	PermeatePressure         float64      `json:"permeatepressure" db:"permeatepressure"`
+	ROPressure               float64      `json:"ropressure" db:"ropressure"`
+	DeliveryPressure         float64      `json:"deliverypressure" db:"deliverypressure"`
+	FeedPressure             float64      `json:"feedpressure" db:"feedpressure"`
+	RecycleValvePosition     int64        `json:"recyclevalveposition" db:"recyclevalveposition"`
+	ROPressCtrlValvePosition int64        `json:"ropressctrlvalveposition" db:"ropressctrlvalveposition"`
+	ROPumpSpeed              int64        `json:"ropumpspeed" db:"ropumpspeed"`
+	PowerMeter               int64        `json:"powermeter" db:"powermeter"`
+	FlushDuret               int64        `json:"flushduret" db:"flushduret"`
+	ProductTDS               float64      `json:"producttds" db:"producttds"`
+	RecordTime               util.UTCTime `json:"recordtime" db:"recordtime"`
 }
 
 func (s *PryorFarmState) ValidateState() error {
@@ -167,7 +167,7 @@ func FromRawData(rawData []byte) (*PryorFarmState, error) {
 		ConcBypassRun:            util.ParseStringToBool(raw.ConcBypassRun),
 		ProdDiversionRun:         util.ParseStringToBool(raw.ProdDiversionRun),
 		FlushDiversionRun:        util.ParseStringToBool(raw.FlushDiversionRun),
-		PLCTime:                  parsedTime,
+		PLCTime:                  util.UTCTime{Time: parsedTime},
 		PermeateFlow:             util.ParseStringToFloat(raw.PermeateFlow),
 		DeliveryFlow:             util.ParseStringToFloat(raw.DeliveryFlow),
 		InletFlow:                util.ParseStringToFloat(raw.InletFlow),
@@ -208,7 +208,7 @@ func FromRawData(rawData []byte) (*PryorFarmState, error) {
 		PowerMeter:               util.ParseStringToInt(raw.PowerMeter),
 		FlushDuret:               util.ParseStringToInt(raw.FlushDurET),
 		ProductTDS:               util.ParseStringToFloat(raw.ProductTDS),
-		RecordTime:               time.Now().UTC(),
+		RecordTime:               util.UTCTime{Time: time.Now().UTC()},
 	}
 	return &out, nil
 }
