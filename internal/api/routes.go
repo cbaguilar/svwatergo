@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, managers map[string]systemservice.SystemManager) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -21,7 +21,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, managers map[str
 		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 	})
 
-	state := NewStateAPI(managers)
+	state := NewStateAPI(reg)
 
 	v1 := r.Group("/api/v1")
 	{

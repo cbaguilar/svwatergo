@@ -9,7 +9,7 @@ import (
 
 // Data ingestion type
 type DataIngestionService struct {
-	Managers map[string]SystemManager
+	Reg Registry
 }
 
 func (s *DataIngestionService) Consume(rawData []byte) error {
@@ -27,7 +27,7 @@ func (s *DataIngestionService) Consume(rawData []byte) error {
 	}
 	key := strings.ToLower(strings.TrimSpace(loc))
 
-	mgr, exists := s.Managers[key]
+	mgr, exists := s.Reg.Get(key)
 	if !exists {
 		return fmt.Errorf("no manager found for location: %s", key)
 	}

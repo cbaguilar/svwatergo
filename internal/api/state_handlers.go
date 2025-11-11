@@ -11,16 +11,16 @@ import (
 )
 
 type StateAPI struct {
-	Managers map[string]systemservice.SystemManager
+	Reg systemservice.Registry
 }
 
-func NewStateAPI(mgrs map[string]systemservice.SystemManager) *StateAPI {
-	return &StateAPI{Managers: mgrs}
+func NewStateAPI(reg systemservice.Registry) *StateAPI {
+	return &StateAPI{Reg: reg}
 }
 
 func parseSite(c *gin.Context) (string, systemservice.SystemManager, bool) {
 	site := strings.ToLower(c.Param("site"))
-	mgr, ok := c.Keys["managers"].(map[string]systemservice.SystemManager)[site]
+	mgr, ok := =a.Reg.Get(site)
 	return site, mgr, ok
 }
 
