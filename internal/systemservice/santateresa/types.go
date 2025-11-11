@@ -1,4 +1,4 @@
-package pryorfarm
+package santateresa
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 
 // If a producer sends numeric/boolean JSON, keep your existing ingestion client sending strings,
 // or add a shim to coerce to strings before unmarshaling into this type.
-type RawPryorFarmState struct {
+type RawSantaTeresaState struct {
 	Location                 string `json:"location"`
 	TotalROFlow              string `json:"totalroflow"`
 	TotalInletFlow           string `json:"totalinletflow"`
@@ -70,7 +70,7 @@ type RawPryorFarmState struct {
 	ProductTDS               string `json:"producttds"`
 }
 
-type PryorFarmState struct {
+type SantaTeresaState struct {
 	Location                 string    `json:"location" db:"location"`
 	TotalROFlow              int64     `json:"totalroflow" db:"totalroflow"`
 	TotalInletFlow           int64     `json:"totalinletflow" db:"totalinletflow"`
@@ -132,13 +132,13 @@ type PryorFarmState struct {
 	RecordTime               time.Time `json:"recordtime" db:"recordtime"`
 }
 
-func (s *PryorFarmState) ValidateState() error {
+func (s *SantaTeresaState) ValidateState() error {
 	// TODO: add site-specific checks
 	return nil
 }
 
-func FromRawData(rawData []byte) (*PryorFarmState, error) {
-	var raw RawPryorFarmState
+func FromRawData(rawData []byte) (*SantaTeresaState, error) {
+	var raw RawSantaTeresaState
 	if err := util.UnmarshalCaseInsensitive(rawData, &raw, nil); err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func FromRawData(rawData []byte) (*PryorFarmState, error) {
 		return nil, fmt.Errorf("failed to parse time %s, %w ", raw.PLCTime, err)
 	}
 
-	out := PryorFarmState{
+	out := SantaTeresaState{
 		Location:                 raw.Location,
 		TotalROFlow:              util.ParseStringToInt(raw.TotalROFlow),
 		TotalInletFlow:           util.ParseStringToInt(raw.TotalInletFlow),

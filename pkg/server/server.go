@@ -8,6 +8,7 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/cbaguilar/svwatergo/internal/systemservice/bluerock"
 	"github.com/cbaguilar/svwatergo/internal/systemservice/pryorfarm"
+	"github.com/cbaguilar/svwatergo/internal/systemservice/santateresa"
 )
 
 type Server struct {
@@ -37,8 +38,9 @@ func (s *Server) Start() error {
 
 	digestionService := systemservice.DataIngestionService{
 		Managers: map[string]systemservice.SystemManager{
-			"Bluerock":  bluerock.NewBluerockManager(*sqliteDb),
-			"PryorFarm": pryorfarm.NewPryorFarmManager(*sqliteDb),
+			"Bluerock":    bluerock.NewBluerockManager(*sqliteDb),
+			"PryorFarm":   pryorfarm.NewPryorFarmManager(*sqliteDb),
+			"SantaTeresa": santateresa.NewSantaTeresaManager(*sqliteDb),
 		},
 	}
 
