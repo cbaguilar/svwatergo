@@ -52,7 +52,11 @@ func (b *BluerockManager) SaveData(rawData []byte) error { //unmarshal rawData i
 }
 
 func (b *BluerockManager) GetRange(start time.Time, end time.Time) ([]map[string]interface{}, error) {
-	return nil, nil
+	rows, err := b.DB.GetRange(start, end)
+	if err != nil {
+		return nil, err
+	}
+	return util.StructsToMaps(rows)
 }
 
 func (b *BluerockManager) ValidateState(state *BluerockState) error {

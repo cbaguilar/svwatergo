@@ -1,7 +1,6 @@
 package santateresa
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -52,12 +51,5 @@ func (m *SantaTeresaManager) GetRange(start, end time.Time) ([]map[string]interf
 	if err != nil {
 		return nil, err
 	}
-	out := make([]map[string]interface{}, 0, len(rows))
-	for _, r := range rows {
-		b, _ := json.Marshal(r)
-		var m map[string]interface{}
-		json.Unmarshal(b, &m)
-		out = append(out, m)
-	}
-	return out, nil
+	return util.StructsToMaps(rows)
 }
