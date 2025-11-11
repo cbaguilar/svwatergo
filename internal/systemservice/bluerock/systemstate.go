@@ -211,7 +211,7 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 		ChlorinePumpRun:          util.ParseStringToBool(raw.ChlorinePumpRun),
 		ResidTankValveRun:        util.ParseStringToBool(raw.ResidTankValveRun),
 		ResidualTankLevel:        util.ParseStringToFloat(raw.ResidualTankLevel),
-		RecordTime:               time.Now(),
+		RecordTime:               time.Now().UTC(),
 		FlushRun:                 util.ParseStringToBool(raw.FlushRun),
 	}
 	return &parsed, nil
