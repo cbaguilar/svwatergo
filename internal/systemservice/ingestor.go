@@ -4,7 +4,6 @@ package systemservice
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -14,30 +13,23 @@ type DataIngestionService struct {
 }
 
 func (s *DataIngestionService) Consume(rawData []byte) error {
-	var record map[string]interface{}
-
+	var record map[string]any
 	if err := json.Unmarshal(rawData, &record); err != nil {
 		return fmt.Errorf("invalid json: %w", err)
 	}
-
-	locationRaw, ok := record["location"]
+	v, ok := record["location"]
 	if !ok {
 		return fmt.Errorf("missing 'location' field")
 	}
-
-	location, ok := strings.ToLower(locationRaw.(string)
-	key := strings.ToLower(strings.TrimSpace(location))
+	loc, ok := v.(string)
 	if !ok {
 		return fmt.Errorf("invalid 'location' field type")
 	}
+	key := strings.ToLower(strings.TrimSpace(loc))
 
-	// This is where we route to the correct system manager
-	// logic is slightly different based on different locations
-	manager, exists := s.Managers[key]
+	mgr, exists := s.Managers[key]
 	if !exists {
-		return fmt.Errorf("no manager found for location: %s", location)
+		return fmt.Errorf("no manager found for location: %s", key)
 	}
-
-	log.Printf("Routing data to manager for location: %s", location)
-	return manager.SaveData(rawData)
+	return mgr.SaveData(rawData)
 }
