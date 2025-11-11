@@ -14,27 +14,48 @@ import (
 )
 
 func ParseStringToBool(s string) bool {
-	return s == "1"
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func ParseStringToInt(s string) int64 {
-	v, _ := strconv.ParseInt(s, 10, 64)
-	return v
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	// allow floats that are actually ints: "3.0"
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return int64(f)
+	}
+	return 0
 }
 
 func ParseStringToFloat(s string) float64 {
-	v, _ := strconv.ParseFloat(s, 64)
-	return v
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
 }
 
 var zonedLayouts = []string{
 	time.RFC3339Nano, // 2006-01-02T15:04:05.999999999Z07:00
 	time.RFC3339,     // 2006-01-02T15:04:05Z07:00
 }
+
 var noZoneLayouts = []string{
-	"2006-01-02-15:04:05.999999999", // 2025-11-05-03:12:41.652946
+	"2006-01-02-15:04:05.999999999",
+	"2006-01-02-15:04:05.999",
 	"2006-01-02-15:04:05",
 	"2006-01-02 15:04:05.999999999",
+	"2006-01-02 15:04:05.999",
 	"2006-01-02 15:04:05",
 }
 
