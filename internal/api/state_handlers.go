@@ -2,9 +2,9 @@
 package api
 
 import (
+	"encoding/csv"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -55,37 +55,55 @@ func (a *StateAPI) GetLatest(c *gin.Context) {
 }
 
 // Function to write CSV response (called fromm GetRange after we already have rows)
+// writeCSVResponse writes rows as CSV to the client using encoding/csv
 func writeCSVResponse(c *gin.Context, rows []map[string]interface{}) {
 	if len(rows) == 0 {
 		c.String(http.StatusOK, "")
 		return
 	}
-	// Collect headers from first row
+
+	// Collect headers from first row (preserves insertion order if map is ordered upstream)
 	var headers []string
 	for k := range rows[0] {
 		headers = append(headers, k)
 	}
-	// Write CSV
+
 	c.Header("Content-Disposition", "attachment; filename=\"data.csv\"")
 	c.Header("Content-Type", "text/csv")
+
 	var sb strings.Builder
-	// Write header
-	sb.WriteString(strings.Join(headers, ",") + "\n")
-	// Write rows
-	for _, row := range rows {
-		var vals []string
-		for _, h := range headers {
-			val := ""
-			if v, ok := row[h]; ok {
-				val = fmt.Sprintf("%v", v)
-			}
-			vals = append(vals, strconv.Quote(val))
-		}
-		sb.WriteString(strings.Join(vals
-, ",") + "\n")
+	writer := csv.NewWriter(&sb)
+
+	// Write header row
+	if err := writer.Write(headers); err != nil {
+		c.String(http.StatusInternalServerError, "failed to write csv header: %v", err)
+		return
 	}
+
+	// Write data rows
+	for _, row := range rows {
+		record := make([]string, len(headers))
+		for i, h := range headers {
+			if v, ok := row[h]; ok && v != nil {
+				record[i] = fmt.Sprintf("%v", v)
+			} else {
+				record[i] = ""
+			}
+		}
+		if err := writer.Write(record); err != nil {
+			c.String(http.StatusInternalServerError, "failed to write csv record: %v", err)
+			return
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		c.String(http.StatusInternalServerError, "csv writer error: %v", err)
+		return
+	}
+
 	c.String(http.StatusOK, sb.String())
-}	
+}
 
 func (a *StateAPI) GetRange(c *gin.Context) {
 	site, mgr, ok := a.parseSite(c)
