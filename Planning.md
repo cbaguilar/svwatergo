@@ -21,6 +21,10 @@ we can probably store this in immediate memory.
 
 `POST /api/v1/sites/:site/state` : Post new sensor data. Accepts JSON array of objects.
 
+## Monorepo Structure
+
+We're going to add the react frontend into this repository to keep better track of versions.
+
 ## MQTT Edge
 Can also pass to same data intake.
 
