@@ -2,7 +2,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +54,39 @@ func (a *StateAPI) GetLatest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"meta": gin.H{"site": site, "as_of": time.Now().UTC().Format(time.RFC3339), "etag": etag}, "data": data})
 }
 
+// Function to write CSV response (called fromm GetRange after we already have rows)
+func writeCSVResponse(c *gin.Context, rows []map[string]interface{}) {
+	if len(rows) == 0 {
+		c.String(http.StatusOK, "")
+		return
+	}
+	// Collect headers from first row
+	var headers []string
+	for k := range rows[0] {
+		headers = append(headers, k)
+	}
+	// Write CSV
+	c.Header("Content-Disposition", "attachment; filename=\"data.csv\"")
+	c.Header("Content-Type", "text/csv")
+	var sb strings.Builder
+	// Write header
+	sb.WriteString(strings.Join(headers, ",") + "\n")
+	// Write rows
+	for _, row := range rows {
+		var vals []string
+		for _, h := range headers {
+			val := ""
+			if v, ok := row[h]; ok {
+				val = fmt.Sprintf("%v", v)
+			}
+			vals = append(vals, strconv.Quote(val))
+		}
+		sb.WriteString(strings.Join(vals
+, ",") + "\n")
+	}
+	c.String(http.StatusOK, sb.String())
+}	
+
 func (a *StateAPI) GetRange(c *gin.Context) {
 	site, mgr, ok := a.parseSite(c)
 	if !ok {
@@ -82,6 +117,12 @@ func (a *StateAPI) GetRange(c *gin.Context) {
 		for i := range rows {
 			rows[i] = projectFields(rows[i], fields)
 		}
+	}
+
+	// if desired output is CSV, set headers and return
+	if strings.Contains(c.GetHeader("Accept"), "text/csv") || c.Query("format") == "csv" {
+		writeCSVResponse(c, rows)
+		return
 	}
 
 	// optional smoothing + downsampling
