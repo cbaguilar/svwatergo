@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -109,6 +110,8 @@ func UnmarshalCaseInsensitive(data []byte, v any, aliases map[string][]string) e
 			}
 		}
 	}
+
+	log.Printf("UnmarshalCaseInsensitive: normalized data: %+v\n", lc)
 
 	// 4) re-encode and unmarshal into the strongly-typed struct
 	buf, err := json.Marshal(lc)
