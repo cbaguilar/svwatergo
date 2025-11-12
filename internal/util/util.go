@@ -118,6 +118,10 @@ func UnmarshalCaseInsensitive(data []byte, v any, aliases map[string][]string) e
 	if err != nil {
 		return fmt.Errorf("re-marshal: %w", err)
 	}
+
+	pretty, _ := json.MarshalIndent(lc, "", "  ")
+	log.Println("raw data:", string(pretty))
+
 	dec := json.NewDecoder(bytes.NewReader(buf))
 	dec.UseNumber() // optional: preserve number precision
 	return dec.Decode(v)

@@ -30,7 +30,8 @@ func TestUnmarshalCaseInsensitive_Aliases(t *testing.T) {
 	}
 	if err := util.UnmarshalCaseInsensitive(raw, &got, aliases); err != nil {
 		log.Println("got error:", err)
-		log.Println("raw data:", string(raw))
+		pretty, _ := json.MarshalIndent(got, "", "  ")
+		log.Println("raw data:", string(pretty))
 
 		t.Fatalf("UnmarshalCaseInsensitive error: %v", err)
 	}

@@ -144,7 +144,6 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 	var raw RawBluerockState
 	//unmarshal rawData into raw
 	err := util.UnmarshalCaseInsensitive(rawData, &raw, nil)
-	fmt.Printf("Raw data unmarshalled: %+v\n", raw)
 	if err != nil {
 		return nil, err
 	}
