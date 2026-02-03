@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/cbaguilar/svwatergo/internal/util"
 )
 
@@ -51,4 +52,8 @@ func (m *PryorFarmManager) GetRange(start, end time.Time) ([]map[string]interfac
 		return nil, err
 	}
 	return util.StructsToMaps(rows)
+}
+
+func (m *PryorFarmManager) Coverage() (systemservice.Coverage, error) {
+	return m.DB.Coverage()
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 )
 
 const (
@@ -15,6 +16,7 @@ type SantaTeresaDatastore interface {
 	SaveState(state *SantaTeresaState) error
 	GetRange(start, end time.Time) ([]SantaTeresaState, error)
 	GetLatest() (SantaTeresaState, error)
+	Coverage() (systemservice.Coverage, error)
 }
 
 type SantaTeresaDBStore struct {
@@ -77,4 +79,20 @@ func (s *SantaTeresaDBStore) GetRange(start, end time.Time) ([]SantaTeresaState,
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *SantaTeresaDBStore) Coverage() (systemservice.Coverage, error) {
+	q := fmt.Sprintf(`
+SELECT
+  MIN(plctime) AS min_plctime,
+  MAX(plctime) AS max_plctime,
+  MAX(recordtime) AS max_recordtime,
+  COUNT(*) AS count
+FROM %s
+`, s.TableName)
+	var c systemservice.Coverage
+	if err := s.Client.DB.Get(&c, q); err != nil {
+		return systemservice.Coverage{}, err
+	}
+	return c, nil
 }

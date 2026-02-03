@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 )
 
 const (
@@ -15,6 +16,7 @@ type PryorFarmDatastore interface {
 	SaveState(state *PryorFarmState) error
 	GetRange(start, end time.Time) ([]PryorFarmState, error)
 	GetLatest() (PryorFarmState, error)
+	Coverage() (systemservice.Coverage, error)
 }
 
 type PryorFarmDBStore struct {
@@ -77,4 +79,20 @@ func (s *PryorFarmDBStore) GetRange(start, end time.Time) ([]PryorFarmState, err
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *PryorFarmDBStore) Coverage() (systemservice.Coverage, error) {
+	q := fmt.Sprintf(`
+SELECT
+  MIN(plctime) AS min_plctime,
+  MAX(plctime) AS max_plctime,
+  MAX(recordtime) AS max_recordtime,
+  COUNT(*) AS count
+FROM %s
+`, s.TableName)
+	var c systemservice.Coverage
+	if err := s.Client.DB.Get(&c, q); err != nil {
+		return systemservice.Coverage{}, err
+	}
+	return c, nil
 }

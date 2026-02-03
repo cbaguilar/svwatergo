@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/cbaguilar/svwatergo/internal/util"
 )
 
@@ -57,6 +58,10 @@ func (b *BluerockManager) GetRange(start time.Time, end time.Time) ([]map[string
 		return nil, err
 	}
 	return util.StructsToMaps(rows)
+}
+
+func (b *BluerockManager) Coverage() (systemservice.Coverage, error) {
+	return b.DB.Coverage()
 }
 
 func (b *BluerockManager) ValidateState(state *BluerockState) error {

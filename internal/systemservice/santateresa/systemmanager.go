@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/cbaguilar/svwatergo/internal/util"
 )
 
@@ -52,4 +53,8 @@ func (m *SantaTeresaManager) GetRange(start, end time.Time) ([]map[string]interf
 		return nil, err
 	}
 	return util.StructsToMaps(rows)
+}
+
+func (m *SantaTeresaManager) Coverage() (systemservice.Coverage, error) {
+	return m.DB.Coverage()
 }

@@ -6,6 +6,7 @@ import (
 
 	// Import the new generic database package
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 )
 
 const (
@@ -17,6 +18,7 @@ type BluerockDatastore interface {
 	// GetRange now returns the concrete type, making the manager's job easier
 	GetRange(start, end time.Time) ([]BluerockState, error)
 	GetLatest() (BluerockState, error)
+	Coverage() (systemservice.Coverage, error)
 }
 
 type BluerockDBStore struct {
@@ -84,4 +86,20 @@ func (b *BluerockDBStore) GetRange(start, end time.Time) ([]BluerockState, error
 		return nil, err
 	}
 	return out, nil
+}
+
+func (b *BluerockDBStore) Coverage() (systemservice.Coverage, error) {
+	q := fmt.Sprintf(`
+SELECT
+  MIN(plctime) AS min_plctime,
+  MAX(plctime) AS max_plctime,
+  MAX(recordtime) AS max_recordtime,
+  COUNT(*) AS count
+FROM %s
+`, b.TableName)
+	var c systemservice.Coverage
+	if err := b.Client.DB.Get(&c, q); err != nil {
+		return systemservice.Coverage{}, err
+	}
+	return c, nil
 }
