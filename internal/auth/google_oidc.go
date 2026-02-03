@@ -96,6 +96,21 @@ func (a *Auth) GinMiddleware() gin.HandlerFunc {
 	}
 }
 
+func (a *Auth) GinRequireAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, ok := IdentityFromContext(c.Request.Context())
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+		if _, ok := a.cfg.AdminEmails[strings.ToLower(id.Email)]; !ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
+		c.Next()
+	}
+}
+
 func (a *Auth) RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := IdentityFromContext(r.Context())

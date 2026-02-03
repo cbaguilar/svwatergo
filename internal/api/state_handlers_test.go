@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/api"
+	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 )
 
@@ -34,7 +35,8 @@ func TestLatest_NotFound(t *testing.T) {
 		"testlocation": m,
 	})
 
-	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg)
+	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
+	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil)
 
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/sites/unknownloc/state/latest", nil)
@@ -53,7 +55,8 @@ func TestLatest_Success(t *testing.T) {
 		"testlocation": m,
 	})
 
-	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg)
+	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
+	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil)
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/sites/testlocation/state/latest", nil)
 	r.ServeHTTP(rr, req)

@@ -5,11 +5,12 @@ import (
 
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
+	"github.com/cbaguilar/svwatergo/internal/reports"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -25,6 +26,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 
 	state := NewStateAPI(reg, meta)
 	site := NewSiteAPI(reg, meta)
+	reportsAPI := NewReportsAPI(reportsStore)
 
 	v1 := r.Group("/api/v1")
 	if authn != nil {
@@ -37,6 +39,16 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		sites.GET("/metadata", site.GetMetadata)
 		sites.GET("/coverage", site.GetCoverage)
 		sites.GET("/series", site.GetSeries)
+
+		operatorReports := sites.Group("/operator-reports")
+		if authn != nil {
+			operatorReports.Use(authn.GinRequireAdmin())
+		}
+		operatorReports.POST("", reportsAPI.CreateOperatorReport)
+		operatorReports.GET("", reportsAPI.ListOperatorReports)
+		operatorReports.GET("/:id", reportsAPI.GetOperatorReport)
+		operatorReports.PUT("/:id", reportsAPI.UpdateOperatorReport)
+		operatorReports.DELETE("/:id", reportsAPI.DeleteOperatorReport)
 	}
 
 	/// This is the v0 route, which we will re-implement for backwards compatibility

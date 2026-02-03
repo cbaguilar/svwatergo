@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/api"
+	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 )
 
@@ -36,7 +37,8 @@ func TestSaveSensorDataHandler_207(t *testing.T) {
 	f := &fakeMgr{}
 	reg := systemservice.NewRegistry(map[string]systemservice.SystemManager{"fakesite": f})
 	ing := systemservice.DataIngestionService{Reg: reg}
-	r := api.SetupRouter(&ing, reg)
+	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
+	r := api.SetupRouter(&ing, reg, meta, nil, nil)
 
 	// Two records, second has unknown site, expect fail
 
@@ -67,7 +69,8 @@ func TestSaveSensorDataHandler_InvalidJSON(t *testing.T) {
 		map[string]systemservice.SystemManager{},
 	)
 	ing := systemservice.DataIngestionService{Reg: reg}
-	r := api.SetupRouter(&ing, reg)
+	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
+	r := api.SetupRouter(&ing, reg, meta, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/uploadSensorDataNew", bytes.NewReader([]byte(`invalid json`)))
