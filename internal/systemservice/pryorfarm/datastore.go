@@ -72,7 +72,7 @@ func (s *PryorFarmDBStore) GetLatest() (PryorFarmState, error) {
 }
 
 func (s *PryorFarmDBStore) GetRange(start, end time.Time) ([]PryorFarmState, error) {
-	q := fmt.Sprintf(`SELECT * FROM %s WHERE recordtime BETWEEN ? AND ? ORDER BY recordtime ASC`, s.TableName)
+	q := fmt.Sprintf(`SELECT * FROM %s WHERE plctime BETWEEN ? AND ? ORDER BY plctime ASC`, s.TableName)
 	q = s.Client.DB.Rebind(q)
 	var out []PryorFarmState
 	if err := s.Client.DB.Select(&out, q, start, end); err != nil {
