@@ -21,3 +21,12 @@ data/*
 # Go workspace file
 go.work
 go.work.sum
+
+# Frontend (React) artifacts
+frontend/**/node_modules/
+frontend/**/build/
+frontend/**/.env
+frontend/**/.env.*
+frontend/**/npm-debug.log*
+frontend/**/yarn-debug.log*
+frontend/**/yarn-error.log*
