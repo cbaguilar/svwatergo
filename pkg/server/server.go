@@ -5,6 +5,7 @@ import (
 
 	"github.com/cbaguilar/svwatergo/internal/api"
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/cbaguilar/svwatergo/internal/systemservice/bluerock"
 	"github.com/cbaguilar/svwatergo/internal/systemservice/pryorfarm"
@@ -45,7 +46,12 @@ func (s *Server) Start() error {
 		Reg: reg,
 	}
 
-	router := api.SetupRouter(ing, ing.Reg)
+	metaStore, err := metadata.LoadDir("config/sites")
+	if err != nil {
+		log.Fatalf("Failed to load site metadata: %v", err)
+	}
+
+	router := api.SetupRouter(ing, ing.Reg, metaStore)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }

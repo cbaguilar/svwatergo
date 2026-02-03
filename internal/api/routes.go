@@ -3,11 +3,12 @@ package api
 import (
 	"net/http"
 
+	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -21,13 +22,17 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 	})
 
-	state := NewStateAPI(reg)
+	state := NewStateAPI(reg, meta)
+	site := NewSiteAPI(reg, meta)
 
 	v1 := r.Group("/api/v1")
 	{
 		sites := v1.Group("/sites/:site")
 		sites.GET("/state/latest", state.GetLatest)
 		sites.GET("/state", state.GetRange) // ?start=&end=&fields=&sample=&max_points=&smooth=&window=
+		sites.GET("/metadata", site.GetMetadata)
+		sites.GET("/coverage", site.GetCoverage)
+		sites.GET("/series", site.GetSeries)
 	}
 
 	/// This is the v0 route, which we will re-implement for backwards compatibility

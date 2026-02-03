@@ -8,16 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/gin-gonic/gin"
 )
 
 type StateAPI struct {
-	Reg systemservice.Registry
+	Reg  systemservice.Registry
+	Meta *metadata.Store
 }
 
-func NewStateAPI(reg systemservice.Registry) *StateAPI {
-	return &StateAPI{Reg: reg}
+func NewStateAPI(reg systemservice.Registry, meta *metadata.Store) *StateAPI {
+	return &StateAPI{Reg: reg, Meta: meta}
 }
 
 func (a *StateAPI) parseSite(c *gin.Context) (string, systemservice.SystemManager, bool) {
@@ -47,6 +49,10 @@ func (a *StateAPI) GetLatest(c *gin.Context) {
 	}
 	c.Header("ETag", etag)
 	c.Header("Cache-Control", "private, max-age=5")
+
+	if parseSoftInclude(c.Query("soft")) {
+		addSoftSensors(a.Meta, site, data)
+	}
 
 	if fields := c.Query("fields"); fields != "" {
 		data = projectFields(data, fields)
@@ -128,6 +134,12 @@ func (a *StateAPI) GetRange(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errJSON("Internal", "get range error", gin.H{"err": err.Error()}))
 		return
+	}
+
+	if parseSoftInclude(c.Query("soft")) {
+		for i := range rows {
+			addSoftSensors(a.Meta, site, rows[i])
+		}
 	}
 
 	// optional projection
