@@ -18,7 +18,7 @@ mkdir -p "${ROOT_DIR}/data"
 SERVER_PID=$!
 
 # wait for server to start
-for i in {1..20}; do
+for i in {1..60}; do
   if curl -sS "${HOST}/health" >/dev/null 2>&1; then
     break
   fi
