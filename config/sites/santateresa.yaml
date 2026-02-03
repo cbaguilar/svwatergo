@@ -1,0 +1,13 @@
+site: santateresa
+sensors:
+  - key: plctime
+    name: PLC Time
+  - key: permeateflow
+    name: Permeate Flow
+    units: gpm
+  - key: feedflow
+    name: Feed Flow
+    units: gpm
+  - key: deliveryflow
+    name: Delivery Flow
+    units: gpm
