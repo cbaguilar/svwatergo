@@ -1,9 +1,13 @@
 package server
 
 import (
+	"context"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/cbaguilar/svwatergo/internal/api"
+	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/database"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
@@ -51,7 +55,12 @@ func (s *Server) Start() error {
 		log.Fatalf("Failed to load site metadata: %v", err)
 	}
 
-	router := api.SetupRouter(ing, ing.Reg, metaStore)
+	var authn *auth.Auth
+	if strings.TrimSpace(os.Getenv("AUTH_DISABLED")) == "" {
+		authn = auth.MustNewFromEnv(context.Background())
+	}
+
+	router := api.SetupRouter(ing, ing.Reg, metaStore, authn)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }
