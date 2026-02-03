@@ -2,8 +2,8 @@ package bluerock
 
 import (
 	"fmt"
-	"time"
 
+	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/cbaguilar/svwatergo/internal/util"
 )
 
@@ -148,71 +148,9 @@ func FromRawData(rawData []byte) (*BluerockState, error) {
 		return nil, err
 	}
 
-	parsedTime, err := util.ParsePlcTime(raw.PLCTime)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse time %s, %w ", raw.PLCTime, err)
-	}
-
-	//parse raw into parsed
-	parsed := BluerockState{
-		Location:                 raw.Location,
-		TotalROFlow:              util.ParseStringToInt(raw.TotalROFlow),
-		TotalFeedFlow:            util.ParseStringToInt(raw.TotalFeedFlow),
-		TotalRecycleFlow:         util.ParseStringToInt(raw.TotalRecycleFlow),
-		TotalDelFlow:             util.ParseStringToInt(raw.TotalDelFlow),
-		DumpProduct:              util.ParseStringToBool(raw.DumpProduct),
-		WellPumpRun:              util.ParseStringToBool(raw.WellPumpRun),
-		WellPumpAuto:             util.ParseStringToBool(raw.WellPumpAuto),
-		FeedPumpRun:              util.ParseStringToBool(raw.FeedPumpRun),
-		ROPumpRun:                util.ParseStringToBool(raw.ROPumpRun),
-		DeliveryRun:              util.ParseStringToBool(raw.DeliveryRun),
-		DeliveryAuto:             util.ParseStringToBool(raw.DeliveryAuto),
-		InletRun:                 util.ParseStringToBool(raw.InletRun),
-		ConcBypassRun:            util.ParseStringToBool(raw.ConcBypassRun),
-		ProdDiversionRun:         util.ParseStringToBool(raw.ProdDiversionRun),
-		PLCTime:                  util.UTCTime{Time: parsedTime},
-		PermeateFlow:             util.ParseStringToFloat(raw.PermeateFlow),
-		DeliveryFlow:             util.ParseStringToFloat(raw.DeliveryFlow),
-		FeedFlow:                 util.ParseStringToFloat(raw.FeedFlow),
-		ConcentrateFlow:          util.ParseStringToFloat(raw.ConcentrateFlow),
-		RecycleFlow:              util.ParseStringToInt(raw.RecycleFlow),
-		FeedTankLevel:            util.ParseStringToFloat(raw.FeedTankLevel),
-		DailyPermFlow:            util.ParseStringToFloat(raw.DailyPermFlow),
-		Alarm:                    util.ParseStringToBool(raw.Alarm),
-		AlarmWord:                util.ParseStringToInt(raw.AlarmWord),
-		ROStandby:                util.ParseStringToBool(raw.ROStandby),
-		State:                    util.ParseStringToInt(raw.State),
-		Lockout:                  util.ParseStringToBool(raw.Lockout),
-		RunFlush:                 util.ParseStringToBool(raw.RunFlush),
-		WarnWord0:                util.ParseStringToInt(raw.WarnWord0),
-		WarnWord1:                util.ParseStringToInt(raw.WarnWord1),
-		TotalHrs:                 util.ParseStringToInt(raw.TotalHrs),
-		PermTDS:                  util.ParseStringToFloat(raw.PermTDS),
-		FeedTDS:                  util.ParseStringToFloat(raw.FeedTDS),
-		PermNitrate:              util.ParseStringToFloat(raw.PermNitrate),
-		PermTemp:                 util.ParseStringToFloat(raw.PermTemp),
-		ProdTankLevel:            util.ParseStringToFloat(raw.ProdTankLevel),
-		ProdTankDisable:          util.ParseStringToBool(raw.ProdTankDisable),
-		ProdTankDepth:            util.ParseStringToFloat(raw.ProdTankDepth),
-		FeedTankDepth:            util.ParseStringToFloat(raw.FeedTankDepth),
-		ResidualTankDepth:        util.ParseStringToFloat(raw.ResidualTankDepth),
-		InletPressure:            util.ParseStringToFloat(raw.InletPressure),
-		ConcentratePressure:      util.ParseStringToFloat(raw.ConcentratePressure),
-		PermeatePressure:         util.ParseStringToFloat(raw.PermeatePressure),
-		ROPressure:               util.ParseStringToFloat(raw.ROPressure),
-		DeliveryPressure:         util.ParseStringToFloat(raw.DeliveryPressure),
-		FeedPressure:             util.ParseStringToFloat(raw.FeedPressure),
-		RecycleValvePosition:     util.ParseStringToInt(raw.RecycleValvePosition),
-		ROPressCtrlValvePosition: util.ParseStringToInt(raw.ROPressCtrlValvePosition),
-		ROPumpSpeed:              util.ParseStringToInt(raw.ROPumpSpeed),
-		PowerMeter:               util.ParseStringToInt(raw.PowerMeter),
-		FlushDuret:               util.ParseStringToInt(raw.FlushDuret),
-		ProductTDS:               util.ParseStringToFloat(raw.ProductTDS),
-		ChlorinePumpRun:          util.ParseStringToBool(raw.ChlorinePumpRun),
-		ResidTankValveRun:        util.ParseStringToBool(raw.ResidTankValveRun),
-		ResidualTankLevel:        util.ParseStringToFloat(raw.ResidualTankLevel),
-		RecordTime:               util.UTCTime{Time: time.Now().UTC()},
-		FlushRun:                 util.ParseStringToBool(raw.FlushRun),
+	var parsed BluerockState
+	if err := systemservice.ParseRawInto(raw, &parsed); err != nil {
+		return nil, err
 	}
 	return &parsed, nil
 }
