@@ -1,8 +1,6 @@
 package bluerock
 
 import (
-	"fmt"
-
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/cbaguilar/svwatergo/internal/util"
 )
