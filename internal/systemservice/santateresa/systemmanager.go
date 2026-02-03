@@ -19,8 +19,8 @@ type SantaTeresaManager struct {
 func NewSantaTeresaManager(client database.SQLXClient) *SantaTeresaManager {
 	log.Default().Println("Initializing SantaTeresaManager with database client.")
 	store := NewSantaTeresaDBStore(client)
-	if err := EnsureSchema(&client, store.TableName); err != nil {
-		log.Printf("EnsureSchema(%s) error: %v", store.TableName, err)
+	if err := EnsureSchema(&client, store.Store.TableName); err != nil {
+		log.Printf("EnsureSchema(%s) error: %v", store.Store.TableName, err)
 	}
 	return &SantaTeresaManager{DB: store}
 }

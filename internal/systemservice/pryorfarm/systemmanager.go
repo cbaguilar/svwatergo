@@ -19,8 +19,8 @@ type PryorFarmManager struct {
 func NewPryorFarmManager(client database.SQLXClient) *PryorFarmManager {
 	log.Default().Println("Initializing PryorFarmManager with database client.")
 	store := NewPryorFarmDBStore(client)
-	if err := EnsureSchema(&client, store.TableName); err != nil {
-		log.Printf("EnsureSchema(%s) error: %v", store.TableName, err)
+	if err := EnsureSchema(&client, store.Store.TableName); err != nil {
+		log.Printf("EnsureSchema(%s) error: %v", store.Store.TableName, err)
 	}
 	return &PryorFarmManager{DB: store}
 }

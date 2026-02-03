@@ -19,7 +19,7 @@ type BluerockManager struct {
 func NewBluerockManager(client database.SQLXClient) *BluerockManager {
 	log.Default().Println("Initializing BluerockManager with database client.")
 	ourDbstore := NewBluerockDBStore(client)
-	EnsureSchema(&client, ourDbstore.TableName)
+	EnsureSchema(&client, ourDbstore.Store.TableName)
 	return &BluerockManager{
 		DB: ourDbstore,
 	}
