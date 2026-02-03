@@ -75,6 +75,11 @@ func (a *SiteAPI) GetSeries(c *gin.Context) {
 	}
 
 	fields := parseFields(c.Query("fields"))
+	if parseSoftInclude(c.Query("soft")) {
+		for i := range rows {
+			addSoftSensors(a.Meta, site, rows[i])
+		}
+	}
 
 	if len(fields) > 0 {
 		for i := range rows {

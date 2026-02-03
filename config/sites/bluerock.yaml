@@ -19,4 +19,4 @@ soft_sensors:
   - key: ro_recovery
     name: RO Recovery
     units: "%"
-    expr: "permeateflow / (feedflow + 1e-6) * 100"
+    note: "permeateflow / feedflow * 100"

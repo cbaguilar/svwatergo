@@ -11,7 +11,7 @@ type SoftSensor struct {
 	Key   string `yaml:"key" json:"key"`
 	Name  string `yaml:"name" json:"name"`
 	Units string `yaml:"units" json:"units,omitempty"`
-	Expr  string `yaml:"expr" json:"expr"`
+	Note  string `yaml:"note,omitempty" json:"note,omitempty"`
 }
 
 type SiteConfig struct {

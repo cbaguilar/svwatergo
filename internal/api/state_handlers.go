@@ -50,6 +50,10 @@ func (a *StateAPI) GetLatest(c *gin.Context) {
 	c.Header("ETag", etag)
 	c.Header("Cache-Control", "private, max-age=5")
 
+	if parseSoftInclude(c.Query("soft")) {
+		addSoftSensors(a.Meta, site, data)
+	}
+
 	if fields := c.Query("fields"); fields != "" {
 		data = projectFields(data, fields)
 	}
@@ -130,6 +134,12 @@ func (a *StateAPI) GetRange(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errJSON("Internal", "get range error", gin.H{"err": err.Error()}))
 		return
+	}
+
+	if parseSoftInclude(c.Query("soft")) {
+		for i := range rows {
+			addSoftSensors(a.Meta, site, rows[i])
+		}
 	}
 
 	// optional projection
