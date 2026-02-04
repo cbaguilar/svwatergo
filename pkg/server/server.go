@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cbaguilar/svwatergo/config"
 	"github.com/cbaguilar/svwatergo/internal/api"
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/database"
@@ -32,6 +33,9 @@ func New(cfg *Config) *Server {
 }
 
 func (s *Server) Start() error {
+	if err := config.LoadDotEnv(".env"); err != nil {
+		log.Printf("Failed to load .env: %v", err)
+	}
 
 	// Here you would initialize and add your specific SystemManagers
 	// e.g., ourIngestionService.Managers["bluerock"] = bluerock.NewBluerockManager(...)
