@@ -224,6 +224,7 @@ func (a *ReportsAPI) sendOperatorReportEmail(report reports.OperatorReport) {
 		To:       a.AdminEmails,
 		Subject:  subject,
 		TextBody: body.String(),
+		ReplyTo:  strings.Join(a.AdminEmails, ", "),
 	}); err != nil {
 		log.Printf("operator report email failed: %v", err)
 	}
