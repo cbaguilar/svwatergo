@@ -4,13 +4,14 @@ import (
 	"net/http"
 
 	"github.com/cbaguilar/svwatergo/internal/auth"
+	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/reports"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, mailSender mail.Sender, adminEmails []string) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -26,7 +27,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 
 	state := NewStateAPI(reg, meta)
 	site := NewSiteAPI(reg, meta)
-	reportsAPI := NewReportsAPI(reportsStore)
+	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
 
 	v1 := r.Group("/api/v1")
 	if authn != nil {

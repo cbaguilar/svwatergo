@@ -10,6 +10,7 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/api"
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/reports"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
@@ -66,11 +67,22 @@ func (s *Server) Start() error {
 	}
 
 	var authn *auth.Auth
+	adminEmails := auth.AdminEmailsFromEnv()
 	if strings.TrimSpace(os.Getenv("AUTH_DISABLED")) == "" {
 		authn = auth.MustNewFromEnv(context.Background())
+		if len(authn.AdminEmails()) > 0 {
+			adminEmails = authn.AdminEmails()
+		}
 	}
 
-	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore)
+	var mailSender mail.Sender
+	if sender, err := mail.NewSMTPSenderFromEnv(); err != nil {
+		log.Printf("SMTP not configured: %v", err)
+	} else {
+		mailSender = sender
+	}
+
+	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, mailSender, adminEmails)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }

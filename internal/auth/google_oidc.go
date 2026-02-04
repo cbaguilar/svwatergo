@@ -69,6 +69,19 @@ func parseAllowlist(s string) map[string]struct{} {
 	return out
 }
 
+func AdminEmailsFromEnv() []string {
+	return adminEmailsFromString(os.Getenv("ADMIN_EMAILS"))
+}
+
+func adminEmailsFromString(s string) []string {
+	seen := parseAllowlist(s)
+	out := make([]string, 0, len(seen))
+	for email := range seen {
+		out = append(out, email)
+	}
+	return out
+}
+
 func (a *Auth) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +137,17 @@ func (a *Auth) RequireAdmin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (a *Auth) AdminEmails() []string {
+	if a == nil {
+		return nil
+	}
+	out := make([]string, 0, len(a.cfg.AdminEmails))
+	for email := range a.cfg.AdminEmails {
+		out = append(out, email)
+	}
+	return out
 }
 
 func IdentityFromContext(ctx context.Context) (Identity, bool) {

@@ -2,17 +2,22 @@ package api
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/auth"
+	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/reports"
 	"github.com/gin-gonic/gin"
 )
 
 type ReportsAPI struct {
-	Store *reports.Store
+	Store       *reports.Store
+	Mail        mail.Sender
+	AdminEmails []string
 }
 
 type createOperatorReportRequest struct {
@@ -31,8 +36,8 @@ type updateOperatorReportRequest struct {
 	Tags     *[]string `json:"tags"`
 }
 
-func NewReportsAPI(store *reports.Store) *ReportsAPI {
-	return &ReportsAPI{Store: store}
+func NewReportsAPI(store *reports.Store, sender mail.Sender, adminEmails []string) *ReportsAPI {
+	return &ReportsAPI{Store: store, Mail: sender, AdminEmails: adminEmails}
 }
 
 func (a *ReportsAPI) CreateOperatorReport(c *gin.Context) {
@@ -73,6 +78,8 @@ func (a *ReportsAPI) CreateOperatorReport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, errJSON("Internal", "create report failed", gin.H{"err": err.Error()}))
 		return
 	}
+
+	a.sendOperatorReportEmail(report)
 	c.JSON(http.StatusCreated, report)
 }
 
@@ -188,4 +195,36 @@ func parseInt(raw string, def int) int {
 		return def
 	}
 	return v
+}
+
+func (a *ReportsAPI) sendOperatorReportEmail(report reports.OperatorReport) {
+	if a.Mail == nil || len(a.AdminEmails) == 0 {
+		return
+	}
+	subject := "Operator report: " + report.Site + " - " + report.Title
+	body := strings.Builder{}
+	body.WriteString("A new operator report was submitted.\n\n")
+	body.WriteString("Site: " + report.Site + "\n")
+	body.WriteString("Title: " + report.Title + "\n")
+	body.WriteString("Status: " + report.Status + "\n")
+	if report.Severity != "" {
+		body.WriteString("Severity: " + report.Severity + "\n")
+	}
+	if len(report.Tags) > 0 {
+		body.WriteString("Tags: " + strings.Join(report.Tags, ", ") + "\n")
+	}
+	body.WriteString("Created At: " + report.CreatedAt.UTC().Format(time.RFC3339) + "\n")
+	if report.CreatedBy != nil && report.CreatedBy.Email != "" {
+		body.WriteString("Created By: " + report.CreatedBy.Email + "\n")
+	}
+	body.WriteString("\n")
+	body.WriteString(report.Body)
+
+	if err := a.Mail.Send(mail.Message{
+		To:       a.AdminEmails,
+		Subject:  subject,
+		TextBody: body.String(),
+	}); err != nil {
+		log.Printf("operator report email failed: %v", err)
+	}
 }
