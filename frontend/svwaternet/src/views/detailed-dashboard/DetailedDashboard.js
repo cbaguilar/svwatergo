@@ -129,16 +129,29 @@ function mergeRows(prev, incoming) {
 
 function nearestRow(rows, ts) {
   if (!rows.length) return null
-  let best = rows[0]
-  let bestDist = Math.abs(toTs(best) - ts)
-  for (let i = 1; i < rows.length; i += 1) {
-    const dist = Math.abs(toTs(rows[i]) - ts)
-    if (dist < bestDist) {
-      best = rows[i]
-      bestDist = dist
+  let lo = 0
+  let hi = rows.length - 1
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    const midTs = toTs(rows[mid])
+    if (midTs < ts) {
+      lo = mid + 1
+    } else if (midTs > ts) {
+      hi = mid - 1
+    } else {
+      return rows[mid]
     }
   }
-  return best
+
+  if (lo >= rows.length) return rows[rows.length - 1]
+  if (hi < 0) return rows[0]
+
+  const loDist = Math.abs(toTs(rows[lo]) - ts)
+  const hiDist = Math.abs(toTs(rows[hi]) - ts)
+  if (loDist < hiDist) {
+    return rows[lo]
+  }
+  return rows[hi]
 }
 
 function formatTsLabel(ts) {
@@ -400,7 +413,7 @@ const DetailedDashboard = () => {
 
   const chartOptions = {
     maintainAspectRatio: false,
-    interaction: { mode: 'nearest', intersect: false },
+    interaction: { mode: 'index', intersect: false },
     scales: {
       x: {
         ticks: { maxTicksLimit: 8 },
