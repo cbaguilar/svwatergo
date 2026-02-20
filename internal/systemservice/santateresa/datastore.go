@@ -15,6 +15,7 @@ const (
 type SantaTeresaDatastore interface {
 	SaveState(state *SantaTeresaState) error
 	GetRange(start, end time.Time) ([]SantaTeresaState, error)
+	GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]SantaTeresaState, error)
 	GetLatest() (SantaTeresaState, error)
 	Coverage() (systemservice.Coverage, error)
 }
@@ -44,6 +45,14 @@ func (s *SantaTeresaDBStore) GetLatest() (SantaTeresaState, error) {
 func (s *SantaTeresaDBStore) GetRange(start, end time.Time) ([]SantaTeresaState, error) {
 	var out []SantaTeresaState
 	if err := s.Store.GetRange(&out, start, end); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *SantaTeresaDBStore) GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]SantaTeresaState, error) {
+	var out []SantaTeresaState
+	if err := s.Store.GetRangeSampled(&out, start, end, sample, maxPoints); err != nil {
 		return nil, err
 	}
 	return out, nil

@@ -13,6 +13,11 @@ type SystemManager interface {
 	Coverage() (Coverage, error)
 }
 
+// Optional capability: range queries with backend-side sampling/downsampling.
+type SampledRangeManager interface {
+	GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]map[string]interface{}, error)
+}
+
 // get range and return json serializable data
 type SystemState interface {
 	ToSqlQuery() (string, []interface{})

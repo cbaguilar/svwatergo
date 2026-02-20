@@ -15,6 +15,7 @@ const (
 type PryorFarmDatastore interface {
 	SaveState(state *PryorFarmState) error
 	GetRange(start, end time.Time) ([]PryorFarmState, error)
+	GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]PryorFarmState, error)
 	GetLatest() (PryorFarmState, error)
 	Coverage() (systemservice.Coverage, error)
 }
@@ -44,6 +45,14 @@ func (s *PryorFarmDBStore) GetLatest() (PryorFarmState, error) {
 func (s *PryorFarmDBStore) GetRange(start, end time.Time) ([]PryorFarmState, error) {
 	var out []PryorFarmState
 	if err := s.Store.GetRange(&out, start, end); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *PryorFarmDBStore) GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]PryorFarmState, error) {
+	var out []PryorFarmState
+	if err := s.Store.GetRangeSampled(&out, start, end, sample, maxPoints); err != nil {
 		return nil, err
 	}
 	return out, nil

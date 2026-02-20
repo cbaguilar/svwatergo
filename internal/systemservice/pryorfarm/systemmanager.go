@@ -54,6 +54,14 @@ func (m *PryorFarmManager) GetRange(start, end time.Time) ([]map[string]interfac
 	return util.StructsToMaps(rows)
 }
 
+func (m *PryorFarmManager) GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]map[string]interface{}, error) {
+	rows, err := m.DB.GetRangeSampled(start, end, sample, maxPoints)
+	if err != nil {
+		return nil, err
+	}
+	return util.StructsToMaps(rows)
+}
+
 func (m *PryorFarmManager) Coverage() (systemservice.Coverage, error) {
 	return m.DB.Coverage()
 }

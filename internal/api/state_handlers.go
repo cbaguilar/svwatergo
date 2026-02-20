@@ -4,7 +4,9 @@ package api
 import (
 	"encoding/csv"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -129,8 +131,23 @@ func (a *StateAPI) GetRange(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errJSON("BadRequest", "invalid start/end", gin.H{"start": startStr, "end": endStr}))
 		return
 	}
+	sample := qenum(c.Query("sample"), "none", []string{"none", "stride", "bin"})
+	maxPts := qint(c.Query("max_points"), 0)
+	method := qenum(c.Query("smooth"), "none", []string{"none", "median", "mean", "gauss"})
+	window := qint(c.Query("window"), 0)
 
-	rows, err := mgr.GetRange(start, end)
+	sampledInDB := false
+	var rows []map[string]interface{}
+	var err error
+	if sample != "none" && maxPts > 0 {
+		if sampledMgr, ok := mgr.(systemservice.SampledRangeManager); ok {
+			rows, err = sampledMgr.GetRangeSampled(start, end, sample, maxPts)
+			sampledInDB = err == nil
+		}
+	}
+	if rows == nil && err == nil {
+		rows, err = mgr.GetRange(start, end)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errJSON("Internal", "get range error", gin.H{"err": err.Error()}))
 		return
@@ -155,14 +172,10 @@ func (a *StateAPI) GetRange(c *gin.Context) {
 		return
 	}
 
-	// optional smoothing + downsampling
-	method := qenum(c.Query("smooth"), "none", []string{"none", "median", "mean", "gauss"})
-	window := qint(c.Query("window"), 0)
-	sample := qenum(c.Query("sample"), "none", []string{"none", "stride", "bin"})
-	maxPts := qint(c.Query("max_points"), 0)
-
-	rows = smooth(rows, method, window)     // implement as no-op if method=="none"
-	rows = downsample(rows, sample, maxPts) // no-op if sample=="none" or maxPts==0
+	rows = smooth(rows, method, window) // implement as no-op if method=="none"
+	if !sampledInDB {
+		rows = downsample(rows, sample, maxPts) // no-op if sample=="none" or maxPts==0
+	}
 
 	// optional pagination (cursor opaque over last recordtime+id if you keep one)
 	cursor := "" // set if you implement server-side pagination
@@ -214,7 +227,11 @@ func qint(s string, def int) int {
 	if s == "" {
 		return def
 	}
-	return def
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return def
+	}
+	return n
 }
 func qenum(s, def string, allowed []string) string {
 	if s == "" {
@@ -227,5 +244,37 @@ func qenum(s, def string, allowed []string) string {
 	}
 	return def
 }
-func smooth(rows []map[string]any, method string, window int) []map[string]any     { return rows }
-func downsample(rows []map[string]any, method string, maxPts int) []map[string]any { return rows }
+func smooth(rows []map[string]any, method string, window int) []map[string]any { return rows }
+func downsample(rows []map[string]any, method string, maxPts int) []map[string]any {
+	if method == "none" || maxPts <= 0 || len(rows) <= maxPts {
+		return rows
+	}
+
+	switch method {
+	case "stride":
+		step := int(math.Ceil(float64(len(rows)) / float64(maxPts)))
+		if step < 1 {
+			step = 1
+		}
+		out := make([]map[string]any, 0, maxPts)
+		for i := 0; i < len(rows); i += step {
+			out = append(out, rows[i])
+		}
+		// Ensure latest point is included.
+		last := rows[len(rows)-1]
+		lastTs := fmt.Sprintf("%v", last["plctime"])
+		outLastTs := ""
+		if len(out) > 0 {
+			outLastTs = fmt.Sprintf("%v", out[len(out)-1]["plctime"])
+		}
+		if len(out) == 0 || outLastTs != lastTs {
+			out = append(out, last)
+		}
+		if len(out) > maxPts {
+			return out[:maxPts]
+		}
+		return out
+	default:
+		return rows
+	}
+}

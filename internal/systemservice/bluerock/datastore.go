@@ -17,6 +17,7 @@ type BluerockDatastore interface {
 	SaveState(state *BluerockState) error
 	// GetRange now returns the concrete type, making the manager's job easier
 	GetRange(start, end time.Time) ([]BluerockState, error)
+	GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]BluerockState, error)
 	GetLatest() (BluerockState, error)
 	Coverage() (systemservice.Coverage, error)
 }
@@ -46,6 +47,14 @@ func (b *BluerockDBStore) GetLatest() (BluerockState, error) {
 func (b *BluerockDBStore) GetRange(start, end time.Time) ([]BluerockState, error) {
 	var out []BluerockState
 	if err := b.Store.GetRange(&out, start, end); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (b *BluerockDBStore) GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]BluerockState, error) {
+	var out []BluerockState
+	if err := b.Store.GetRangeSampled(&out, start, end, sample, maxPoints); err != nil {
 		return nil, err
 	}
 	return out, nil

@@ -14,6 +14,8 @@ export function fetchStateRange(site, { start, end, soft = true, signal } = {}) 
   if (start) params.set('start', start)
   if (end) params.set('end', end)
   if (soft) params.set('soft', 'include')
+  params.set('sample', 'stride')
+  params.set('max_points', '1000')
   const path = `/api/v1/sites/${safeSite}/state?${params.toString()}`
   return apiGet(path, { signal })
 }

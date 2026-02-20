@@ -55,6 +55,14 @@ func (m *SantaTeresaManager) GetRange(start, end time.Time) ([]map[string]interf
 	return util.StructsToMaps(rows)
 }
 
+func (m *SantaTeresaManager) GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]map[string]interface{}, error) {
+	rows, err := m.DB.GetRangeSampled(start, end, sample, maxPoints)
+	if err != nil {
+		return nil, err
+	}
+	return util.StructsToMaps(rows)
+}
+
 func (m *SantaTeresaManager) Coverage() (systemservice.Coverage, error) {
 	return m.DB.Coverage()
 }

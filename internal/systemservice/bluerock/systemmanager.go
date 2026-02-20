@@ -60,6 +60,14 @@ func (b *BluerockManager) GetRange(start time.Time, end time.Time) ([]map[string
 	return util.StructsToMaps(rows)
 }
 
+func (b *BluerockManager) GetRangeSampled(start time.Time, end time.Time, sample string, maxPoints int) ([]map[string]interface{}, error) {
+	rows, err := b.DB.GetRangeSampled(start, end, sample, maxPoints)
+	if err != nil {
+		return nil, err
+	}
+	return util.StructsToMaps(rows)
+}
+
 func (b *BluerockManager) Coverage() (systemservice.Coverage, error) {
 	return b.DB.Coverage()
 }

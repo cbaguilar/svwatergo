@@ -49,6 +49,42 @@ func (s *SQLStore) GetRange(dest any, start, end time.Time) error {
 	return s.Client.DB.Select(dest, q, start, end)
 }
 
+func (s *SQLStore) GetRangeSampled(dest any, start, end time.Time, sample string, maxPoints int) error {
+	// For SQLite or disabled sampling, use the normal range path.
+	if s.Client.Driver != "postgres" || sample == "none" || maxPoints <= 0 {
+		return s.GetRange(dest, start, end)
+	}
+
+	switch sample {
+	case "stride":
+		// Push down downsampling into Postgres: split ordered rows into buckets and
+		// pick the earliest row from each bucket.
+		q := fmt.Sprintf(`
+WITH filtered AS (
+  SELECT * FROM %s
+  WHERE plctime BETWEEN ? AND ?
+),
+bucketed AS (
+  SELECT filtered.*, ntile(?) OVER (ORDER BY plctime) AS b
+  FROM filtered
+),
+picked AS (
+  SELECT * FROM (
+    SELECT bucketed.*, row_number() OVER (PARTITION BY b ORDER BY plctime) AS rn
+    FROM bucketed
+  ) x
+  WHERE rn = 1
+)
+SELECT * FROM picked
+ORDER BY plctime ASC
+`, s.TableName)
+		q = s.Client.DB.Rebind(q)
+		return s.Client.DB.Select(dest, q, start, end, maxPoints)
+	default:
+		return s.GetRange(dest, start, end)
+	}
+}
+
 func (s *SQLStore) Coverage() (Coverage, error) {
 	q := fmt.Sprintf(`
 SELECT
