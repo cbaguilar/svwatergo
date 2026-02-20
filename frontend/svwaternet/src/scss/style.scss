@@ -6,6 +6,7 @@
 
 body {
   background-color: var(--cui-tertiary-bg);
+  color-scheme: light dark;
 }
 
 .wrapper {
@@ -56,6 +57,20 @@ body {
   min-height: calc(3rem + 1px); // stylelint-disable-line function-disallowed-list
 }
 
+.detailed-schematic-card {
+  background-color: var(--cui-body-bg);
+}
+
+.detailed-schematic-body {
+  min-height: 520px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--cui-tertiary-bg);
+  border-radius: calc(var(--cui-card-border-radius) - 1px);
+  color-scheme: light dark;
+}
+
 @include color-mode(dark) {
   body {
     background-color: var(--cui-dark-bg-subtle);
@@ -63,5 +78,9 @@ body {
 
   .footer {
     --cui-footer-bg: var(--cui-body-bg);
+  }
+
+  .detailed-schematic-body {
+    background-color: var(--cui-secondary-bg);
   }
 }

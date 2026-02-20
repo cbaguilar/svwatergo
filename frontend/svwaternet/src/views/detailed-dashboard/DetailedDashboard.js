@@ -1,4 +1,5 @@
 import React from 'react'
+import { useSelector } from 'react-redux'
 import {
   CBadge,
   CCard,
@@ -8,13 +9,12 @@ import {
   CFormCheck,
   CFormInput,
   CFormLabel,
-  CNav,
-  CNavItem,
-  CNavLink,
   CRow,
 } from '@coreui/react'
 
 import BluerockSchematic from '../../components/detailed/BluerockSchematic'
+import SantaTeresaPryorFarmsSchematic from '../../components/detailed/SantaTeresaPryorFarmsSchematic'
+import PryorFarmsSchematic from '../../components/detailed/PryorFarmsSchematic'
 
 const buildMockMd = () => {
   return {
@@ -29,7 +29,14 @@ const buildMockMd = () => {
 }
 
 const DetailedDashboard = () => {
+  const selectedSystem = useSelector((state) => state.selectedSystem)
   const md = buildMockMd()
+  const Schematic =
+    selectedSystem === 'Bluerock'
+      ? BluerockSchematic
+      : selectedSystem === 'Pryor Farms'
+        ? PryorFarmsSchematic
+        : SantaTeresaPryorFarmsSchematic
 
   return (
     <>
@@ -41,25 +48,12 @@ const DetailedDashboard = () => {
       </CRow>
 
       <CRow className="mb-4">
-        <CCol>
-          <CNav variant="tabs">
-            <CNavItem>
-              <CNavLink>Basic System Overview</CNavLink>
-            </CNavItem>
-            <CNavItem>
-              <CNavLink active>Live System Schematic</CNavLink>
-            </CNavItem>
-          </CNav>
-        </CCol>
-      </CRow>
-
-      <CRow className="mb-4">
         <CCol lg={8} className="mb-4 mb-lg-0">
-          <CCard>
+          <CCard className="detailed-schematic-card">
             <CCardHeader>Detailed Process Flow</CCardHeader>
-            <CCardBody style={{ minHeight: 520 }}>
+            <CCardBody className="detailed-schematic-body">
               <div className="w-100" style={{ height: 500 }}>
-                <BluerockSchematic md={md} />
+                <Schematic md={md} />
               </div>
             </CCardBody>
           </CCard>

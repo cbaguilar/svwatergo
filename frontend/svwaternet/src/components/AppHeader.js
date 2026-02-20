@@ -18,6 +18,7 @@ const AppHeader = () => {
 
   const dispatch = useDispatch()
   const sidebarShow = useSelector((state) => state.sidebarShow)
+  const selectedSystem = useSelector((state) => state.selectedSystem)
 
   useEffect(() => {
     const handleScroll = () => {
@@ -43,8 +44,18 @@ const AppHeader = () => {
         </CHeaderNav>
         <CHeaderNav className="align-items-center">
           <span className="me-2 small text-body-secondary">WaTeR System ID:</span>
-          <CFormSelect size="sm" className="me-3" aria-label="Water System ID">
-            <option>Bluerock</option>
+          <CFormSelect
+            size="sm"
+            className="me-3"
+            aria-label="Water System ID"
+            value={selectedSystem}
+            onChange={(event) => {
+              dispatch({ type: 'set', selectedSystem: event.target.value })
+            }}
+          >
+            <option value="Bluerock">Bluerock</option>
+            <option value="Santa Teresa">Santa Teresa</option>
+            <option value="Pryor Farms">Pryor Farms</option>
           </CFormSelect>
           <AppHeaderDropdown />
         </CHeaderNav>
