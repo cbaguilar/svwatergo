@@ -40,7 +40,7 @@ const AppHeader = () => {
           <CIcon icon={cilMenu} size="lg" />
         </CHeaderToggler>
         <CHeaderNav className="me-auto app-header-title">
-          <div className="fw-semibold">WaTeRSystem</div>
+          <div className="fw-semibold">WaTeR System</div>
         </CHeaderNav>
         <CHeaderNav className="align-items-center app-header-controls">
           <span className="me-2 small text-body-secondary app-header-label">WaTeR System ID:</span>

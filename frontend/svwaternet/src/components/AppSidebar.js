@@ -33,7 +33,7 @@ const AppSidebar = () => {
     >
       <CSidebarHeader className="border-bottom">
         <CSidebarBrand to="/" className="d-flex align-items-center">
-          <span className="sidebar-brand-full fw-semibold">WaTeRSystem</span>
+          <span className="sidebar-brand-full fw-semibold">WaTeR System</span>
           <span className="sidebar-brand-narrow fw-semibold">WS</span>
         </CSidebarBrand>
         <CCloseButton
