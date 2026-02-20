@@ -8,6 +8,7 @@ import {
   CCardHeader,
   CCol,
   CFormCheck,
+  CFormInput,
   CFormSelect,
   CRow,
 } from '@coreui/react'
@@ -88,6 +89,7 @@ const PRESETS = {
   '1h': { label: 'Past 1 Hour', ms: 60 * 60 * 1000 },
   '6h': { label: 'Past 6 Hours', ms: 6 * 60 * 60 * 1000 },
   '24h': { label: 'Past 24 Hours', ms: 24 * 60 * 60 * 1000 },
+  '7d': { label: 'Past 7 Days', ms: 7 * 24 * 60 * 60 * 1000 },
 }
 
 const DEFAULT_METRIC_KEY = 'permeateflow'
@@ -149,6 +151,21 @@ function rangeBoundsFromPreset(preset) {
   return { start: start.toISOString(), end: end.toISOString() }
 }
 
+function isoToLocalInputValue(iso) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const offsetMs = d.getTimezoneOffset() * 60 * 1000
+  const local = new Date(d.getTime() - offsetMs)
+  return local.toISOString().slice(0, 16)
+}
+
+function localInputToISO(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toISOString()
+}
+
 function inferSensorType(rows, key) {
   const configured = SENSOR_META[key]?.type
   if (configured) return configured
@@ -188,6 +205,15 @@ const DetailedDashboard = () => {
   const [focusedTs, setFocusedTs] = useState(null)
   const [frozenTs, setFrozenTs] = useState(null)
   const [timePreset, setTimePreset] = useState('1h')
+  const initialBounds = rangeBoundsFromPreset('1h')
+  const [rangeStartInput, setRangeStartInput] = useState(isoToLocalInputValue(initialBounds.start))
+  const [rangeEndInput, setRangeEndInput] = useState(isoToLocalInputValue(initialBounds.end))
+  const [activeRange, setActiveRange] = useState({
+    kind: 'preset',
+    preset: '1h',
+    start: initialBounds.start,
+    end: initialBounds.end,
+  })
   const [selectedMetricKey, setSelectedMetricKey] = useState(DEFAULT_METRIC_KEY)
 
   const siteKey =
@@ -222,12 +248,11 @@ const DetailedDashboard = () => {
 
   useEffect(() => {
     const controller = new AbortController()
-    const bounds = rangeBoundsFromPreset(timePreset)
 
     fetchStateRange(siteKey, {
       signal: controller.signal,
-      start: bounds.start,
-      end: bounds.end,
+      start: activeRange.start,
+      end: activeRange.end,
       soft: true,
     })
       .then((payload) => {
@@ -243,7 +268,7 @@ const DetailedDashboard = () => {
       })
 
     return () => controller.abort()
-  }, [siteKey, timePreset])
+  }, [siteKey, activeRange])
 
   useEffect(() => {
     let active = true
@@ -385,52 +410,90 @@ const DetailedDashboard = () => {
     },
   }
 
-  const activeRangeLabel = PRESETS[timePreset]?.label || 'Custom Range'
+  const activeRangeLabel =
+    activeRange.kind === 'preset'
+      ? PRESETS[activeRange.preset]?.label || 'Preset'
+      : `${new Date(activeRange.start).toLocaleString()} to ${new Date(activeRange.end).toLocaleString()}`
+
+  const applyPreset = (preset) => {
+    const bounds = rangeBoundsFromPreset(preset)
+    setTimePreset(preset)
+    setRangeStartInput(isoToLocalInputValue(bounds.start))
+    setRangeEndInput(isoToLocalInputValue(bounds.end))
+    setActiveRange({ kind: 'preset', preset, start: bounds.start, end: bounds.end })
+  }
+
+  const applyCustomRange = () => {
+    const start = localInputToISO(rangeStartInput)
+    const end = localInputToISO(rangeEndInput)
+    if (!start || !end) {
+      setStateError('Invalid custom time range')
+      return
+    }
+    if (new Date(start).getTime() >= new Date(end).getTime()) {
+      setStateError('Range start must be before end')
+      return
+    }
+    setStateError('')
+    setActiveRange({ kind: 'custom', preset: null, start, end })
+  }
 
   return (
     <>
-      <CRow className="mb-4">
-        <CCol lg={8} className="mb-4 mb-lg-0">
-          <CCard className="detailed-schematic-card">
-            <CCardHeader>Detailed Process Flow</CCardHeader>
-            <CCardBody className="detailed-schematic-body">
-              <div className="w-100" style={{ height: 500 }}>
-                <Schematic md={md} />
-              </div>
-            </CCardBody>
-          </CCard>
-        </CCol>
-        <CCol lg={4}>
+      <CRow className="mb-3">
+        <CCol>
           <CCard>
-            <CCardHeader>Time Controls</CCardHeader>
-            <CCardBody>
-              <div className="d-flex align-items-center gap-2 mb-3">
-                <CFormCheck
-                  id="liveData"
-                  label="Live Data"
-                  checked={isLivePlaying}
-                  onChange={(e) => {
-                    const next = e.target.checked
-                    setIsLivePlaying(next)
-                    if (next) {
-                      setFocusedTs(null)
-                      setFrozenTs(null)
-                    }
-                  }}
-                />
-              </div>
-              <div className="d-flex align-items-center gap-2 mb-2">
-                <CFormSelect
-                  value={timePreset}
-                  onChange={(e) => setTimePreset(e.target.value)}
-                  options={Object.entries(PRESETS).map(([value, cfg]) => ({ value, label: cfg.label }))}
-                />
-              </div>
-              <div className="small text-body-secondary mb-3">{activeRangeLabel} (UTC)</div>
-              <div className="d-flex gap-2">
+            <CCardBody style={{ paddingTop: '0.75rem', paddingBottom: '0.75rem' }}>
+              <div className="d-flex flex-wrap align-items-end gap-2">
+                <div className="d-flex align-items-center me-2">
+                  <CFormCheck
+                    id="liveData"
+                    label="Live Data"
+                    checked={isLivePlaying}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                      setIsLivePlaying(next)
+                      if (next) {
+                        setFocusedTs(null)
+                        setFrozenTs(null)
+                      }
+                    }}
+                  />
+                </div>
+                <div style={{ minWidth: 190 }}>
+                  <CFormSelect
+                    size="sm"
+                    value={timePreset}
+                    onChange={(e) => applyPreset(e.target.value)}
+                    options={Object.entries(PRESETS).map(([value, cfg]) => ({ value, label: cfg.label }))}
+                  />
+                </div>
+                <div style={{ minWidth: 190 }}>
+                  <CFormInput
+                    size="sm"
+                    type="datetime-local"
+                    value={rangeStartInput}
+                    onChange={(e) => setRangeStartInput(e.target.value)}
+                  />
+                </div>
+                <div style={{ minWidth: 190 }}>
+                  <CFormInput
+                    size="sm"
+                    type="datetime-local"
+                    value={rangeEndInput}
+                    onChange={(e) => setRangeEndInput(e.target.value)}
+                  />
+                </div>
+                <CButton color="secondary" variant="outline" size="sm" onClick={applyCustomRange}>
+                  Apply
+                </CButton>
+                <CButton color="secondary" variant="ghost" size="sm" onClick={() => applyPreset(timePreset)}>
+                  Reset
+                </CButton>
                 <CButton
                   color={isLivePlaying ? 'primary' : 'secondary'}
                   variant={isLivePlaying ? undefined : 'outline'}
+                  size="sm"
                   onClick={() => {
                     setIsLivePlaying((v) => !v)
                     if (!isLivePlaying) {
@@ -444,6 +507,7 @@ const DetailedDashboard = () => {
                   <CButton
                     color="success"
                     variant="outline"
+                    size="sm"
                     onClick={() => {
                       setFocusedTs(null)
                       setFrozenTs(null)
@@ -453,10 +517,26 @@ const DetailedDashboard = () => {
                     Back to Live
                   </CButton>
                 )}
+                <div className="small text-body-secondary ms-auto">{activeRangeLabel} (UTC)</div>
               </div>
             </CCardBody>
           </CCard>
-          <CCard className="mt-4">
+        </CCol>
+      </CRow>
+
+      <CRow className="mb-4">
+        <CCol lg={8} className="mb-4 mb-lg-0">
+          <CCard className="detailed-schematic-card">
+            <CCardHeader>Detailed Process Flow</CCardHeader>
+            <CCardBody className="detailed-schematic-body">
+              <div className="w-100" style={{ height: 500 }}>
+                <Schematic md={md} />
+              </div>
+            </CCardBody>
+          </CCard>
+        </CCol>
+        <CCol lg={4}>
+          <CCard>
             <CCardHeader>Sensor Status</CCardHeader>
             <CCardBody>
               <div className="d-flex justify-content-between align-items-center mb-2">

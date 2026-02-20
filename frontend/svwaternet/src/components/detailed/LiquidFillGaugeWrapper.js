@@ -11,6 +11,7 @@ export function LiquidFillGaugeWrapper({
 }) {
     let percent_full = (parseFloat(`${fillLevel}`)/100);
     let percent_full_draw = Math.max(Math.min(percent_full, 1), 0);
+    const percentLabel = Math.round(percent_full_draw * 100);
     return (<>
         {/* <LiquidFillGauge // rerendering this was causing memory leaks :(
             scale={1.5}
@@ -37,7 +38,7 @@ export function LiquidFillGaugeWrapper({
                 alignmentBaseline="middle"
                 fontSize={"1.5rem"}
                 strokeWidth="0"
-                fill="#000">{`${(percent_full * 100).toFixed(2)}%`}
+                fill="#000">{`${percentLabel}%`}
             </text>
             <RelativeText
                 dir="right"

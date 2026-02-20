@@ -69,13 +69,13 @@ export function SensorIndicator({
         <>
             <g transform={transstr} onClick={on_click}>
                 {sensorLine}
-                <circle cx="0" cy="0" r="20" fill={color} stroke="#000" strokeWidth="2" />
+                <circle cx="0" cy="0" r="23" fill={color} stroke="#000" strokeWidth="2" />
                 <text
                     x="0"
                     y="2"
                     textAnchor="middle"
                     alignmentBaseline="middle"
-                    fontSize={smallInner ? "14" : "20"}
+                    fontSize={smallInner ? "13" : "16"}
                     fill="#000">
                     {innerText}
                 </text>
@@ -83,7 +83,7 @@ export function SensorIndicator({
                     dir="right"
                     textDir={textDir}
                     text={outerText}
-                    positions={[[0, -28], [25, 2], [0, 32], [-25, 2]]}
+                    positions={[[0, -34], [32, 2], [0, 38], [-32, 2]]}
                     small
                 />
                 { loadIfBlank && (innerText == "" || innerText == undefined) &&
