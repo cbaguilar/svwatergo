@@ -201,6 +201,7 @@ const DetailedDashboard = () => {
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const [timelineRows, setTimelineRows] = useState([])
   const [stateError, setStateError] = useState('')
+  const [streamState, setStreamState] = useState('connecting')
   const [isLivePlaying, setIsLivePlaying] = useState(true)
   const [focusedTs, setFocusedTs] = useState(null)
   const [frozenTs, setFrozenTs] = useState(null)
@@ -278,8 +279,13 @@ const DetailedDashboard = () => {
 
     const openSocket = () => {
       if (!active) return
+      setStreamState((prev) => (prev === 'connected' ? 'connected' : 'connecting'))
       ws = subscribeLatestState(siteKey, {
         soft: true,
+        onOpen: () => {
+          if (!active) return
+          setStreamState('connected')
+        },
         onMessage: (payload) => {
           if (!active || payload?.type !== 'state.latest' || !payload?.data) return
           setTimelineRows((prev) => mergeRows(prev, [payload.data]))
@@ -289,6 +295,7 @@ const DetailedDashboard = () => {
 
       ws.onclose = () => {
         if (!active) return
+        setStreamState('reconnecting')
         reconnectTimer = setTimeout(openSocket, retryDelayMs)
         retryDelayMs = Math.min(retryDelayMs * 2, 10000)
       }
@@ -297,6 +304,7 @@ const DetailedDashboard = () => {
     openSocket()
     return () => {
       active = false
+      setStreamState('disconnected')
       if (reconnectTimer) clearTimeout(reconnectTimer)
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close()
@@ -339,6 +347,7 @@ const DetailedDashboard = () => {
       return { ts: toTs(row), val }
     })
     .filter((p) => p.ts > 0)
+  const focusedIndex = focusedTs ? chartPoints.findIndex((p) => p.ts === focusedTs) : -1
 
   const chartData = {
     labels: chartPoints.map((p) => formatTsLabel(p.ts)),
@@ -352,8 +361,12 @@ const DetailedDashboard = () => {
         borderColor: selectedMetricType === 'boolean' ? '#22c55e' : '#0ea5e9',
         backgroundColor:
           selectedMetricType === 'boolean' ? 'rgba(34,197,94,0.28)' : 'rgba(14,165,233,0.15)',
-        pointRadius: 0,
         pointHoverRadius: 4,
+        pointBackgroundColor: chartPoints.map((_p, idx) =>
+          idx === focusedIndex ? '#f59e0b' : selectedMetricType === 'boolean' ? '#22c55e' : '#0ea5e9',
+        ),
+        pointBorderColor: chartPoints.map((_p, idx) => (idx === focusedIndex ? '#f59e0b' : 'transparent')),
+        pointRadius: chartPoints.map((_p, idx) => (idx === focusedIndex ? 4 : 0)),
         borderWidth: 2,
         fill: true,
         tension: selectedMetricType === 'boolean' ? 0 : 0.2,
@@ -369,6 +382,7 @@ const DetailedDashboard = () => {
       x: {
         ticks: { maxTicksLimit: 8 },
         grid: { color: 'rgba(120,120,120,0.15)' },
+        title: { display: true, text: 'Time' },
       },
       y: {
         beginAtZero: true,
@@ -382,6 +396,10 @@ const DetailedDashboard = () => {
                 callback: (value) => (Number(value) >= 1 ? 'On' : 'Off'),
               }
             : undefined,
+        title: {
+          display: true,
+          text: selectedMetricType === 'boolean' ? 'State' : selectedMetricUnit || 'Value',
+        },
       },
     },
     plugins: {
@@ -437,6 +455,15 @@ const DetailedDashboard = () => {
     setStateError('')
     setActiveRange({ kind: 'custom', preset: null, start, end })
   }
+
+  const streamBadge =
+    streamState === 'connected' ? (
+      <CBadge color="success">Connected</CBadge>
+    ) : streamState === 'reconnecting' || streamState === 'connecting' ? (
+      <CBadge color="warning">Reconnecting...</CBadge>
+    ) : (
+      <CBadge color="secondary">Disconnected</CBadge>
+    )
 
   return (
     <>
@@ -517,6 +544,10 @@ const DetailedDashboard = () => {
                     Back to Live
                   </CButton>
                 )}
+                <CBadge color={focusedTs ? 'warning' : isLivePlaying ? 'success' : 'secondary'}>
+                  {focusedTs ? 'FOCUSED' : isLivePlaying ? 'LIVE' : 'PAUSED'}
+                </CBadge>
+                {streamBadge}
                 <div className="small text-body-secondary ms-auto">{activeRangeLabel} (UTC)</div>
               </div>
             </CCardBody>
@@ -577,14 +608,34 @@ const DetailedDashboard = () => {
           <CCard>
             <CCardHeader>
               Live Trend - {selectedMetricLabel}
+              {!focusedTs && isLivePlaying && (
+                <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                  Following latest
+                </span>
+              )}
               {focusedTs && (
                 <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
                   Focused at {new Date(focusedTs).toLocaleString()}
                 </span>
               )}
+              {focusedTs && (
+                <CButton
+                  color="success"
+                  variant="outline"
+                  size="sm"
+                  className="ms-2"
+                  onClick={() => {
+                    setFocusedTs(null)
+                    setFrozenTs(null)
+                    setIsLivePlaying(true)
+                  }}
+                >
+                  Back to Live
+                </CButton>
+              )}
             </CCardHeader>
             <CCardBody>
-              <div style={{ height: 260 }}>
+              <div style={{ height: 320 }}>
                 <CChartLine data={chartData} options={chartOptions} />
               </div>
             </CCardBody>
