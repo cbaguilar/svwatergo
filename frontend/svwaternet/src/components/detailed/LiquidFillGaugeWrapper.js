@@ -1,7 +1,14 @@
 import React from 'react';
 import { RelativeText } from './RelativeText';
 
-export function LiquidFillGaugeWrapper({ x = "0", y = "0", fillLevel = 50, text = "", textDir = "right" }) {
+export function LiquidFillGaugeWrapper({
+    x = "0",
+    y = "0",
+    fillLevel = 50,
+    text = "",
+    textDir = "right",
+    fillColor = "#68b7fc"
+}) {
     let percent_full = (parseFloat(`${fillLevel}`)/100);
     let percent_full_draw = Math.max(Math.min(percent_full, 1), 0);
     return (<>
@@ -22,7 +29,7 @@ export function LiquidFillGaugeWrapper({ x = "0", y = "0", fillLevel = 50, text 
                 x={`${-26}`} y={`${41 - percent_full_draw * 69}`}
                 width="54" 
                 height={`${percent_full_draw * 69}` } 
-                fill="#68b7fc" 
+                fill={fillColor} 
                 strokeWidth="0" />}
             <text
                 x="0" y="5"
