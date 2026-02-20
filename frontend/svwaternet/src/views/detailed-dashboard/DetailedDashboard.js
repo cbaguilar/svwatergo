@@ -95,7 +95,7 @@ const PRESETS = {
 const DEFAULT_METRIC_KEY = 'permeateflow'
 
 function toTs(row) {
-  const raw = row?.recordtime || row?.plctime
+  const raw = row?.plctime || row?.recordtime
   if (!raw) return 0
   const t = new Date(raw).getTime()
   return Number.isNaN(t) ? 0 : t
