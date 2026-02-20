@@ -9,7 +9,8 @@ import (
 
 // Data ingestion type
 type DataIngestionService struct {
-	Reg Registry
+	Reg      Registry
+	OnIngest func(site string)
 }
 
 func (s *DataIngestionService) Consume(rawData []byte) error {
@@ -31,5 +32,11 @@ func (s *DataIngestionService) Consume(rawData []byte) error {
 	if !exists {
 		return fmt.Errorf("no manager found for location: %s", key)
 	}
-	return mgr.SaveData(rawData)
+	if err := mgr.SaveData(rawData); err != nil {
+		return err
+	}
+	if s.OnIngest != nil {
+		s.OnIngest(key)
+	}
+	return nil
 }

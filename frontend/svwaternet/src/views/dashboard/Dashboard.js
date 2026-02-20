@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux'
 import { CCard, CCardBody, CCardHeader, CCol, CRow } from '@coreui/react'
 import SimplifiedROSystem from '../../components/SimplifiedROSystem'
 import { fetchLatestState } from '../../api/state'
+import { subscribeLatestState } from '../../api/stateStream'
 
 const Dashboard = () => {
   const selectedSystem = useSelector((state) => state.selectedSystem)
@@ -64,6 +65,50 @@ const Dashboard = () => {
     return () => {
       active = false
       controller.abort()
+    }
+  }, [siteKey])
+
+  useEffect(() => {
+    let active = true
+    let ws = null
+    let reconnectTimer = null
+    let retryDelayMs = 1000
+
+    const openSocket = () => {
+      if (!active) return
+      ws = subscribeLatestState(siteKey, {
+        soft: true,
+        onMessage: (payload) => {
+          if (!active) return
+          if (payload?.type === 'state.latest') {
+            setLatestState({
+              data: payload.data || {},
+              meta: payload.meta || {},
+            })
+            setStateError('')
+            setLoadingState(false)
+          }
+        },
+        onError: () => {
+          // onclose handles reconnect scheduling
+        },
+      })
+
+      ws.onclose = () => {
+        if (!active) return
+        reconnectTimer = setTimeout(openSocket, retryDelayMs)
+        retryDelayMs = Math.min(retryDelayMs * 2, 10000)
+      }
+    }
+
+    openSocket()
+
+    return () => {
+      active = false
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close()
+      }
     }
   }, [siteKey])
 

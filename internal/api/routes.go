@@ -26,8 +26,10 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	})
 
 	state := NewStateAPI(reg, meta)
+	liveState := NewLiveStateAPI(reg, meta)
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
+	ingestion.OnIngest = liveState.NotifySiteUpdated
 
 	v1 := r.Group("/api/v1")
 	if authn != nil {
@@ -36,6 +38,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	{
 		sites := v1.Group("/sites/:site")
 		sites.GET("/state/latest", state.GetLatest)
+		sites.GET("/state/stream", liveState.StreamLatest)
 		sites.GET("/state", state.GetRange) // ?start=&end=&fields=&sample=&max_points=&smooth=&window=
 		sites.GET("/metadata", site.GetMetadata)
 		sites.GET("/coverage", site.GetCoverage)
