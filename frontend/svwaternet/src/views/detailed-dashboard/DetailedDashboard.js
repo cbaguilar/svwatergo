@@ -41,13 +41,6 @@ const DetailedDashboard = () => {
   return (
     <>
       <CRow className="mb-4">
-        <CCol>
-          <h2 className="mb-1">Dashboard</h2>
-          <div className="text-body-secondary">Basic System Overview</div>
-        </CCol>
-      </CRow>
-
-      <CRow className="mb-4">
         <CCol lg={8} className="mb-4 mb-lg-0">
           <CCard className="detailed-schematic-card">
             <CCardHeader>Detailed Process Flow</CCardHeader>

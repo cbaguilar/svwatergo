@@ -21,6 +21,29 @@ body {
   min-height: calc(4rem + 1px); // stylelint-disable-line function-disallowed-list
 }
 
+.app-header-bar {
+  min-height: 3.25rem;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+.app-header-title {
+  padding-block: 0.15rem;
+}
+
+.app-header-controls {
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.app-header-label {
+  white-space: nowrap;
+}
+
+.app-header-select {
+  min-width: 160px;
+}
+
 .sidebar-brand-full {
   margin-left: 3px;
 }

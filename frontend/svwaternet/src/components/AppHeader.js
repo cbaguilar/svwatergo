@@ -32,21 +32,21 @@ const AppHeader = () => {
 
   return (
     <CHeader position="sticky" className="mb-4 p-0" ref={headerRef}>
-      <CContainer className="border-bottom px-4" fluid>
+      <CContainer className="border-bottom px-4 app-header-bar" fluid>
         <CHeaderToggler
           onClick={() => dispatch({ type: 'set', sidebarShow: !sidebarShow })}
           style={{ marginInlineStart: '-14px' }}
         >
           <CIcon icon={cilMenu} size="lg" />
         </CHeaderToggler>
-        <CHeaderNav className="me-auto">
+        <CHeaderNav className="me-auto app-header-title">
           <div className="fw-semibold">WaTeRSystem</div>
         </CHeaderNav>
-        <CHeaderNav className="align-items-center">
-          <span className="me-2 small text-body-secondary">WaTeR System ID:</span>
+        <CHeaderNav className="align-items-center app-header-controls">
+          <span className="me-2 small text-body-secondary app-header-label">WaTeR System ID:</span>
           <CFormSelect
             size="sm"
-            className="me-3"
+            className="me-3 app-header-select"
             aria-label="Water System ID"
             value={selectedSystem}
             onChange={(event) => {

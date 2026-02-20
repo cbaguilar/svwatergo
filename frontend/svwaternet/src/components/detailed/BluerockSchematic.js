@@ -9,7 +9,7 @@ import {
     PressureTank, ROVessel, TextArray, Drain, KeyElementWrapper, Key,
     LiquidFillGaugeWrapper, DevToolsDisplay, AnimatedPipe,
     TreatmentSystem, VariablePieValveIndicator
-} from "./DetailedDashComponents.jsx"
+} from "./index"
 
 const get_value_unit_string = (sensor_name, modal_table_dict) => {
     const current_value = modal_table_dict.get(sensor_name, "current_value");
