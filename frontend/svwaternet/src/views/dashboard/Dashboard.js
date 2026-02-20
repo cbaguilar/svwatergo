@@ -1,10 +1,15 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
-import { CBadge, CCard, CCardBody, CCardHeader, CCol, CRow } from '@coreui/react'
+import { CCard, CCardBody, CCardHeader, CCol, CRow } from '@coreui/react'
 import SimplifiedROSystem from '../../components/SimplifiedROSystem'
+import { fetchLatestState } from '../../api/state'
 
 const Dashboard = () => {
   const selectedSystem = useSelector((state) => state.selectedSystem)
+  const [latestState, setLatestState] = useState(null)
+  const [loadingState, setLoadingState] = useState(true)
+  const [stateError, setStateError] = useState('')
+
   const systemDetails = {
     Bluerock: {
       name: 'Bluerock Water Treatment System',
@@ -23,6 +28,47 @@ const Dashboard = () => {
     },
   }
   const currentSystem = systemDetails[selectedSystem] || systemDetails.Bluerock
+
+  const siteKey = useMemo(() => {
+    switch (selectedSystem) {
+      case 'Santa Teresa':
+        return 'santateresa'
+      case 'Pryor Farms':
+        return 'pryorfarm'
+      case 'Bluerock':
+      default:
+        return 'bluerock'
+    }
+  }, [selectedSystem])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+
+    setLoadingState(true)
+    setStateError('')
+    fetchLatestState(siteKey, { signal: controller.signal, soft: true })
+      .then((payload) => {
+        if (!active) return
+        setLatestState(payload)
+      })
+      .catch((err) => {
+        if (!active || err?.name === 'AbortError') return
+        setStateError(err?.message || 'Failed to load latest state')
+      })
+      .finally(() => {
+        if (!active) return
+        setLoadingState(false)
+      })
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [siteKey])
+
+  const roRecovery = latestState?.data?.ro_recovery
+  const hasRoRecovery = typeof roRecovery === 'number'
 
   return (
     <>
@@ -57,28 +103,36 @@ const Dashboard = () => {
         <CCol lg={5}>
           <CCard>
             <CCardHeader>Current State</CCardHeader>
-            <CCardBody>
-              <div className="text-body-secondary">Current State</div>
-              <div className="d-flex align-items-center gap-2 mb-2">
-                <span className="fw-semibold">RO Running</span>
-                <CBadge color="success">Online</CBadge>
-              </div>
-              <div className="text-body-secondary mb-4">Last Updated: Feb 20, 2026 2:45:42 AM</div>
-              <div className="text-body-secondary mb-2">RO System will remain operational for:</div>
-              <div className="d-flex gap-2">
-                <div style={{ background: '#0d9488', color: '#fff', borderRadius: 10, padding: '0.5rem 0.75rem', minWidth: 70, textAlign: 'center' }}>
-                  <div style={{ fontWeight: 600, fontSize: '1.1rem' }}>0</div>
-                  <div style={{ fontSize: '0.7rem', letterSpacing: '0.08em' }}>Days</div>
-                </div>
-                <div style={{ background: '#0d9488', color: '#fff', borderRadius: 10, padding: '0.5rem 0.75rem', minWidth: 70, textAlign: 'center' }}>
-                  <div style={{ fontWeight: 600, fontSize: '1.1rem' }}>0</div>
-                  <div style={{ fontSize: '0.7rem', letterSpacing: '0.08em' }}>Hours</div>
-                </div>
-                <div style={{ background: '#0d9488', color: '#fff', borderRadius: 10, padding: '0.5rem 0.75rem', minWidth: 70, textAlign: 'center' }}>
-                  <div style={{ fontWeight: 600, fontSize: '1.1rem' }}>0</div>
-                  <div style={{ fontSize: '0.7rem', letterSpacing: '0.08em' }}>Minutes</div>
-                </div>
-              </div>
+            <CCardBody style={{ minHeight: 560 }}>
+              {loadingState && <div className="text-body-secondary">Loading latest state...</div>}
+              {stateError && <div className="text-danger">{stateError}</div>}
+              {!loadingState && !stateError && (
+                <>
+                  <div className="mb-3">
+                    <div className="text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                      Soft Sensor
+                    </div>
+                    <div className="fw-semibold" style={{ fontSize: '1.1rem' }}>
+                      RO Recovery:{' '}
+                      {hasRoRecovery ? `${Number(roRecovery).toFixed(2)}%` : 'Unavailable (check feedflow/permeateflow)'}
+                    </div>
+                  </div>
+                  <pre
+                    className="mb-0"
+                    style={{
+                      background: '#0f172a',
+                      color: '#e2e8f0',
+                      padding: '0.75rem',
+                      borderRadius: 8,
+                      fontSize: '0.8rem',
+                      maxHeight: 460,
+                      overflow: 'auto',
+                    }}
+                  >
+                    {JSON.stringify(latestState, null, 2)}
+                  </pre>
+                </>
+              )}
             </CCardBody>
           </CCard>
         </CCol>
