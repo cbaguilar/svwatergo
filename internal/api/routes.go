@@ -2,12 +2,15 @@ package api
 
 import (
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/reports"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,6 +18,22 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
+	r.Use(cors.New(cors.Config{
+		AllowOriginFunc: func(origin string) bool {
+			o := strings.ToLower(strings.TrimSpace(origin))
+			switch o {
+			case "http://localhost:3000", "https://localhost:3000", "https://svwaternet.org", "https://www.svwaternet.org", "http://svwaternet.org:3000":
+				return true
+			default:
+				return false
+			}
+		},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	// Ping test
 	r.GET("/ping", func(c *gin.Context) {
