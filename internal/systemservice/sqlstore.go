@@ -33,10 +33,17 @@ func (s *SQLStore) InsertNamed(state any) error {
 
 func (s *SQLStore) GetLatest(dest any) error {
 	q := fmt.Sprintf("SELECT * FROM %s ORDER BY plctime DESC LIMIT 1", s.TableName)
+	if s.Client.Driver == "sqlite3" {
+		q = fmt.Sprintf("SELECT * FROM %s ORDER BY datetime(plctime) DESC LIMIT 1", s.TableName)
+	}
 	return s.Client.DB.Get(dest, q)
 }
 
 func (s *SQLStore) GetRange(dest any, start, end time.Time) error {
+	if s.Client.Driver == "sqlite3" {
+		q := fmt.Sprintf("SELECT * FROM %s WHERE datetime(plctime) BETWEEN datetime(?) AND datetime(?) ORDER BY datetime(plctime) ASC", s.TableName)
+		return s.Client.DB.Select(dest, q, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	}
 	q := fmt.Sprintf("SELECT * FROM %s WHERE plctime BETWEEN ? AND ? ORDER BY plctime ASC", s.TableName)
 	q = s.Client.DB.Rebind(q)
 	return s.Client.DB.Select(dest, q, start, end)
