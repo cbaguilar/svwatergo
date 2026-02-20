@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, mailSender mail.Sender, adminEmails []string) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -69,17 +69,38 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		if authn != nil {
 			operatorReports.Use(authn.GinRequireAdmin())
 		}
-		operatorReports.POST("", reportsAPI.CreateOperatorReport)
+		if readOnly {
+			disabled := func(c *gin.Context) {
+				c.JSON(http.StatusServiceUnavailable, errJSON("ReadOnly", "server is in read-only mode", nil))
+			}
+			operatorReports.POST("", disabled)
+			operatorReports.PUT("/:id", disabled)
+			operatorReports.DELETE("/:id", disabled)
+		} else {
+			operatorReports.POST("", reportsAPI.CreateOperatorReport)
+			operatorReports.PUT("/:id", reportsAPI.UpdateOperatorReport)
+			operatorReports.DELETE("/:id", reportsAPI.DeleteOperatorReport)
+		}
 		operatorReports.GET("", reportsAPI.ListOperatorReports)
 		operatorReports.GET("/:id", reportsAPI.GetOperatorReport)
-		operatorReports.PUT("/:id", reportsAPI.UpdateOperatorReport)
-		operatorReports.DELETE("/:id", reportsAPI.DeleteOperatorReport)
 	}
 
 	/// This is the v0 route, which we will re-implement for backwards compatibility
 	// with the old Javascript server.
-	r.POST("/UploadDataNew", SaveSensorDataHandler(ingestion))
-	r.POST("/uploadSensorDataNew", SaveSensorDataHandler(ingestion)) // alias
+	if ingestDisabled || readOnly {
+		disabled := func(c *gin.Context) {
+			msg := "ingestion is disabled"
+			if readOnly {
+				msg = "server is in read-only mode"
+			}
+			c.JSON(http.StatusServiceUnavailable, errJSON("Unavailable", msg, nil))
+		}
+		r.POST("/UploadDataNew", disabled)
+		r.POST("/uploadSensorDataNew", disabled) // alias
+	} else {
+		r.POST("/UploadDataNew", SaveSensorDataHandler(ingestion))
+		r.POST("/uploadSensorDataNew", SaveSensorDataHandler(ingestion)) // alias
+	}
 
 	return r
 }
