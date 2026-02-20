@@ -4,9 +4,6 @@ import {
   CCardBody,
   CCardHeader,
   CCol,
-  CNav,
-  CNavItem,
-  CNavLink,
   CRow,
 } from '@coreui/react'
 
@@ -15,26 +12,13 @@ const Dashboard = () => {
     <>
       <CRow className="mb-4">
         <CCol>
-          <h2 className="mb-1">Dashboard</h2>
+          <h2 className="mb-1">Home</h2>
           <div className="text-body-secondary">Basic System Overview</div>
         </CCol>
       </CRow>
 
       <CRow className="mb-4">
-        <CCol>
-          <CNav variant="tabs">
-            <CNavItem>
-              <CNavLink active>Basic System Overview</CNavLink>
-            </CNavItem>
-            <CNavItem>
-              <CNavLink>Live System Schematic</CNavLink>
-            </CNavItem>
-          </CNav>
-        </CCol>
-      </CRow>
-
-      <CRow className="mb-4">
-        <CCol lg={4} className="mb-4 mb-lg-0">
+        <CCol lg={6} className="mb-4 mb-lg-0">
           <CCard>
             <CCardHeader>System Overview</CCardHeader>
             <CCardBody className="text-body-secondary">
@@ -42,15 +26,7 @@ const Dashboard = () => {
             </CCardBody>
           </CCard>
         </CCol>
-        <CCol lg={4} className="mb-4 mb-lg-0">
-          <CCard>
-            <CCardHeader>Live System Schematic</CCardHeader>
-            <CCardBody className="text-body-secondary">
-              Placeholder for schematic graphic.
-            </CCardBody>
-          </CCard>
-        </CCol>
-        <CCol lg={4}>
+        <CCol lg={6}>
           <CCard>
             <CCardHeader>Daily Operational Metrics</CCardHeader>
             <CCardBody className="text-body-secondary">
