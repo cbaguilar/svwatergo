@@ -53,6 +53,36 @@ const ABBR = {
   permtemp: 'TT1',
 }
 
+const SENSOR_META = {
+  permeateflow: { label: 'Permeate Flow', unit: 'GPM', type: 'number' },
+  feedflow: { label: 'Feed Flow', unit: 'GPM', type: 'number' },
+  deliveryflow: { label: 'Delivery Flow', unit: 'GPM', type: 'number' },
+  recycleflow: { label: 'Recycle Flow', unit: 'GPM', type: 'number' },
+  inletflow: { label: 'Inlet Flow', unit: 'GPM', type: 'number' },
+  feedtanklevel: { label: 'Feed Tank Level', unit: '%', type: 'number' },
+  prodtanklevel: { label: 'Product Tank Level', unit: '%', type: 'number' },
+  residualtanklevel: { label: 'Residual Tank Level', unit: '%', type: 'number' },
+  permtds: { label: 'Permeate Conductivity', unit: 'uS', type: 'number' },
+  feedtds: { label: 'Feed Conductivity', unit: 'uS', type: 'number' },
+  permnitrate: { label: 'Permeate Nitrate', unit: 'mg/L', type: 'number' },
+  permtemp: { label: 'Permeate Temperature', unit: 'C', type: 'number' },
+  inletpressure: { label: 'Inlet Pressure', unit: 'PSI', type: 'number' },
+  feedpressure: { label: 'Feed Pressure', unit: 'PSI', type: 'number' },
+  ropressure: { label: 'RO Pressure', unit: 'PSI', type: 'number' },
+  concentratepressure: { label: 'Concentrate Pressure', unit: 'PSI', type: 'number' },
+  permeatepressure: { label: 'Permeate Pressure', unit: 'PSI', type: 'number' },
+  deliverypressure: { label: 'Delivery Pressure', unit: 'PSI', type: 'number' },
+  wellpumprun: { label: 'Well Pump', type: 'boolean' },
+  feedpumprun: { label: 'P1 Feed Pump', type: 'boolean' },
+  ropumprun: { label: 'P2 RO Pump', type: 'boolean' },
+  deliveryrun: { label: 'P3 Delivery Pump', type: 'boolean' },
+  inletrun: { label: 'AV1 Inlet Valve', type: 'boolean' },
+  runflush: { label: 'AV2 Flush Valve', type: 'boolean' },
+  concbypassrun: { label: 'AV5 Concentrate Bypass', type: 'boolean' },
+  proddiversionrun: { label: 'AV6 Product Diversion', type: 'boolean' },
+  residtankvalverun: { label: 'AV7 Residual Valve', type: 'boolean' },
+}
+
 const PRESETS = {
   '15m': { label: 'Past 15 Minutes', ms: 15 * 60 * 1000 },
   '1h': { label: 'Past 1 Hour', ms: 60 * 60 * 1000 },
@@ -60,7 +90,7 @@ const PRESETS = {
   '24h': { label: 'Past 24 Hours', ms: 24 * 60 * 60 * 1000 },
 }
 
-const METRIC_KEY = 'permeateflow'
+const DEFAULT_METRIC_KEY = 'permeateflow'
 
 function toTs(row) {
   const raw = row?.recordtime || row?.plctime
@@ -119,13 +149,33 @@ function rangeBoundsFromPreset(preset) {
   return { start: start.toISOString(), end: end.toISOString() }
 }
 
-const buildLiveMd = (data = {}) => ({
+function inferSensorType(rows, key) {
+  const configured = SENSOR_META[key]?.type
+  if (configured) return configured
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const v = rows[i]?.[key]
+    if (typeof v === 'boolean') return 'boolean'
+    if (typeof v === 'number') return 'number'
+  }
+  return 'number'
+}
+
+function sensorDisplayName(key) {
+  if (!key) return 'Sensor'
+  if (SENSOR_META[key]?.label) return SENSOR_META[key].label
+  return key.replaceAll('_', ' ').replace(/\b\w/g, (m) => m.toUpperCase())
+}
+
+const buildLiveMd = (data = {}, onSelectSensor = () => {}) => ({
   get: (key, field) => {
     const value = data?.[key]
     if (field === 'abbreviated_name') return ABBR[key] || key?.slice(0, 3)?.toUpperCase() || ''
-    if (field === 'units') return ''
+    if (field === 'units') return SENSOR_META[key]?.unit || ''
     if (field === 'current_value') return value ?? 0
-    if (field === 'on_click') return () => {}
+    if (field === 'on_click') {
+      if (!key || key === '???') return () => {}
+      return () => onSelectSensor(key)
+    }
     return ''
   },
 })
@@ -138,6 +188,7 @@ const DetailedDashboard = () => {
   const [focusedTs, setFocusedTs] = useState(null)
   const [frozenTs, setFrozenTs] = useState(null)
   const [timePreset, setTimePreset] = useState('1h')
+  const [selectedMetricKey, setSelectedMetricKey] = useState(DEFAULT_METRIC_KEY)
 
   const siteKey =
     selectedSystem === 'Bluerock'
@@ -157,7 +208,17 @@ const DetailedDashboard = () => {
   const activeTs = focusedTs ?? (isLivePlaying ? toTs(latestRow) : frozenTs)
   const activeRow = activeTs ? nearestRow(timelineRows, activeTs) : latestRow
   const data = activeRow || {}
-  const md = useMemo(() => buildLiveMd(data), [data])
+  const selectedMetricType = useMemo(
+    () => inferSensorType(timelineRows, selectedMetricKey),
+    [timelineRows, selectedMetricKey],
+  )
+  const selectedMetricLabel = sensorDisplayName(selectedMetricKey)
+  const selectedMetricUnit = SENSOR_META[selectedMetricKey]?.unit || ''
+
+  const md = useMemo(
+    () => buildLiveMd(data, setSelectedMetricKey),
+    [data, setSelectedMetricKey],
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -247,22 +308,31 @@ const DetailedDashboard = () => {
   if (stateError) warnings.push(`Data stream error: ${stateError}`)
 
   const chartPoints = timelineRows
-    .map((row) => ({ ts: toTs(row), val: Number(row?.[METRIC_KEY] ?? 0) }))
+    .map((row) => {
+      const raw = row?.[selectedMetricKey]
+      const val = selectedMetricType === 'boolean' ? (raw ? 1 : 0) : Number(raw ?? 0)
+      return { ts: toTs(row), val }
+    })
     .filter((p) => p.ts > 0)
 
   const chartData = {
     labels: chartPoints.map((p) => formatTsLabel(p.ts)),
     datasets: [
       {
-        label: 'Permeate Flow (GPM)',
+        label:
+          selectedMetricType === 'boolean'
+            ? `${selectedMetricLabel} (On/Off)`
+            : `${selectedMetricLabel}${selectedMetricUnit ? ` (${selectedMetricUnit})` : ''}`,
         data: chartPoints.map((p) => p.val),
-        borderColor: '#0ea5e9',
-        backgroundColor: 'rgba(14,165,233,0.15)',
+        borderColor: selectedMetricType === 'boolean' ? '#22c55e' : '#0ea5e9',
+        backgroundColor:
+          selectedMetricType === 'boolean' ? 'rgba(34,197,94,0.28)' : 'rgba(14,165,233,0.15)',
         pointRadius: 0,
         pointHoverRadius: 4,
         borderWidth: 2,
         fill: true,
-        tension: 0.2,
+        tension: selectedMetricType === 'boolean' ? 0 : 0.2,
+        stepped: selectedMetricType === 'boolean' ? 'before' : false,
       },
     ],
   }
@@ -277,12 +347,33 @@ const DetailedDashboard = () => {
       },
       y: {
         beginAtZero: true,
+        suggestedMax: selectedMetricType === 'boolean' ? 1 : undefined,
+        max: selectedMetricType === 'boolean' ? 1 : undefined,
         grid: { color: 'rgba(120,120,120,0.15)' },
+        ticks:
+          selectedMetricType === 'boolean'
+            ? {
+                stepSize: 1,
+                callback: (value) => (Number(value) >= 1 ? 'On' : 'Off'),
+              }
+            : undefined,
       },
     },
     plugins: {
       legend: { display: false },
-      tooltip: { mode: 'index', intersect: false },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        callbacks: {
+          label: (ctx) => {
+            if (selectedMetricType === 'boolean') {
+              return `${selectedMetricLabel}: ${Number(ctx.parsed.y) > 0 ? 'On' : 'Off'}`
+            }
+            const v = Number(ctx.parsed.y)
+            return `${selectedMetricLabel}: ${v.toFixed(2)}${selectedMetricUnit ? ` ${selectedMetricUnit}` : ''}`
+          },
+        },
+      },
     },
     onClick: (_event, elements) => {
       if (!elements?.length) return
@@ -405,7 +496,7 @@ const DetailedDashboard = () => {
         <CCol>
           <CCard>
             <CCardHeader>
-              Live Trend - Permeate Flow
+              Live Trend - {selectedMetricLabel}
               {focusedTs && (
                 <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
                   Focused at {new Date(focusedTs).toLocaleString()}
