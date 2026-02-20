@@ -206,6 +206,7 @@ const DetailedDashboard = () => {
   const [focusedTs, setFocusedTs] = useState(null)
   const [frozenTs, setFrozenTs] = useState(null)
   const [timePreset, setTimePreset] = useState('1h')
+  const [showCustomRange, setShowCustomRange] = useState(false)
   const initialBounds = rangeBoundsFromPreset('1h')
   const [rangeStartInput, setRangeStartInput] = useState(isoToLocalInputValue(initialBounds.start))
   const [rangeEndInput, setRangeEndInput] = useState(isoToLocalInputValue(initialBounds.end))
@@ -313,6 +314,26 @@ const DetailedDashboard = () => {
   }, [siteKey])
 
   useEffect(() => {
+    const onKeyDown = (e) => {
+      const tag = e.target?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+
+      if (e.code === 'Space') {
+        e.preventDefault()
+        setIsLivePlaying((v) => !v)
+        return
+      }
+      if (e.key?.toLowerCase() === 'l') {
+        setFocusedTs(null)
+        setFrozenTs(null)
+        setIsLivePlaying(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  useEffect(() => {
     if (isLivePlaying) {
       setFrozenTs(null)
       return
@@ -339,6 +360,8 @@ const DetailedDashboard = () => {
   if ((data.warnword1 || 0) > 0) warnings.push(`Warn Word 1: ${data.warnword1}`)
   if (data.lockout) warnings.push('System Lockout')
   if (stateError) warnings.push(`Data stream error: ${stateError}`)
+  const roRecovery =
+    typeof data.ro_recovery === 'number' && Number.isFinite(data.ro_recovery) ? data.ro_recovery : null
 
   const chartPoints = timelineRows
     .map((row) => {
@@ -495,27 +518,19 @@ const DetailedDashboard = () => {
                     options={Object.entries(PRESETS).map(([value, cfg]) => ({ value, label: cfg.label }))}
                   />
                 </div>
-                <div style={{ minWidth: 190 }}>
-                  <CFormInput
-                    size="sm"
-                    type="datetime-local"
-                    value={rangeStartInput}
-                    onChange={(e) => setRangeStartInput(e.target.value)}
-                  />
-                </div>
-                <div style={{ minWidth: 190 }}>
-                  <CFormInput
-                    size="sm"
-                    type="datetime-local"
-                    value={rangeEndInput}
-                    onChange={(e) => setRangeEndInput(e.target.value)}
-                  />
-                </div>
                 <CButton color="secondary" variant="outline" size="sm" onClick={applyCustomRange}>
                   Apply
                 </CButton>
                 <CButton color="secondary" variant="ghost" size="sm" onClick={() => applyPreset(timePreset)}>
                   Reset
+                </CButton>
+                <CButton
+                  color="secondary"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowCustomRange((v) => !v)}
+                >
+                  {showCustomRange ? 'Hide Custom' : 'Custom Range'}
                 </CButton>
                 <CButton
                   color={isLivePlaying ? 'primary' : 'secondary'}
@@ -550,6 +565,27 @@ const DetailedDashboard = () => {
                 {streamBadge}
                 <div className="small text-body-secondary ms-auto">{activeRangeLabel} (UTC)</div>
               </div>
+              {showCustomRange && (
+                <div className="d-flex flex-wrap align-items-center gap-2 mt-2">
+                  <div style={{ minWidth: 190 }}>
+                    <CFormInput
+                      size="sm"
+                      type="datetime-local"
+                      value={rangeStartInput}
+                      onChange={(e) => setRangeStartInput(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ minWidth: 190 }}>
+                    <CFormInput
+                      size="sm"
+                      type="datetime-local"
+                      value={rangeEndInput}
+                      onChange={(e) => setRangeEndInput(e.target.value)}
+                    />
+                  </div>
+                  <div className="small text-body-secondary ms-1">Shortcuts: `Space` pause/play, `L` live</div>
+                </div>
+              )}
             </CCardBody>
           </CCard>
         </CCol>
@@ -570,6 +606,23 @@ const DetailedDashboard = () => {
           <CCard>
             <CCardHeader>Sensor Status</CCardHeader>
             <CCardBody>
+              <div className="small text-body-secondary mb-2">System Summary</div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>RO Recovery</span>
+                <span className="fw-semibold">
+                  {roRecovery === null ? 'N/A' : `${roRecovery.toFixed(2)}%`}
+                </span>
+              </div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>Alarm</span>
+                {boolBadge(data.alarm, 'Active', 'Clear')}
+              </div>
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <span>Lockout</span>
+                {boolBadge(data.lockout, 'Locked', 'Normal')}
+              </div>
+              <hr className="my-2" />
+              <div className="small text-body-secondary mb-2">Pump and Valve States</div>
               <div className="d-flex justify-content-between align-items-center mb-2">
                 <span>RO Status</span>
                 {roStatusBadge()}
@@ -636,7 +689,14 @@ const DetailedDashboard = () => {
             </CCardHeader>
             <CCardBody>
               <div style={{ height: 320 }}>
-                <CChartLine data={chartData} options={chartOptions} />
+                {chartPoints.length === 0 ? (
+                  <div className="h-100 d-flex flex-column align-items-center justify-content-center text-body-secondary">
+                    <div className="mb-1">No data in this window.</div>
+                    <div className="small">Try 24h/7d preset or apply a wider custom range.</div>
+                  </div>
+                ) : (
+                  <CChartLine data={chartData} options={chartOptions} />
+                )}
               </div>
             </CCardBody>
           </CCard>
