@@ -73,10 +73,10 @@ type RawBluerockState struct {
 type BluerockState struct {
 	ID                       *int64       `json:"id,omitempty" db:"id"` // <— NEW, optional
 	Location                 string       `json:"location" db:"location"`
-	TotalROFlow              int64        `json:"totalroflow" db:"totalroflow"`
-	TotalFeedFlow            int64        `json:"totalfeedflow" db:"totalfeedflow"`
-	TotalRecycleFlow         int64        `json:"totalrecycleflow" db:"totalrecycleflow"`
-	TotalDelFlow             int64        `json:"totaldelflow" db:"totaldelflow"`
+	TotalROFlow              float64      `json:"totalroflow" db:"totalroflow"`
+	TotalFeedFlow            float64      `json:"totalfeedflow" db:"totalfeedflow"`
+	TotalRecycleFlow         float64      `json:"totalrecycleflow" db:"totalrecycleflow"`
+	TotalDelFlow             float64      `json:"totaldelflow" db:"totaldelflow"`
 	DumpProduct              bool         `json:"dumpproduct" db:"dumpproduct"`
 	WellPumpRun              bool         `json:"wellpumprun" db:"wellpumprun"`
 	WellPumpAuto             bool         `json:"wellpumpauto" db:"wellpumpauto"`
@@ -92,7 +92,7 @@ type BluerockState struct {
 	DeliveryFlow             float64      `json:"deliveryflow" db:"deliveryflow"`
 	FeedFlow                 float64      `json:"feedflow" db:"feedflow"`
 	ConcentrateFlow          float64      `json:"concentrateflow" db:"concentrateflow"`
-	RecycleFlow              int64        `json:"recycleflow" db:"recycleflow"`
+	RecycleFlow              float64      `json:"recycleflow" db:"recycleflow"`
 	FeedTankLevel            float64      `json:"feedtanklevel" db:"feedtanklevel"`
 	DailyPermFlow            float64      `json:"dailypermflow" db:"dailypermflow"`
 	Alarm                    bool         `json:"alarm" db:"alarm"`
@@ -103,7 +103,7 @@ type BluerockState struct {
 	RunFlush                 bool         `json:"runflush" db:"runflush"`
 	WarnWord0                int64        `json:"warnword0" db:"warnword0"`
 	WarnWord1                int64        `json:"warnword1" db:"warnword1"`
-	TotalHrs                 int64        `json:"totalhrs" db:"totalhrs"`
+	TotalHrs                 float64      `json:"totalhrs" db:"totalhrs"`
 	PermTDS                  float64      `json:"permtds" db:"permtds"`
 	FeedTDS                  float64      `json:"feedtds" db:"feedtds"`
 	PermNitrate              float64      `json:"permnitrate" db:"permnitrate"`
@@ -119,15 +119,17 @@ type BluerockState struct {
 	ROPressure               float64      `json:"ropressure" db:"ropressure"`
 	DeliveryPressure         float64      `json:"deliverypressure" db:"deliverypressure"`
 	FeedPressure             float64      `json:"feedpressure" db:"feedpressure"`
-	RecycleValvePosition     int64        `json:"recyclevalveposition" db:"recyclevalveposition"`
-	ROPressCtrlValvePosition int64        `json:"ropressctrlvalveposition" db:"ropressctrlvalveposition"`
-	ROPumpSpeed              int64        `json:"ropumpspeed" db:"ropumpspeed"`
-	PowerMeter               int64        `json:"powermeter" db:"powermeter"`
-	FlushDuret               int64        `json:"flushduret" db:"flushduret"`
+	RecycleValvePosition     float64      `json:"recyclevalveposition" db:"recyclevalveposition"`
+	ROPressCtrlValvePosition float64      `json:"ropressctrlvalveposition" db:"ropressctrlvalveposition"`
+	ROPumpSpeed              float64      `json:"ropumpspeed" db:"ropumpspeed"`
+	PowerMeter               float64      `json:"powermeter" db:"powermeter"`
+	FlushDuret               float64      `json:"flushduret" db:"flushduret"`
 	ProductTDS               float64      `json:"producttds" db:"producttds"`
 	ChlorinePumpRun          bool         `json:"chlorinepumprun" db:"chlorinepumprun"`
 	ResidTankValveRun        bool         `json:"residtankvalverun" db:"residtankvalverun"`
 	ResidualTankLevel        float64      `json:"residualtanklevel" db:"residualtanklevel"`
+	SchemaVersion            *string      `json:"schema_version,omitempty" db:"schema_version"`
+	Extras                   any          `json:"extras,omitempty" db:"extras"`
 	RecordTime               util.UTCTime `json:"recordtime" db:"recordtime"`
 	FlushRun                 bool         `json:"flushrun" db:"flushrun"`
 }

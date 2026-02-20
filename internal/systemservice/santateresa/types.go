@@ -71,10 +71,10 @@ type RawSantaTeresaState struct {
 type SantaTeresaState struct {
 	ID                       *int64       `json:"id,omitempty" db:"id"` // <— NEW, optional
 	Location                 string       `json:"location" db:"location"`
-	TotalROFlow              int64        `json:"totalroflow" db:"totalroflow"`
-	TotalInletFlow           int64        `json:"totalinletflow" db:"totalinletflow"`
-	TotalConcFlow            int64        `json:"totalconcflow" db:"totalconcflow"`
-	TotalDelFlow             int64        `json:"totaldelflow" db:"totaldelflow"`
+	TotalROFlow              float64      `json:"totalroflow" db:"totalroflow"`
+	TotalInletFlow           float64      `json:"totalinletflow" db:"totalinletflow"`
+	TotalConcFlow            float64      `json:"totalconcflow" db:"totalconcflow"`
+	TotalDelFlow             float64      `json:"totaldelflow" db:"totaldelflow"`
 	DumpProduct              bool         `json:"dumpproduct" db:"dumpproduct"`
 	WellPumpRun              bool         `json:"wellpumprun" db:"wellpumprun"`
 	WellPumpAuto             bool         `json:"wellpumpauto" db:"wellpumpauto"`
@@ -92,7 +92,7 @@ type SantaTeresaState struct {
 	DeliveryFlow             float64      `json:"deliveryflow" db:"deliveryflow"`
 	InletFlow                float64      `json:"inletflow" db:"inletflow"`
 	ConcentrateFlow          float64      `json:"concentrateflow" db:"concentrateflow"`
-	RecycleFlow              int64        `json:"recycleflow" db:"recycleflow"`
+	RecycleFlow              float64      `json:"recycleflow" db:"recycleflow"`
 	FeedTankLevel            float64      `json:"feedtanklevel" db:"feedtanklevel"`
 	DailyPermFlow            float64      `json:"dailypermflow" db:"dailypermflow"`
 	DailyInletFlow           float64      `json:"dailyinletflow" db:"dailyinletflow"`
@@ -104,7 +104,7 @@ type SantaTeresaState struct {
 	RunFlush                 bool         `json:"runflush" db:"runflush"`
 	WarnWord0                int64        `json:"warnword0" db:"warnword0"`
 	WarnWord1                int64        `json:"warnword1" db:"warnword1"`
-	TotalHrs                 int64        `json:"totalhrs" db:"totalhrs"`
+	TotalHrs                 float64      `json:"totalhrs" db:"totalhrs"`
 	PermTDS                  float64      `json:"permtds" db:"permtds"`
 	FeedTDS                  float64      `json:"feedtds" db:"feedtds"`
 	PermNitrate              float64      `json:"permnitrate" db:"permnitrate"`
@@ -122,11 +122,11 @@ type SantaTeresaState struct {
 	ROPressure               float64      `json:"ropressure" db:"ropressure"`
 	DeliveryPressure         float64      `json:"deliverypressure" db:"deliverypressure"`
 	FeedPressure             float64      `json:"feedpressure" db:"feedpressure"`
-	RecycleValvePosition     int64        `json:"recyclevalveposition" db:"recyclevalveposition"`
-	ROPressCtrlValvePosition int64        `json:"ropressctrlvalveposition" db:"ropressctrlvalveposition"`
-	ROPumpSpeed              int64        `json:"ropumpspeed" db:"ropumpspeed"`
-	PowerMeter               int64        `json:"powermeter" db:"powermeter"`
-	FlushDuret               int64        `json:"flushduret" db:"flushduret"`
+	RecycleValvePosition     float64      `json:"recyclevalveposition" db:"recyclevalveposition"`
+	ROPressCtrlValvePosition float64      `json:"ropressctrlvalveposition" db:"ropressctrlvalveposition"`
+	ROPumpSpeed              float64      `json:"ropumpspeed" db:"ropumpspeed"`
+	PowerMeter               float64      `json:"powermeter" db:"powermeter"`
+	FlushDuret               float64      `json:"flushduret" db:"flushduret"`
 	ProductTDS               float64      `json:"producttds" db:"producttds"`
 	RecordTime               util.UTCTime `json:"recordtime" db:"recordtime"`
 }
