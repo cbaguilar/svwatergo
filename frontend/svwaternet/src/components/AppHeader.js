@@ -9,6 +9,7 @@ import {
 } from '@coreui/react'
 import CIcon from '@coreui/icons-react'
 import { cilMenu } from '@coreui/icons'
+import { BACKEND_OPTIONS, setBackendKey } from '../api/backend'
 
 import { AppBreadcrumb } from './index'
 import { AppHeaderDropdown } from './header/index'
@@ -19,6 +20,7 @@ const AppHeader = () => {
   const dispatch = useDispatch()
   const sidebarShow = useSelector((state) => state.sidebarShow)
   const selectedSystem = useSelector((state) => state.selectedSystem)
+  const apiBackend = useSelector((state) => state.apiBackend)
 
   useEffect(() => {
     const handleScroll = () => {
@@ -56,6 +58,25 @@ const AppHeader = () => {
             <option value="Bluerock">Bluerock</option>
             <option value="Santa Teresa">Santa Teresa</option>
             <option value="Pryor Farms">Pryor Farms</option>
+          </CFormSelect>
+          <span className="me-2 small text-body-secondary app-header-label">Backend:</span>
+          <CFormSelect
+            size="sm"
+            className="me-3 app-header-select"
+            aria-label="API backend target"
+            value={apiBackend}
+            onChange={(event) => {
+              const value = event.target.value
+              setBackendKey(value)
+              dispatch({ type: 'set', apiBackend: value })
+              window.location.reload()
+            }}
+          >
+            {BACKEND_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </CFormSelect>
           <AppHeaderDropdown />
         </CHeaderNav>

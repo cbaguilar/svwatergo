@@ -1,8 +1,8 @@
+import { getApiBaseUrl } from './backend'
+
 const DEFAULT_HEADERS = {
   Accept: 'application/json',
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 async function handleJsonResponse(response) {
   const contentType = response.headers.get('content-type') || ''
@@ -25,7 +25,7 @@ async function handleJsonResponse(response) {
 }
 
 export async function apiGet(path, options = {}) {
-  const url = `${API_BASE_URL}${path}`
+  const url = `${getApiBaseUrl()}${path}`
   const headers = {
     ...DEFAULT_HEADERS,
     ...(options.headers || {}),
@@ -39,7 +39,7 @@ export async function apiGet(path, options = {}) {
 }
 
 export async function apiPost(path, body, options = {}) {
-  const url = `${API_BASE_URL}${path}`
+  const url = `${getApiBaseUrl()}${path}`
   const headers = {
     ...DEFAULT_HEADERS,
     'Content-Type': 'application/json',

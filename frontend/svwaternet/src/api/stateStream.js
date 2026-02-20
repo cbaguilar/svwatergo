@@ -1,8 +1,9 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+import { getApiBaseUrl } from './backend'
 
 function toWsUrl(path) {
-  if (API_BASE_URL) {
-    const base = new URL(API_BASE_URL, window.location.origin)
+  const apiBaseUrl = getApiBaseUrl()
+  if (apiBaseUrl) {
+    const base = new URL(apiBaseUrl, window.location.origin)
     const wsProtocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${wsProtocol}//${base.host}${path}`
   }
