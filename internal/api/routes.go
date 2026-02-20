@@ -29,6 +29,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	liveState := NewLiveStateAPI(reg, meta)
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
+	eventsAPI := NewEventsAPI()
 	ingestion.OnIngest = liveState.NotifySiteUpdated
 
 	v1 := r.Group("/api/v1")
@@ -43,6 +44,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		sites.GET("/metadata", site.GetMetadata)
 		sites.GET("/coverage", site.GetCoverage)
 		sites.GET("/series", site.GetSeries)
+		sites.POST("/events/query", eventsAPI.QueryInterestingTimestamps)
 
 		operatorReports := sites.Group("/operator-reports")
 		if authn != nil {
