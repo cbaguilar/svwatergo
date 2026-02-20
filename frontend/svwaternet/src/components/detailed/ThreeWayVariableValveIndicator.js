@@ -13,7 +13,9 @@ export function ThreeWayVariableValveIndicator({
     dir = "right",
     outerText = "",
     /* if true, valves will be set to inflow, outflow, inflow */
-    textDir = "right" }) {
+    textDir = "right",
+    on_click = () => {}
+}) {
 
     // Svg valve that is made up of a bowtie shape with a circle in the middle of it
     // it is about the size of a sensor and it has a label in the middle of the circle
@@ -22,6 +24,9 @@ export function ThreeWayVariableValveIndicator({
     // the text orientation should always be normal
     const transstr = 'translate(' + x + ',' + y + ') '
         + `rotate(${getAngle(dir)})`;
+    const handleActivate = () => {
+        on_click();
+    };
 
     let PO1 = percentOpen1 / 100;
     PO1 = PO1 >= 1 ? 0.9999 : PO1;
@@ -30,7 +35,19 @@ export function ThreeWayVariableValveIndicator({
 
     return (
         <g transform={'translate(' + x + ',' + y + ') '}>
-            <g transform={`rotate(${getAngle(dir)})`}>
+            <g
+                transform={`rotate(${getAngle(dir)})`}
+                onClick={handleActivate}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleActivate();
+                    }
+                }}
+                tabIndex={0}
+                role="button"
+                style={{ cursor: 'pointer' }}
+            >
                 <polygon
                     points="-30,20 -30,-20 0,0"
                     fill={LIGHTGREYCOLOR}

@@ -36,6 +36,9 @@ export function SensorIndicator({
     };
 
     const color = WaterScope ? LIGHTGREYCOLOR : BLUECOLOR;
+    const handleActivate = () => {
+        on_click();
+    };
 
     const LINELENGTH = 35;
     let sensorLine;
@@ -67,7 +70,19 @@ export function SensorIndicator({
 
     return (
         <>
-            <g transform={transstr} onClick={on_click}>
+            <g
+                transform={transstr}
+                onClick={handleActivate}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleActivate();
+                    }
+                }}
+                tabIndex={0}
+                role="button"
+                style={{ cursor: 'pointer' }}
+            >
                 {sensorLine}
                 <circle cx="0" cy="0" r="23" fill={color} stroke="#000" strokeWidth="2" />
                 <text

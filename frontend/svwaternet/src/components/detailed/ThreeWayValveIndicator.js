@@ -36,8 +36,23 @@ export function ThreeWayValveIndicator({
 
     const transstr = 'translate(' + x + ',' + y + ')'
         + ` rotate(${getAngle(dir)})`;
+    const handleActivate = () => {
+        on_click();
+    };
     return (
-        <g transform={transstr} onClick={on_click}>
+        <g
+            transform={transstr}
+            onClick={handleActivate}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleActivate();
+                }
+            }}
+            tabIndex={0}
+            role="button"
+            style={{ cursor: 'pointer' }}
+        >
             <polygon points="-30,20 -30,-20 0,0" fill={getFlowColor(east)} stroke="#000" strokeWidth="2" />
             <polygon points="-20,-30 20,-30 0,0" fill={getFlowColor(north)} stroke="#000" strokeWidth="2" />
             <polygon points="30,-20 30,20 0,0" fill={getFlowColor(west)} stroke="#000" strokeWidth="2" />

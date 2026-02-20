@@ -60,13 +60,28 @@ export function VariablePieValveIndicator({
         + `rotate(${getAngle(dir)})`;
     let PO = percentOpen / 100;
     PO = PO >= 1 ? 0.99999 : PO;
+    const handleActivate = () => {
+        on_click();
+    };
     const arc = f_svg_ellipse_arc([0, 0], [20, 20], [0, PO * Math.PI * 2], 0);
     const arcPath = `M 0 0 L 20 0 ${arc.getAttribute('d')} L 0 0`;
     const openArc = <path d={arcPath} fill={GREENCOLOR} stroke="#000" strokeWidth="2" />;
 
     return (
         <g>
-            <g transform={transstr} onClick={on_click}>
+            <g
+                transform={transstr}
+                onClick={handleActivate}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleActivate();
+                    }
+                }}
+                tabIndex={0}
+                role="button"
+                style={{ cursor: 'pointer' }}
+            >
                 {/* the bowtie shape made up of two horizontal triangles pointing towards each other */}
                 <polygon points="-30,20 -30,-20 30,20 30,-20" fill={LIGHTGREYCOLOR} stroke="#000" strokeWidth="2" />
                 <circle cx="0" cy="0" r="20" fill={REDCOLOR} stroke="#000" strokeWidth="2" />

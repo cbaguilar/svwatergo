@@ -20,10 +20,25 @@ export function ValveIndicator({
     //it can be oriented horizontally or vertically
     // the text orientation should always be normal
     const flowColor = getFlowColor(flow);
+    const handleActivate = () => {
+        on_click();
+    };
     const transstr = 'translate(' + x + ',' + y + ') '
         + `rotate(${getAngle(dir)})`
     return (
-        <g transform={transstr} onClick={on_click}>
+        <g
+            transform={transstr}
+            onClick={handleActivate}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleActivate();
+                }
+            }}
+            tabIndex={0}
+            role="button"
+            style={{ cursor: 'pointer' }}
+        >
             {/* the bowtie shape made up of two horizontal triangles pointing towards each other */}
             <polygon points="-30,20 -30,-20 30,20 30,-20" fill={flowColor} stroke="#000" strokeWidth="2" />
             <circle cx="0" cy="0" r="20" fill={flowColor} stroke="#000" strokeWidth="2" />

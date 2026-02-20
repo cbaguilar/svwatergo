@@ -14,8 +14,23 @@ export function PumpSymbol({
     // pump symbol made up of a circle on top of a triangle
     const transstr = 'translate(' + x + ',' + y + ')';
     const flowColor = getFlowColor(flow);
+    const handleActivate = () => {
+        on_click();
+    };
     return (
-        <g transform={transstr} onClick={on_click}>
+        <g
+            transform={transstr}
+            onClick={handleActivate}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleActivate();
+                }
+            }}
+            tabIndex={0}
+            role="button"
+            style={{ cursor: 'pointer' }}
+        >
             <polygon points="-20,20 0,-19 20,20" fill={flowColor} stroke="#000" strokeWidth="2" />
             {/* the pump has a small 2 character label in the middle of the circle */}
             <circle cx="0" cy="0" r="20" fill={flowColor} stroke="#000" strokeWidth="2" />
