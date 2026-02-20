@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	DefaultTableName = "santateresa_plc_data"
+	DefaultTableName = "santa_teresa_plc_values"
 )
 
 type SantaTeresaDatastore interface {

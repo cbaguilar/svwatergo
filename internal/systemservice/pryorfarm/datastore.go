@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	DefaultTableName = "pryorfarm_plc_data"
+	DefaultTableName = "pryor_farm_plc_values"
 )
 
 type PryorFarmDatastore interface {

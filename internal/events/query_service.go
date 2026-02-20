@@ -273,11 +273,11 @@ func normalizeTime(v any) (time.Time, bool) {
 func siteTable(site string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(site)) {
 	case "bluerock":
-		return "bluerock_plc_data", true
+		return "bluerock_plc_values", true
 	case "pryorfarm":
-		return "pryorfarm_plc_data", true
+		return "pryor_farm_plc_values", true
 	case "santateresa":
-		return "santateresa_plc_data", true
+		return "santa_teresa_plc_values", true
 	default:
 		return "", false
 	}

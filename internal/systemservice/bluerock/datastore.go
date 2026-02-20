@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DefaultTableName = "bluerock_plc_data"
+	DefaultTableName = "bluerock_plc_values"
 )
 
 type BluerockDatastore interface {

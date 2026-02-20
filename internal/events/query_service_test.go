@@ -107,7 +107,7 @@ func TestQuerySiteEventsSQLite_ReturnsInterestingTimestamps(t *testing.T) {
 	}
 
 	schema := `
-CREATE TABLE IF NOT EXISTS bluerock_plc_data (
+CREATE TABLE IF NOT EXISTS bluerock_plc_values (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   plctime TEXT NOT NULL,
   alarm INTEGER NOT NULL,
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS bluerock_plc_data (
 	}
 	for _, r := range rows {
 		if _, err := client.DB.Exec(
-			"INSERT INTO bluerock_plc_data(plctime, alarm, permeateflow) VALUES (?, ?, ?)",
+			"INSERT INTO bluerock_plc_values(plctime, alarm, permeateflow) VALUES (?, ?, ?)",
 			r.t, r.al, r.pf,
 		); err != nil {
 			t.Fatalf("insert error: %v", err)
@@ -165,4 +165,3 @@ CREATE TABLE IF NOT EXISTS bluerock_plc_data (
 		t.Fatalf("unexpected second timestamp: %s", res.Timestamps[1])
 	}
 }
-
