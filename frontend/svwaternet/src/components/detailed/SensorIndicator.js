@@ -42,7 +42,14 @@ export function SensorIndicator({
         const currentValue = md.get(sensorKey, "current_value");
         const units = md.get(sensorKey, "units");
         if (currentValue === undefined || currentValue === null || currentValue === "") return "";
-        return `${currentValue}${units ? ` ${units}` : ""}`;
+        const formattedValue =
+            typeof currentValue === 'number' && Number.isFinite(currentValue)
+                ? currentValue.toLocaleString(undefined, {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2,
+                })
+                : currentValue;
+        return `${formattedValue}${units ? ` ${units}` : ""}`;
     })();
     const computedInnerText = (() => {
         if (innerText !== null && innerText !== undefined) return innerText;

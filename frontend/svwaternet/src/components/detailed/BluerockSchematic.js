@@ -424,6 +424,7 @@ function ROSystem({ md }) {
 function WaterDeliverSystem({ md }) {
     let to_permeate_flush = md.get("runflush", "current_value") && md.get("deliveryrun", "current_value");
     let ft4_to_pressure_tank = md.get("deliveryflow", "current_value") > 0 && md.get("deliveryrun", "current_value");
+    const PRODUCT_TANK_X = 1224;
 
     let leaving_product_tank = to_permeate_flush || ft4_to_pressure_tank;
 
@@ -471,11 +472,11 @@ function WaterDeliverSystem({ md }) {
                 paths={[[[1251, 173.5], [1329.5, 173.5], [1329.5, 53.5]]]} />
 
             <LiquidFillGaugeWrapper
-                x="1225" y="710" textDir='down'
+                x={PRODUCT_TANK_X} y="710" textDir='down'
                 text="Product Tank"
             />
             <SensorIndicator
-                x="1224" y="644.5" line="down" textDir='up'
+                x={PRODUCT_TANK_X} y="644.5" line="down" textDir='up'
                 sensorKey="prodtanklevel" md={md}
             />
             <ArrowPolyLine stroke="black" points="1150.5,695 1150.5,565 1173.5,565" />
