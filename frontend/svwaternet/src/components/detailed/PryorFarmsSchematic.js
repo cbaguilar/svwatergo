@@ -13,12 +13,6 @@ import {
 
 import React from 'react';
 
-const get_value_unit_string = (sensor_name, modal_table_dict) => {
-    const current_value = modal_table_dict.get(sensor_name, "current_value");
-    return `${current_value === undefined ? "" : current_value} `
-        + `${modal_table_dict.get(sensor_name, "units")}`;
-}
-
 function FeedTankSystem({ md, pipe_info }) {
     const wp = md.get("wellpumprun", "current_value");
     const p1 = md.get("feedpumprun", "current_value");
@@ -42,7 +36,7 @@ function FeedTankSystem({ md, pipe_info }) {
                 innerText="LT1"
                 textDir="down"
                 on_click={md.get("feedtanklevel", "on_click")}
-                // outerText={get_value_unit_string('feedtanklevel', md)}
+                // sensorKey="feedtanklevel" md={md}
             />
             <PumpSymbol x="260" y="160" innerText="WP" flow={wp} on_click={md.get("wellpumprun", "on_click")} />
             <LiquidFillGaugeWrapper x="320" y="90" fillLevel={md.get("feedtanklevel", "current_value")} />
@@ -81,7 +75,7 @@ function FlushTankSystem({ md, pipe_info }) {
                 innerText="LT3"
                 textDir="right"
                 on_click={md.get("flushtanklevel", "on_click")}
-                // outerText={get_value_unit_string('flushtanklevel', md)} 
+                // sensorKey="flushtanklevel" md={md} 
             />
             <PumpSymbol x="382.5" y="330" innerText="E13" flow={e13} on_click={md.get("runflush", "on_click")} />
         </g>
@@ -116,8 +110,7 @@ function ROSystem({ md, pipe_info }) {
     const p2 = md.get("ropumprun", "current_value");
     const av5 = md.get("concbypassrun", "current_value");
     const nt1 = md.get("permnitrate", "current_value");
-    const nt1_units = md.get("permnitrate", "units");
-    const av3 = md.get("ropressctrlvalveposition", "current_value");
+        const av3 = md.get("ropressctrlvalveposition", "current_value");
     const av4 = md.get("ropressctrlvalveposition", "current_value");
 
 
@@ -210,7 +203,7 @@ function ROSystem({ md, pipe_info }) {
                 x="628"
                 y="100"
                 innerText="PT1"
-                outerText={get_value_unit_string("inletpressure", md)}
+                sensorKey="inletpressure" md={md}
                 textDir="up"
                 on_click={md.get("inletpressure", "on_click")} />
             <MultiMediaFilter
@@ -229,13 +222,13 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="590" y="360"
                 textDir="down"
-                outerText={get_value_unit_string("feedpressure", md)}
+                sensorKey="feedpressure" md={md}
                 innerText="PT2"
                 on_click={md.get("feedpressure", "on_click")} />
             <SensorIndicator
                 x="670" y="360"
                 innerText="FT1"
-                outerText={get_value_unit_string("inletflow", md)}
+                sensorKey="inletflow" md={md}
                 textDir="up"
                 on_click={md.get("inletflow", "on_click")} />
             <PumpSymbol
@@ -248,13 +241,13 @@ function ROSystem({ md, pipe_info }) {
                 line="left"
                 innerText="PT3"
                 textDir="up"
-                outerText={get_value_unit_string("ropressure", md)}
+                sensorKey="ropressure" md={md}
                 on_click={md.get("ropressure", "on_click")} />
             <SensorIndicator
                 x="912" y="270"
                 innerText="CT1"
                 textDir="up"
-                outerText={get_value_unit_string('inletflow', md)}
+                sensorKey="inletflow" md={md}
                 on_click={md.get("feedtds", "on_click")} />
             <SensorIndicator
                 x="762" y="270"
@@ -306,29 +299,29 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="972" y="475"
                 innerText="NT1"
-                outerText={<TextArray textArray={[nt1, nt1_units]} />}
+                sensorKey="permnitrate" md={md}
                 on_click={md.get("permnitrate", "on_click")} />
             <SensorIndicator
                 x="972" y="525"
                 innerText="CT2"
-                outerText={get_value_unit_string('permtds', md)}
+                sensorKey="permtds" md={md}
                 on_click={md.get("permtds", "on_click")}
             />
             <SensorIndicator
                 x="972" y="575"
                 innerText="FT3"
-                outerText={get_value_unit_string('permeateflow', md)}
+                sensorKey="permeateflow" md={md}
                 on_click={md.get("permeateflow", "on_click")} />
             <SensorIndicator
                 x="972" y="625"
                 innerText="TT1"
-                outerText={get_value_unit_string('permtemp', md)}
+                sensorKey="permtemp" md={md}
                 on_click={md.get("permtemp", "on_click")} />
             <SensorIndicator
                 x="942" y="399"
                 line="down"
                 innerText="PT5"
-                outerText={get_value_unit_string('permeatepressure', md)}
+                sensorKey="permeatepressure" md={md}
                 textDir="up"
                 on_click={md.get("permeatepressure", "on_click")} />
         </>
@@ -357,7 +350,7 @@ function ROSystemTopLayer({ md, pipeinfo }) {
             <SensorIndicator
                 x="602.5" y="634.5"
                 innerText="FT2"
-                outerText={get_value_unit_string("concentrateflow", md)}
+                sensorKey="concentrateflow" md={md}
                 textDir="up"
                 on_click={md.get("concentrateflow", "on_click")}
             />
@@ -432,7 +425,7 @@ function DeliverySystem({ md, pipe_info }) {
                 innerText="LT2"
                 textDir="up"
                 on_click={md.get("prodtanklevel", "on_click")}
-                // outerText={get_value_unit_string('prodtanklevel', md)} 
+                // sensorKey="prodtanklevel" md={md} 
             />
             <LiquidFillGaugeWrapper 
                 x="1181.5" 
@@ -461,7 +454,7 @@ function DeliverySystem({ md, pipe_info }) {
                 x="1170" y="544.5"
                 innerText="CT3"
                 textDir="left"
-                outerText={get_value_unit_string("producttds", md)}
+                sensorKey="producttds" md={md}
                 on_click={md.get("producttds", "on_click")} />
 
         </>

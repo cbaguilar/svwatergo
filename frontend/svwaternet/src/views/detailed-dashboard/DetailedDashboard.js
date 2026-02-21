@@ -15,7 +15,7 @@ import {
 import { CChartLine } from '@coreui/react-chartjs'
 
 import BluerockSchematic from '../../components/detailed/BluerockSchematic'
-import SantaTeresaPryorFarmsSchematic from '../../components/detailed/SantaTeresaPryorFarmsSchematic'
+import SantaTeresaSchematic from '../../components/detailed/SantaTeresaSchematic'
 import PryorFarmsSchematic from '../../components/detailed/PryorFarmsSchematic'
 import { fetchStateRange } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
@@ -390,7 +390,7 @@ const DetailedDashboard = () => {
       ? BluerockSchematic
       : selectedSystem === 'Pryor Farms'
         ? PryorFarmsSchematic
-        : SantaTeresaPryorFarmsSchematic
+        : SantaTeresaSchematic
 
   const latestRow = timelineRows.length ? timelineRows[timelineRows.length - 1] : null
   const activeTs = focusedTs ?? (isLivePlaying ? toTs(latestRow) : frozenTs)

@@ -7,7 +7,9 @@ export function SensorIndicator({
     x = "0",
     y = "0",
     innerText = "",
-    outerText = "",
+    outerText = null,
+    sensorKey = "",
+    md = null,
     line = null,
     textDir = "right",
     smallInner = false,
@@ -28,6 +30,14 @@ export function SensorIndicator({
 
     const LINELENGTH = 35;
     let sensorLine;
+    const computedOuterText = (() => {
+        if (outerText !== null && outerText !== undefined) return outerText;
+        if (!sensorKey || !md || typeof md.get !== 'function') return "";
+        const currentValue = md.get(sensorKey, "current_value");
+        const units = md.get(sensorKey, "units");
+        if (currentValue === undefined || currentValue === null || currentValue === "") return "";
+        return `${currentValue}${units ? ` ${units}` : ""}`;
+    })();
 
 
 
@@ -81,7 +91,7 @@ export function SensorIndicator({
                 <RelativeText
                     dir="right"
                     textDir={textDir}
-                    text={outerText}
+                    text={computedOuterText}
                     positions={[[0, -34], [32, 2], [0, 38], [-32, 2]]}
                     small
                 />
