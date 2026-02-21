@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from "framer-motion";
 import { DARKBLUECOLOR } from './shared';
 
 export function AnimatedPipe({
@@ -19,7 +18,7 @@ export function AnimatedPipe({
     let arrows = [];
     for (let i = 0; i < paths.length; i++) {
         let pipeString = "";
-        paths[i].map((point) => {
+        paths[i].forEach((point) => {
             pipeString += `${point[0]},${point[1]} `
         })
         pipeStrings.push(pipeString);
@@ -75,38 +74,25 @@ export function AnimatedPipe({
             key={`(${index})${pipeString}`} />
     );
 
-    const innerDottedPolylines = ! animated ? null : pipeStrings.map((pipeString, index) =>
-        // <motion.polyline
-        //     points={pipeString}
-        //     strokeWidth={pWidth - 3}
-        //     stroke="white"
-        //     fill="none"
-        //     strokeDasharray="3 10"
-        //     animate={{
-        //         strokeDashoffset: [0, speed === 0 ? 0 : -13]
-        //     }}
-        //     key={`innerDottedPolyline${index}${JSON.stringify(paths)}`}
-        //     transition={{
-        //         ease: "linear",
-        //         times: [0, 1],
-        //         duration: 5 / (speed === 0 ? 1 : speed),
-        //         repeat: Infinity,
-        //     }}
-        // />
+    const flowDuration = speed > 0 ? 5 / speed : 5;
+    const innerDottedPolylines = !animated ? null : pipeStrings.map((pipeString, index) => (
         <polyline
             points={pipeString}
-            strokeWidth={0}
+            strokeWidth={Math.max(1, pWidth - 3)}
             stroke="white"
             fill="none"
+            strokeDasharray="3 10"
             key={`innerDottedPolyline${index}${JSON.stringify(paths)}`}
-            transition={{
-                ease: "linear",
-                times: [0, 1],
-                duration: 5 / (speed === 0 ? 1 : speed),
-                repeat: Infinity,
-            }}
-        />
-    )
+        >
+            <animate
+                attributeName="stroke-dashoffset"
+                from="0"
+                to="-13"
+                dur={`${flowDuration}s`}
+                repeatCount="indefinite"
+            />
+        </polyline>
+    ))
     return (
         <>
             <g opacity={ pipeOn ? "1.0" : "0.4" }>
