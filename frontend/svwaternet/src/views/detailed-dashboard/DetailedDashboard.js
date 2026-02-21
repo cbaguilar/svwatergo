@@ -72,6 +72,15 @@ const SENSOR_META = {
   concentratepressure: { label: 'Concentrate Pressure', unit: 'PSI', type: 'number' },
   permeatepressure: { label: 'Permeate Pressure', unit: 'PSI', type: 'number' },
   deliverypressure: { label: 'Delivery Pressure', unit: 'PSI', type: 'number' },
+  state: { label: 'System State', type: 'number' },
+  lockout: { label: 'Backwash Lockout', type: 'boolean' },
+  totalroflow: { label: 'Total RO Flow', unit: 'gal', type: 'number' },
+  totalfeedflow: { label: 'Total Feed Flow', unit: 'gal', type: 'number' },
+  totalinletflow: { label: 'Total Inlet Flow', unit: 'gal', type: 'number' },
+  totalrecycleflow: { label: 'Total Recycle Flow', unit: 'gal', type: 'number' },
+  totalconcflow: { label: 'Total Concentrate Flow', unit: 'gal', type: 'number' },
+  totaldelflow: { label: 'Total Delivery Flow', unit: 'gal', type: 'number' },
+  powermeter: { label: 'Power Meter', type: 'number' },
   wellpumprun: { label: 'Well Pump', type: 'boolean' },
   feedpumprun: { label: 'P1 Feed Pump', type: 'boolean' },
   ropumprun: { label: 'P2 RO Pump', type: 'boolean' },
@@ -422,6 +431,10 @@ const DetailedDashboard = () => {
     })
   }
   const selectedMetricLabel = sensorDisplayName(selectedMetricKey)
+  const selectTrendMetric = (key) => {
+    if (!key) return
+    setSelectedMetricKeys([key])
+  }
 
   const md = useMemo(
     () => buildLiveMd(data, handleSelectSensor),
@@ -556,6 +569,8 @@ const DetailedDashboard = () => {
   const totalRecycleOrConcFlow = firstFiniteNumber(data.totalrecycleflow, data.totalconcflow)
   const totalDeliveryFlow = firstFiniteNumber(data.totaldelflow)
   const powerMeter = firstFiniteNumber(data.powermeter)
+  const totalFeedMetricKey = typeof data.totalfeedflow === 'number' ? 'totalfeedflow' : 'totalinletflow'
+  const totalRecycleMetricKey = typeof data.totalrecycleflow === 'number' ? 'totalrecycleflow' : 'totalconcflow'
   const activeMetricKeys = selectedMetricKeys.length ? selectedMetricKeys : [DEFAULT_METRIC_KEY]
   const metricPalette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6']
   const chartPoints = timelineRows.map((row) => ({ ts: toTs(row), row })).filter((p) => p.ts > 0)
@@ -847,33 +862,61 @@ const DetailedDashboard = () => {
             <CCardHeader>Sensor Status</CCardHeader>
             <CCardBody>
               <div className="small text-body-secondary mb-2">Operational Snapshot</div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
+              <div
+                className="d-flex justify-content-between align-items-center mb-2"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric('state')}
+              >
                 <span>System State</span>
                 {roStatusBadge()}
               </div>
-              <div className="d-flex justify-content-between align-items-center mb-3">
+              <div
+                className="d-flex justify-content-between align-items-center mb-3"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric('lockout')}
+              >
                 <span>Backwash Lockout</span>
                 {boolBadge(data.lockout, 'Active', 'Inactive')}
               </div>
               <hr className="my-2" />
               <div className="small text-body-secondary mb-2">Totalizers</div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
+              <div
+                className="d-flex justify-content-between align-items-center mb-2"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric('totalroflow')}
+              >
                 <span>Total RO Flow</span>
                 <span className="fw-semibold">{formatSnapshotNumber(totalROFlow)} gal</span>
               </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
+              <div
+                className="d-flex justify-content-between align-items-center mb-2"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric(totalFeedMetricKey)}
+              >
                 <span>Total Feed/Inlet Flow</span>
                 <span className="fw-semibold">{formatSnapshotNumber(totalFeedOrInletFlow)} gal</span>
               </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
+              <div
+                className="d-flex justify-content-between align-items-center mb-2"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric(totalRecycleMetricKey)}
+              >
                 <span>Total Recycle/Conc Flow</span>
                 <span className="fw-semibold">{formatSnapshotNumber(totalRecycleOrConcFlow)} gal</span>
               </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
+              <div
+                className="d-flex justify-content-between align-items-center mb-2"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric('totaldelflow')}
+              >
                 <span>Total Delivery Flow</span>
                 <span className="fw-semibold">{formatSnapshotNumber(totalDeliveryFlow)} gal</span>
               </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
+              <div
+                className="d-flex justify-content-between align-items-center mb-2"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric('powermeter')}
+              >
                 <span>Power Meter</span>
                 <span className="fw-semibold">{formatSnapshotNumber(powerMeter)}</span>
               </div>
