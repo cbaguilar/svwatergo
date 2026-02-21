@@ -14,8 +14,6 @@ import {
 import React from 'react';
 
 function FeedTankSystem({ md, pipe_info }) {
-    const wp = md.get("wellpumprun", "current_value");
-    const p1 = md.get("feedpumprun", "current_value");
     return (
         <g>
             <rect rx="10" x="220" y="10" width="220px" height="210px" fill="#fceade" />
@@ -38,7 +36,7 @@ function FeedTankSystem({ md, pipe_info }) {
                 on_click={md.get("feedtanklevel", "on_click")}
                 // sensorKey="feedtanklevel" md={md}
             />
-            <PumpSymbol x="260" y="160" innerText="WP" flow={wp} on_click={md.get("wellpumprun", "on_click")} />
+            <PumpSymbol x="260" y="160" pumpKey="wellpumprun" md={md} />
             <LiquidFillGaugeWrapper x="320" y="90" fillLevel={md.get("feedtanklevel", "current_value")} />
             <SensorIndicator WaterScope x="394.5" y="100" innerText="100" />
         </g>
@@ -46,7 +44,6 @@ function FeedTankSystem({ md, pipe_info }) {
 }
 
 function FlushTankSystem({ md, pipe_info }) {
-    const e13 = md.get("runflush", "current_value")
     return (
         <g>
             <rect rx="10" x="220" y="230" width="220px" height="210px" fill="#e8cdf7" />
@@ -77,7 +74,7 @@ function FlushTankSystem({ md, pipe_info }) {
                 on_click={md.get("flushtanklevel", "on_click")}
                 // sensorKey="flushtanklevel" md={md} 
             />
-            <PumpSymbol x="382.5" y="330" innerText="E13" flow={e13} on_click={md.get("runflush", "on_click")} />
+            <PumpSymbol x="382.5" y="330" pumpKey="runflush" md={md} />
         </g>
     );
 }
@@ -107,7 +104,6 @@ function ResidualSeptic({ md, pipe_info }) {
 
 function ROSystem({ md, pipe_info }) {
     const av1 = md.get("inletrun", "current_value");
-    const p2 = md.get("ropumprun", "current_value");
     const av5 = md.get("concbypassrun", "current_value");
     const nt1 = md.get("permnitrate", "current_value");
         const av3 = md.get("ropressctrlvalveposition", "current_value");
@@ -233,9 +229,7 @@ function ROSystem({ md, pipe_info }) {
                 on_click={md.get("inletflow", "on_click")} />
             <PumpSymbol
                 x="750" y="360"
-                innerText="P2"
-                flow={p2}
-                on_click={md.get("ropumprun", "on_click")} />
+                pumpKey="ropumprun" md={md} />
             <SensorIndicator
                 x="860" y="360"
                 line="left"
@@ -324,7 +318,6 @@ function ROSystem({ md, pipe_info }) {
 }
 
 function ROSystemTopLayer({ md, pipeinfo }) {
-    const p1 = md.get("feedpumprun", "current_value");
     const av7 = md.get("flushdiversionrun", "current_value");
     const av6 = md.get("proddiversionrun", "current_value");
 
@@ -332,9 +325,7 @@ function ROSystemTopLayer({ md, pipeinfo }) {
         <>
             <PumpSymbol
                 x="491" y="100"
-                innerText="P1"
-                flow={p1}
-                on_click={md.get("feedpumprun", "on_click")}
+                pumpKey="feedpumprun" md={md}
             />
             <CheckValve x="554" y="100" />
             <CheckValve x="560" y="200" />
@@ -429,10 +420,8 @@ function DeliverySystem({ md, pipe_info }) {
             />
             <PumpSymbol
                 x="1271.5" y="328.5"
-                innerText="P3"
+                pumpKey="deliveryrun" md={md}
                 textDir="down"
-                flow={md.get('deliveryrun', 'current_value')}
-                on_click={md.get("deliveryrun", "on_click")}
                 outerText={<TextArray textArray={["Existing Delivery", "Pump"]} />} />
             <CheckValve dir="up" x="1271.5" y="232.5" />
             {/* <SensorIndicator

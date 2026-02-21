@@ -36,9 +36,7 @@ function FeedTankSystem({ md }) {
             />
             <PumpSymbol
                 x="265.5" y="214"
-                innerText={md.get("wellpumprun", "abbreviated_name")}
-                flow={md.get("wellpumprun", "current_value")}
-                on_click={md.get("wellpumprun", "on_click")}
+                pumpKey="wellpumprun" md={md}
             />
             <SensorIndicator WaterScope x="265.5" y="164" innerText="100" outerText='12345' />
         </g>
@@ -239,9 +237,7 @@ function ROSystem({ md }) {
             />
             <PumpSymbol
                 x="498" y="161"
-                innerText={md.get("feedpumprun", "abbreviated_name")}
-                flow={md.get("feedpumprun", "current_value")}
-                on_click={md.get("feedpumprun", "on_click")}
+                pumpKey="feedpumprun" md={md}
             />
             <CheckValve x="600" y="61" />
             <MultiMediaFilter x="731" y="181"
@@ -295,9 +291,7 @@ function ROSystem({ md }) {
             />
             <PumpSymbol
                 x="800" y="331.5"
-                innerText={md.get("ropumprun", "abbreviated_name")}
-                flow={md.get("ropumprun", "current_value")}
-                on_click={md.get("ropumprun", "on_click")}
+                pumpKey="ropumprun" md={md}
             />
             <ArrowPolyLine stroke="black" points="998,268 998,304 1042.5,304" />
             <ChemicalFeed
@@ -496,9 +490,7 @@ function WaterDeliverSystem({ md }) {
             <PumpSymbol
                 x="1332"
                 y="700.5"
-                innerText={md.get("deliveryrun", "abbreviated_name")}
-                flow={md.get("deliveryrun", "current_value")}
-                on_click={md.get("deliveryrun", "on_click")}
+                pumpKey="deliveryrun" md={md}
             />
             <CheckValve dir="up" x="1382" y="645.5" />
             <text y="592" textAnchor="end" {...smallTextProps}>
