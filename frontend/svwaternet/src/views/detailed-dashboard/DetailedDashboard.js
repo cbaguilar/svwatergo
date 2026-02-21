@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import {
   CBadge,
@@ -19,6 +19,7 @@ import SantaTeresaSchematic from '../../components/detailed/SantaTeresaSchematic
 import PryorFarmsSchematic from '../../components/detailed/PryorFarmsSchematic'
 import { fetchStateRange } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
+import { bitTables, decodeBitfield } from '../../utils/bitfields'
 
 const ABBR = {
   feedtanklevel: 'LT1',
@@ -302,6 +303,9 @@ const DetailedDashboard = () => {
   })
   const [selectedMetricKey, setSelectedMetricKey] = useState(DEFAULT_METRIC_KEY)
   const [urlStateReady, setURLStateReady] = useState(false)
+  const [dragSelect, setDragSelect] = useState(null)
+  const chartRef = useRef(null)
+  const suppressNextChartClickRef = useRef(false)
 
   const siteKey =
     selectedSystem === 'Bluerock'
@@ -511,32 +515,26 @@ const DetailedDashboard = () => {
   const roStatusBadge = () => {
     const stateCode = Number.isInteger(data.state) ? data.state : null
     if (stateCode === 0) return <CBadge color="danger">RO Off</CBadge>
-    if (stateCode === 1) return <CBadge color="danger">EStop Pressed</CBadge>
+    if (stateCode === 1) return <CBadge color="danger">EStop Pressed!</CBadge>
     if (stateCode === 2) return <CBadge color="success">RO Running</CBadge>
     if (stateCode === 3) return <CBadge color="warning">RO Standby</CBadge>
     if (stateCode === 5 || stateCode === 8) return <CBadge color="info">Flushing</CBadge>
-
-    if (data.rostandby) return <CBadge color="warning">RO Standby</CBadge>
-    if (data.ropumprun) return <CBadge color="success">RO Running</CBadge>
-    return <CBadge color="danger">RO Off</CBadge>
+    return <CBadge color="secondary">Unknown</CBadge>
   }
 
   const warnings = []
+  const decodedAlarmBits = decodeBitfield(Number(data.alarmword || 0), bitTables.alarm)
+  const decodedWarn0Bits = decodeBitfield(Number(data.warnword0 || 0), bitTables.warning1)
+  const decodedWarn1Bits = decodeBitfield(Number(data.warnword1 || 0), bitTables.warning2)
+  const registerWarnings = Array.from(new Set([...decodedAlarmBits, ...decodedWarn0Bits, ...decodedWarn1Bits]))
   if (data.alarm) warnings.push('Alarm Active')
-  if ((data.warnword0 || 0) > 0) warnings.push(`Warn Word 0: ${data.warnword0}`)
-  if ((data.warnword1 || 0) > 0) warnings.push(`Warn Word 1: ${data.warnword1}`)
-  if (data.lockout) warnings.push('System Lockout')
+  registerWarnings.forEach((label) => warnings.push(label))
   if (stateError) warnings.push(`Data stream error: ${stateError}`)
-  const roRecovery =
-    typeof data.ro_recovery === 'number' && Number.isFinite(data.ro_recovery) ? data.ro_recovery : null
   const totalROFlow = firstFiniteNumber(data.totalroflow)
   const totalFeedOrInletFlow = firstFiniteNumber(data.totalfeedflow, data.totalinletflow)
   const totalRecycleOrConcFlow = firstFiniteNumber(data.totalrecycleflow, data.totalconcflow)
   const totalDeliveryFlow = firstFiniteNumber(data.totaldelflow)
-  const alarmWord = Number.isInteger(data.alarmword) ? data.alarmword : 0
-  const warnWord0 = Number.isInteger(data.warnword0) ? data.warnword0 : 0
-  const warnWord1 = Number.isInteger(data.warnword1) ? data.warnword1 : 0
-
+  const powerMeter = firstFiniteNumber(data.powermeter)
   const chartPoints = timelineRows
     .map((row) => {
       const raw = row?.[selectedMetricKey]
@@ -617,6 +615,10 @@ const DetailedDashboard = () => {
       },
     },
     onClick: (_event, elements) => {
+      if (suppressNextChartClickRef.current) {
+        suppressNextChartClickRef.current = false
+        return
+      }
       if (!elements?.length) return
       const idx = elements[0].index
       const p = chartPoints[idx]
@@ -624,6 +626,61 @@ const DetailedDashboard = () => {
       setFocusedTs(p.ts)
       setIsLivePlaying(false)
     },
+  }
+
+  const beginDragSelect = (e) => {
+    const chart = chartRef.current
+    if (!chart?.canvas || chartPoints.length < 2) return
+    const rect = chart.canvas.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const area = chart.chartArea
+    if (!area) return
+    if (x < area.left || x > area.right || y < area.top || y > area.bottom) return
+    setDragSelect({ startX: x, currentX: x })
+  }
+
+  const updateDragSelect = (e) => {
+    if (!dragSelect) return
+    const chart = chartRef.current
+    if (!chart?.canvas) return
+    const rect = chart.canvas.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    setDragSelect((prev) => (prev ? { ...prev, currentX: x } : prev))
+  }
+
+  const finishDragSelect = () => {
+    if (!dragSelect) return
+    const chart = chartRef.current
+    const area = chart?.chartArea
+    if (!chart || !area) {
+      setDragSelect(null)
+      return
+    }
+
+    const minX = Math.max(area.left, Math.min(dragSelect.startX, dragSelect.currentX))
+    const maxX = Math.min(area.right, Math.max(dragSelect.startX, dragSelect.currentX))
+    const dragWidth = maxX - minX
+    setDragSelect(null)
+    if (dragWidth < 8) return
+
+    const xScale = chart.scales?.x
+    if (!xScale || chartPoints.length < 2) return
+    const startIndex = Math.max(0, Math.min(chartPoints.length - 1, Math.round(Number(xScale.getValueForPixel(minX)))))
+    const endIndex = Math.max(0, Math.min(chartPoints.length - 1, Math.round(Number(xScale.getValueForPixel(maxX)))))
+    const startTs = chartPoints[Math.min(startIndex, endIndex)]?.ts
+    const endTs = chartPoints[Math.max(startIndex, endIndex)]?.ts
+    if (!startTs || !endTs || startTs >= endTs) return
+
+    const startISO = new Date(startTs).toISOString()
+    const endISO = new Date(endTs).toISOString()
+    setRangeStartInput(isoToLocalInputValue(startISO))
+    setRangeEndInput(isoToLocalInputValue(endISO))
+    setActiveRange({ kind: 'custom', preset: null, start: startISO, end: endISO })
+    setIsLivePlaying(false)
+    setFocusedTs(null)
+    setFrozenTs(endTs)
+    suppressNextChartClickRef.current = true
   }
 
   const activeRangeLabel =
@@ -783,20 +840,12 @@ const DetailedDashboard = () => {
             <CCardBody>
               <div className="small text-body-secondary mb-2">Operational Snapshot</div>
               <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>RO Status</span>
+                <span>System State</span>
                 {roStatusBadge()}
               </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>PLC State</span>
-                <span className="fw-semibold">
-                  {Number.isInteger(data.state) ? `${data.state}` : 'N/A'}
-                </span>
-              </div>
               <div className="d-flex justify-content-between align-items-center mb-3">
-                <span>RO Recovery</span>
-                <span className="fw-semibold">
-                  {roRecovery === null ? 'N/A' : `${roRecovery.toFixed(2)}%`}
-                </span>
+                <span>Backwash Lockout</span>
+                {boolBadge(data.lockout, 'Active', 'Inactive')}
               </div>
               <hr className="my-2" />
               <div className="small text-body-secondary mb-2">Totalizers</div>
@@ -816,28 +865,25 @@ const DetailedDashboard = () => {
                 <span>Total Delivery Flow</span>
                 <span className="fw-semibold">{formatSnapshotNumber(totalDeliveryFlow)} gal</span>
               </div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>Power Meter</span>
+                <span className="fw-semibold">{formatSnapshotNumber(powerMeter)}</span>
+              </div>
               <hr className="my-2" />
               <div className="small text-body-secondary mb-2">Alarm and Warning Registers</div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>Alarm</span>
-                {boolBadge(data.alarm, 'Active', 'Clear')}
-              </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>Lockout</span>
-                {boolBadge(data.lockout, 'Locked', 'Normal')}
-              </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>Alarm Word</span>
-                <span className="fw-semibold">{alarmWord}</span>
-              </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>Warn Word 0</span>
-                <span className="fw-semibold">{warnWord0}</span>
-              </div>
-              <div className="d-flex justify-content-between align-items-center">
-                <span>Warn Word 1</span>
-                <span className="fw-semibold">{warnWord1}</span>
-              </div>
+              {data.alarm && (
+                <div className="d-flex justify-content-between align-items-center mb-2">
+                  <span>Alarm</span>
+                  {boolBadge(data.alarm, 'Active', 'Clear')}
+                </div>
+              )}
+              <div className="small text-body-secondary mt-2 mb-1">Active Warnings</div>
+              <ul className="mb-0 ps-3 small">
+                {registerWarnings.length === 0 && <li>No active alarm/warning bits.</li>}
+                {registerWarnings.map((entry) => (
+                  <li key={entry}>{entry}</li>
+                ))}
+              </ul>
             </CCardBody>
           </CCard>
         </CCol>
@@ -882,7 +928,32 @@ const DetailedDashboard = () => {
                     <div className="small">Try 24h/7d preset or apply a wider custom range.</div>
                   </div>
                 ) : (
-                  <CChartLine data={chartData} options={chartOptions} />
+                  <div
+                    style={{ height: '100%', position: 'relative' }}
+                    onMouseDown={beginDragSelect}
+                    onMouseMove={updateDragSelect}
+                    onMouseUp={finishDragSelect}
+                    onMouseLeave={finishDragSelect}
+                  >
+                    <CChartLine ref={chartRef} data={chartData} options={chartOptions} />
+                    {dragSelect && chartRef.current?.chartArea && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: chartRef.current.chartArea.top,
+                          height: chartRef.current.chartArea.bottom - chartRef.current.chartArea.top,
+                          left: Math.max(
+                            chartRef.current.chartArea.left,
+                            Math.min(dragSelect.startX, dragSelect.currentX),
+                          ),
+                          width: Math.max(1, Math.abs(dragSelect.currentX - dragSelect.startX)),
+                          background: 'rgba(14,165,233,0.18)',
+                          border: '1px solid rgba(14,165,233,0.55)',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    )}
+                  </div>
                 )}
               </div>
             </CCardBody>
