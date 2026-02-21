@@ -1,36 +1,48 @@
 import React from 'react';
 import { DARKBLUECOLOR, LIGHTBLUECOLOR, PINKCOLOR } from './shared';
 
-export function ArrowPolyLine({ points, sx = "0", sy = "0", stroke, prero, postro, concentrate, noarr, junctionPositions = [] }) {
-    // this could've been done *much* more elegantly with regex
-    const splitPoints = points.split(',').filter(word => word !== "");
-    if (splitPoints.length < 3) {
-        return (<></>)
-    }
-    const y1_x2_arr = splitPoints[1].split(' ').filter(word => word !== "");
-    const y2_x3_arr = splitPoints[2].split(' ').filter(word => word !== "");
+const parsePoints = (points) => {
+    if (!points || typeof points !== 'string') return [];
+    return points
+        .trim()
+        .split(/\s+/)
+        .map((pair) => pair.split(','))
+        .filter((xy) => xy.length === 2)
+        .map(([x, y]) => [Number.parseFloat(x), Number.parseFloat(y)])
+        .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+};
 
-    const x1 = parseFloat(splitPoints[0].trim());
-    const y1 = parseFloat(y1_x2_arr[0].trim());
-    const x2 = parseFloat(y1_x2_arr[1].trim());
-    const y2 = parseFloat(y2_x3_arr[0].trim());
+export const ArrowPolyLine = React.memo(function ArrowPolyLine({
+    points,
+    sx = "0",
+    sy = "0",
+    stroke,
+    prero,
+    postro,
+    concentrate,
+    noarr,
+    junctionPositions = [],
+}) {
+    const parsedPoints = parsePoints(points);
+    if (parsedPoints.length < 2) return null;
 
-    let angle = 90;
+    const [x1, y1] = parsedPoints[0];
+    const nextPoint = parsedPoints.find(([x, y], idx) => idx > 0 && (x !== x1 || y !== y1));
+    const [x2, y2] = nextPoint || [x1, y1];
+
+    // base triangle points "up", rotate to align with first segment direction
+    let angle = 0;
     if (x1 !== x2 || y1 !== y2) {
-        angle = x1 <= x2
-            ? (Math.atan((y2 - y1) / (x2 - x1)) * 180 / Math.PI) - 90
-            : (Math.atan((y2 - y1) / (x2 - x1)) * 180 / Math.PI) + 90;
+        angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI + 90;
     }
 
-    // default line color
-    let lineStroke = stroke === undefined ? DARKBLUECOLOR : stroke;
-    if (prero) {
-        lineStroke = DARKBLUECOLOR;
-    } else if (postro) {
-        lineStroke = LIGHTBLUECOLOR;
-    } else if (concentrate) {
-        lineStroke = PINKCOLOR;
-    }
+    const lineStroke = prero
+        ? DARKBLUECOLOR
+        : postro
+            ? LIGHTBLUECOLOR
+            : concentrate
+                ? PINKCOLOR
+                : (stroke === undefined ? DARKBLUECOLOR : stroke);
 
     const junctions = junctionPositions.map((pos, index) => (
         <circle
@@ -60,4 +72,4 @@ export function ArrowPolyLine({ points, sx = "0", sy = "0", stroke, prero, postr
                 strokeWidth="2" />
         </g>
     );
-}
+});
