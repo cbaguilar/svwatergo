@@ -62,8 +62,8 @@ export function ThreeWayVariablePieValveIndicator({
     // the text orientation should always be normal
     const transstr = 'translate(' + x + ',' + y + ') '
         + `rotate(${getAngle(dir)})`;
-    const handleActivate = () => {
-        on_click();
+    const handleActivate = (event) => {
+        on_click(event);
     };
 
     const innerDir = tOutflow ? 90 : -45;
@@ -90,7 +90,7 @@ export function ThreeWayVariablePieValveIndicator({
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        handleActivate();
+                        handleActivate(e);
                     }
                 }}
                 tabIndex={0}

@@ -32,8 +32,8 @@ export function PumpSymbol({
         return typeof fn === 'function' ? fn : () => {};
     })();
     const flowColor = getFlowColor(resolvedFlow);
-    const handleActivate = () => {
-        resolvedOnClick();
+    const handleActivate = (event) => {
+        resolvedOnClick(event);
     };
     return (
         <g
@@ -42,7 +42,7 @@ export function PumpSymbol({
             onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    handleActivate();
+                    handleActivate(e);
                 }
             }}
             tabIndex={0}

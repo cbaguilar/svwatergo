@@ -275,7 +275,7 @@ const buildLiveMd = (data = {}, onSelectSensor = () => {}) => ({
     if (field === 'current_value') return value ?? 0
     if (field === 'on_click') {
       if (!key || key === '???') return () => {}
-      return () => onSelectSensor(key)
+      return (event) => onSelectSensor(key, event)
     }
     return ''
   },
@@ -302,13 +302,11 @@ const DetailedDashboard = () => {
     start: initialBounds.start,
     end: initialBounds.end,
   })
-  const [selectedMetricKey, setSelectedMetricKey] = useState(DEFAULT_METRIC_KEY)
+  const [selectedMetricKeys, setSelectedMetricKeys] = useState([DEFAULT_METRIC_KEY])
   const [urlStateReady, setURLStateReady] = useState(false)
   const [dragSelect, setDragSelect] = useState(null)
-  const [isPlaybackRunning, setIsPlaybackRunning] = useState(false)
   const chartRef = useRef(null)
   const suppressNextChartClickRef = useRef(false)
-  const playbackTimerRef = useRef(null)
 
   const siteKey =
     selectedSystem === 'Bluerock'
@@ -348,7 +346,7 @@ const DetailedDashboard = () => {
       }
 
       if (parsed.metric) {
-        setSelectedMetricKey(parsed.metric)
+        setSelectedMetricKeys([parsed.metric])
       }
 
       setIsLivePlaying(parsed.live)
@@ -382,7 +380,7 @@ const DetailedDashboard = () => {
     params.set('live', isLivePlaying ? '1' : '0')
     params.set('start', activeRange.start)
     params.set('end', activeRange.end)
-    params.set('metric', selectedMetricKey)
+    params.set('metric', selectedMetricKeys[0] || DEFAULT_METRIC_KEY)
     if (activeRange.kind === 'preset' && activeRange.preset) {
       params.set('preset', activeRange.preset)
     }
@@ -390,7 +388,7 @@ const DetailedDashboard = () => {
       params.set('focus', new Date(focusedTs).toISOString())
     }
     pushHashParams(params)
-  }, [urlStateReady, siteKey, isLivePlaying, activeRange, selectedMetricKey, focusedTs])
+  }, [urlStateReady, siteKey, isLivePlaying, activeRange, selectedMetricKeys, focusedTs])
 
   const Schematic =
     selectedSystem === 'Bluerock'
@@ -403,16 +401,29 @@ const DetailedDashboard = () => {
   const activeTs = hoverTs ?? focusedTs ?? (isLivePlaying ? toTs(latestRow) : frozenTs)
   const activeRow = activeTs ? nearestRow(timelineRows, activeTs) : latestRow
   const data = activeRow || {}
-  const selectedMetricType = useMemo(
-    () => inferSensorType(timelineRows, selectedMetricKey),
-    [timelineRows, selectedMetricKey],
-  )
+  const selectedMetricKey = selectedMetricKeys[0] || DEFAULT_METRIC_KEY
+  const handleSelectSensor = (key, event) => {
+    if (!key || key === '???') return
+    const isMulti = Boolean(event?.ctrlKey || event?.metaKey)
+    if (!isMulti) {
+      setSelectedMetricKeys([key])
+      return
+    }
+    setSelectedMetricKeys((prev) => {
+      const exists = prev.includes(key)
+      if (exists) {
+        const next = prev.filter((k) => k !== key)
+        return next.length ? next : [DEFAULT_METRIC_KEY]
+      }
+      const next = [...prev, key]
+      return next.slice(-6)
+    })
+  }
   const selectedMetricLabel = sensorDisplayName(selectedMetricKey)
-  const selectedMetricUnit = SENSOR_META[selectedMetricKey]?.unit || ''
 
   const md = useMemo(
-    () => buildLiveMd(data, setSelectedMetricKey),
-    [data, setSelectedMetricKey],
+    () => buildLiveMd(data, handleSelectSensor),
+    [data],
   )
 
   useEffect(() => {
@@ -510,16 +521,6 @@ const DetailedDashboard = () => {
     }
   }, [isLivePlaying, focusedTs, latestRow])
 
-  useEffect(() => {
-    return () => clearPlaybackTimer()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    stopPlayback()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteKey, activeRange, selectedMetricKey])
-
   const boolBadge = (value, trueText = 'Running', falseText = 'Not Running') => {
     if (value) return <CBadge color="success">{trueText}</CBadge>
     return <CBadge color="danger">{falseText}</CBadge>
@@ -545,91 +546,48 @@ const DetailedDashboard = () => {
   const totalRecycleOrConcFlow = firstFiniteNumber(data.totalrecycleflow, data.totalconcflow)
   const totalDeliveryFlow = firstFiniteNumber(data.totaldelflow)
   const powerMeter = firstFiniteNumber(data.powermeter)
-  const chartPoints = timelineRows
-    .map((row) => {
-      const raw = row?.[selectedMetricKey]
-      const val = selectedMetricType === 'boolean' ? (raw ? 1 : 0) : Number(raw ?? 0)
-      return { ts: toTs(row), val }
-    })
-    .filter((p) => p.ts > 0)
+  const activeMetricKeys = selectedMetricKeys.length ? selectedMetricKeys : [DEFAULT_METRIC_KEY]
+  const metricPalette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6']
+  const chartPoints = timelineRows.map((row) => ({ ts: toTs(row), row })).filter((p) => p.ts > 0)
   const focusedIndex = focusedTs ? chartPoints.findIndex((p) => p.ts === focusedTs) : -1
   const hoverIndex = hoverTs ? chartPoints.findIndex((p) => p.ts === hoverTs) : -1
-
-  function clearPlaybackTimer() {
-    if (playbackTimerRef.current) {
-      clearInterval(playbackTimerRef.current)
-      playbackTimerRef.current = null
-    }
-  }
-
-  function stopPlayback() {
-    clearPlaybackTimer()
-    setIsPlaybackRunning(false)
-  }
-
-  function startPlayback() {
-    if (chartPoints.length < 2) return
-    clearPlaybackTimer()
-    setIsPlaybackRunning(true)
-    setIsLivePlaying(false)
-    setFocusedTs(null)
-
-    const targetFrames = 100
-    const seqLength = Math.min(targetFrames, chartPoints.length)
-    const sequence = Array.from({ length: seqLength }, (_v, i) => {
-      const idx = Math.round((i * (chartPoints.length - 1)) / Math.max(1, seqLength - 1))
-      return chartPoints[idx].ts
-    })
-    let cursor = 0
-    setFocusedTs(sequence[cursor])
-    setFrozenTs(sequence[cursor])
-
-    const intervalMs = Math.max(20, Math.floor(10000 / Math.max(1, sequence.length - 1)))
-    playbackTimerRef.current = setInterval(() => {
-      cursor += 1
-      if (cursor >= sequence.length) {
-        clearPlaybackTimer()
-        setIsPlaybackRunning(false)
-        return
-      }
-      const ts = sequence[cursor]
-      setFocusedTs(ts)
-      setFrozenTs(ts)
-    }, intervalMs)
-  }
+  const hasBooleanMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) === 'boolean')
+  const hasNumericMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) !== 'boolean')
 
   const chartData = {
     labels: chartPoints.map((p) => formatTsLabel(p.ts)),
-    datasets: [
-      {
-        label:
-          selectedMetricType === 'boolean'
-            ? `${selectedMetricLabel} (On/Off)`
-            : `${selectedMetricLabel}${selectedMetricUnit ? ` (${selectedMetricUnit})` : ''}`,
-        data: chartPoints.map((p) => p.val),
-        borderColor: selectedMetricType === 'boolean' ? '#22c55e' : '#0ea5e9',
-        backgroundColor:
-          selectedMetricType === 'boolean' ? 'rgba(34,197,94,0.38)' : 'rgba(14,165,233,0.28)',
-        pointHoverRadius: 6,
+    datasets: activeMetricKeys.map((metricKey, datasetIdx) => {
+      const metricType = inferSensorType(timelineRows, metricKey)
+      const unit = SENSOR_META[metricKey]?.unit || ''
+      const label =
+        metricType === 'boolean'
+          ? `${sensorDisplayName(metricKey)} (On/Off)`
+          : `${sensorDisplayName(metricKey)}${unit ? ` (${unit})` : ''}`
+      const lineColor = metricPalette[datasetIdx % metricPalette.length]
+      const fillColor = metricType === 'boolean' ? 'rgba(34,197,94,0.22)' : 'rgba(14,165,233,0.10)'
+      return {
+        label,
+        data: chartPoints.map((p) => {
+          const raw = p.row?.[metricKey]
+          return metricType === 'boolean' ? (raw ? 1 : 0) : Number(raw ?? 0)
+        }),
+        borderColor: lineColor,
+        backgroundColor: fillColor,
+        pointHoverRadius: datasetIdx === 0 ? 6 : 4,
         pointBackgroundColor: chartPoints.map((_p, idx) =>
-          idx === focusedIndex
-            ? '#f59e0b'
-            : idx === hoverIndex
-              ? '#a855f7'
-              : selectedMetricType === 'boolean'
-                ? '#22c55e'
-                : '#0ea5e9',
+          idx === focusedIndex ? '#f59e0b' : idx === hoverIndex ? '#a855f7' : lineColor,
         ),
         pointBorderColor: chartPoints.map((_p, idx) =>
           idx === focusedIndex ? '#f59e0b' : idx === hoverIndex ? '#a855f7' : 'transparent',
         ),
         pointRadius: chartPoints.map((_p, idx) => (idx === focusedIndex || idx === hoverIndex ? 4 : 0)),
         borderWidth: 3,
-        fill: true,
-        tension: selectedMetricType === 'boolean' ? 0 : 0.32,
-        stepped: selectedMetricType === 'boolean' ? 'before' : false,
-      },
-    ],
+        fill: datasetIdx === 0,
+        tension: metricType === 'boolean' ? 0 : 0.32,
+        stepped: metricType === 'boolean' ? 'before' : false,
+        yAxisID: metricType === 'boolean' ? 'yBool' : 'y',
+      }
+    }),
   }
 
   const chartOptions = {
@@ -643,20 +601,28 @@ const DetailedDashboard = () => {
         title: { display: true, text: 'Time' },
       },
       y: {
-        beginAtZero: true,
-        suggestedMax: selectedMetricType === 'boolean' ? 1 : undefined,
-        max: selectedMetricType === 'boolean' ? 1 : undefined,
+        beginAtZero: hasNumericMetric,
         grid: { color: 'rgba(120,120,120,0.15)' },
-        ticks:
-          selectedMetricType === 'boolean'
-            ? {
-                stepSize: 1,
-                callback: (value) => (Number(value) >= 1 ? 'On' : 'Off'),
-              }
-            : undefined,
+        ticks: hasNumericMetric ? undefined : { display: false },
         title: {
-          display: true,
-          text: selectedMetricType === 'boolean' ? 'State' : selectedMetricUnit || 'Value',
+          display: hasNumericMetric,
+          text: 'Value',
+        },
+      },
+      yBool: {
+        display: hasBooleanMetric,
+        position: 'right',
+        beginAtZero: true,
+        min: 0,
+        max: 1,
+        grid: { drawOnChartArea: false },
+        ticks: {
+          stepSize: 1,
+          callback: (value) => (Number(value) >= 1 ? 'On' : 'Off'),
+        },
+        title: {
+          display: hasBooleanMetric,
+          text: 'State',
         },
       },
     },
@@ -667,11 +633,13 @@ const DetailedDashboard = () => {
         intersect: false,
         callbacks: {
           label: (ctx) => {
-            if (selectedMetricType === 'boolean') {
-              return `${selectedMetricLabel}: ${Number(ctx.parsed.y) > 0 ? 'On' : 'Off'}`
-            }
+            const metricKey = activeMetricKeys[ctx.datasetIndex] || DEFAULT_METRIC_KEY
+            const metricType = inferSensorType(timelineRows, metricKey)
+            const label = sensorDisplayName(metricKey)
+            const unit = SENSOR_META[metricKey]?.unit || ''
+            if (metricType === 'boolean') return `${label}: ${Number(ctx.parsed.y) > 0 ? 'On' : 'Off'}`
             const v = Number(ctx.parsed.y)
-            return `${selectedMetricLabel}: ${v.toFixed(2)}${selectedMetricUnit ? ` ${selectedMetricUnit}` : ''}`
+            return `${label}: ${v.toFixed(2)}${unit ? ` ${unit}` : ''}`
           },
         },
       },
@@ -681,7 +649,6 @@ const DetailedDashboard = () => {
         suppressNextChartClickRef.current = false
         return
       }
-      stopPlayback()
       if (!elements?.length) return
       const idx = elements[0].index
       const p = chartPoints[idx]
@@ -702,7 +669,6 @@ const DetailedDashboard = () => {
   }
 
   const beginDragSelect = (e) => {
-    stopPlayback()
     const chart = chartRef.current
     if (!chart?.canvas || chartPoints.length < 2) return
     const rect = chart.canvas.getBoundingClientRect()
@@ -763,7 +729,6 @@ const DetailedDashboard = () => {
       : `${new Date(activeRange.start).toLocaleString()} to ${new Date(activeRange.end).toLocaleString()}`
 
   const applyPreset = (preset) => {
-    stopPlayback()
     const bounds = rangeBoundsFromPreset(preset)
     setTimePreset(preset)
     setRangeStartInput(isoToLocalInputValue(bounds.start))
@@ -772,7 +737,6 @@ const DetailedDashboard = () => {
   }
 
   const applyCustomRange = () => {
-    stopPlayback()
     const start = localInputToISO(rangeStartInput)
     const end = localInputToISO(rangeEndInput)
     if (!start || !end) {
@@ -809,7 +773,6 @@ const DetailedDashboard = () => {
                     label="Live Data"
                     checked={isLivePlaying}
                   onChange={(e) => {
-                    stopPlayback()
                     const next = e.target.checked
                     setIsLivePlaying(next)
                       if (next) {
@@ -846,7 +809,6 @@ const DetailedDashboard = () => {
                   variant={isLivePlaying ? undefined : 'outline'}
                   size="sm"
                   onClick={() => {
-                    stopPlayback()
                     setIsLivePlaying((v) => !v)
                     if (!isLivePlaying) {
                       setFocusedTs(null)
@@ -861,7 +823,6 @@ const DetailedDashboard = () => {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      stopPlayback()
                       setHoverTs(null)
                       setFocusedTs(null)
                       setFrozenTs(null)
@@ -974,37 +935,29 @@ const DetailedDashboard = () => {
           <CCard>
             <CCardHeader>
               Live Trend - {selectedMetricLabel}
+              {selectedMetricKeys.length > 1 && (
+                <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                  +{selectedMetricKeys.length - 1} compared
+                </span>
+              )}
               {!focusedTs && isLivePlaying && (
                 <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
                   Following latest
                 </span>
               )}
-                {focusedTs && (
-                  <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                    Focused at {new Date(focusedTs).toLocaleString()}
-                  </span>
-                )}
+              <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                Ctrl/Cmd+click sensors to compare
+              </span>
+              {focusedTs && (
+                <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                  Focused at {new Date(focusedTs).toLocaleString()}
+                </span>
+              )}
               {hoverTs && !focusedTs && (
                 <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
                   Preview at {new Date(hoverTs).toLocaleString()}
                 </span>
               )}
-              <CButton
-                color={isPlaybackRunning ? 'warning' : 'secondary'}
-                variant={isPlaybackRunning ? undefined : 'outline'}
-                size="sm"
-                className="ms-2"
-                disabled={chartPoints.length < 2}
-                onClick={() => {
-                  if (isPlaybackRunning) {
-                    stopPlayback()
-                    return
-                  }
-                  startPlayback()
-                }}
-              >
-                {isPlaybackRunning ? 'Stop Playback' : 'Playback 10s'}
-              </CButton>
               {focusedTs && (
                 <CButton
                   color="success"

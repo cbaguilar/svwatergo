@@ -30,8 +30,8 @@ export function SensorIndicator({
         const fromModel = md.get(sensorKey, "on_click");
         return typeof fromModel === 'function' ? fromModel : () => {};
     })();
-    const handleActivate = () => {
-        resolvedOnClick();
+    const handleActivate = (event) => {
+        resolvedOnClick(event);
     };
 
     const LINELENGTH = 35;
@@ -88,7 +88,7 @@ export function SensorIndicator({
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        handleActivate();
+                        handleActivate(e);
                     }
                 }}
                 tabIndex={0}

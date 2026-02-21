@@ -36,8 +36,8 @@ export function ThreeWayValveIndicator({
 
     const transstr = 'translate(' + x + ',' + y + ')'
         + ` rotate(${getAngle(dir)})`;
-    const handleActivate = () => {
-        on_click();
+    const handleActivate = (event) => {
+        on_click(event);
     };
     return (
         <g
@@ -46,7 +46,7 @@ export function ThreeWayValveIndicator({
             onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    handleActivate();
+                    handleActivate(e);
                 }
             }}
             tabIndex={0}

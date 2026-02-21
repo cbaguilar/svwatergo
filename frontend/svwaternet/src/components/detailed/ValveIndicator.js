@@ -20,8 +20,8 @@ export function ValveIndicator({
     //it can be oriented horizontally or vertically
     // the text orientation should always be normal
     const flowColor = getFlowColor(flow);
-    const handleActivate = () => {
-        on_click();
+    const handleActivate = (event) => {
+        on_click(event);
     };
     const transstr = 'translate(' + x + ',' + y + ') '
         + `rotate(${getAngle(dir)})`
@@ -32,7 +32,7 @@ export function ValveIndicator({
             onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    handleActivate();
+                    handleActivate(e);
                 }
             }}
             tabIndex={0}

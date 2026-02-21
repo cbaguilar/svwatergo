@@ -60,8 +60,8 @@ export function VariablePieValveIndicator({
         + `rotate(${getAngle(dir)})`;
     let PO = percentOpen / 100;
     PO = PO >= 1 ? 0.99999 : PO;
-    const handleActivate = () => {
-        on_click();
+    const handleActivate = (event) => {
+        on_click(event);
     };
     const arc = f_svg_ellipse_arc([0, 0], [20, 20], [0, PO * Math.PI * 2], 0);
     const arcPath = `M 0 0 L 20 0 ${arc.getAttribute('d')} L 0 0`;
@@ -75,7 +75,7 @@ export function VariablePieValveIndicator({
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        handleActivate();
+                        handleActivate(e);
                     }
                 }}
                 tabIndex={0}
