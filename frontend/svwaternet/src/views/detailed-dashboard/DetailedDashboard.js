@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useSelector } from 'react-redux'
+import { useDispatch, useSelector } from 'react-redux'
 import {
   CBadge,
   CButton,
@@ -93,6 +93,11 @@ const PRESETS = {
 }
 
 const DEFAULT_METRIC_KEY = 'permeateflow'
+const SITE_TO_SYSTEM = {
+  bluerock: 'Bluerock',
+  santateresa: 'Santa Teresa',
+  pryorfarm: 'Pryor Farms',
+}
 
 function toTs(row) {
   const raw = row?.plctime || row?.recordtime
@@ -179,6 +184,56 @@ function localInputToISO(value) {
   return d.toISOString()
 }
 
+function getHashParams() {
+  const hash = window.location.hash || ''
+  const queryStart = hash.indexOf('?')
+  if (queryStart < 0) return new URLSearchParams()
+  return new URLSearchParams(hash.slice(queryStart + 1))
+}
+
+function pushHashParams(params) {
+  const hash = window.location.hash || '#/detailed-dashboard'
+  const queryStart = hash.indexOf('?')
+  const path = queryStart >= 0 ? hash.slice(0, queryStart) : hash
+  const qs = params.toString()
+  const nextHash = qs ? `${path}?${qs}` : path
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  if (currentUrl === nextUrl) return
+  window.history.pushState(null, '', nextUrl)
+}
+
+function parseURLState() {
+  const params = getHashParams()
+  const siteParam = (params.get('site') || '').toLowerCase()
+  const presetParam = params.get('preset')
+  const hasPreset = Boolean(presetParam && PRESETS[presetParam])
+
+  const startParam = params.get('start')
+  const endParam = params.get('end')
+  const startTs = startParam ? new Date(startParam).getTime() : NaN
+  const endTs = endParam ? new Date(endParam).getTime() : NaN
+  const hasRange = Number.isFinite(startTs) && Number.isFinite(endTs) && startTs < endTs
+
+  const liveParam = params.get('live')
+  const live = liveParam === '0' || liveParam === 'false' ? false : true
+
+  const focusParam = params.get('focus')
+  const focusTs = focusParam ? new Date(focusParam).getTime() : NaN
+
+  return {
+    siteParam,
+    presetParam,
+    hasPreset,
+    hasRange,
+    startISO: hasRange ? new Date(startTs).toISOString() : '',
+    endISO: hasRange ? new Date(endTs).toISOString() : '',
+    metric: params.get('metric') || '',
+    live,
+    focusTs: Number.isFinite(focusTs) ? focusTs : null,
+  }
+}
+
 function inferSensorType(rows, key) {
   const configured = SENSOR_META[key]?.type
   if (configured) return configured
@@ -196,6 +251,21 @@ function sensorDisplayName(key) {
   return key.replaceAll('_', ' ').replace(/\b\w/g, (m) => m.toUpperCase())
 }
 
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+  return null
+}
+
+function formatSnapshotNumber(value, fractionDigits = 0) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'N/A'
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: fractionDigits,
+  })
+}
+
 const buildLiveMd = (data = {}, onSelectSensor = () => {}) => ({
   get: (key, field) => {
     const value = data?.[key]
@@ -211,6 +281,7 @@ const buildLiveMd = (data = {}, onSelectSensor = () => {}) => ({
 })
 
 const DetailedDashboard = () => {
+  const dispatch = useDispatch()
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const [timelineRows, setTimelineRows] = useState([])
   const [stateError, setStateError] = useState('')
@@ -230,13 +301,89 @@ const DetailedDashboard = () => {
     end: initialBounds.end,
   })
   const [selectedMetricKey, setSelectedMetricKey] = useState(DEFAULT_METRIC_KEY)
+  const [urlStateReady, setURLStateReady] = useState(false)
 
   const siteKey =
     selectedSystem === 'Bluerock'
       ? 'bluerock'
       : selectedSystem === 'Pryor Farms'
         ? 'pryorfarm'
-        : 'santateresa'
+      : 'santateresa'
+
+  useEffect(() => {
+    const applyFromURL = () => {
+      const parsed = parseURLState()
+      if (SITE_TO_SYSTEM[parsed.siteParam] && SITE_TO_SYSTEM[parsed.siteParam] !== selectedSystem) {
+        dispatch({ type: 'set', selectedSystem: SITE_TO_SYSTEM[parsed.siteParam] })
+      }
+
+      if (parsed.hasPreset) {
+        setTimePreset(parsed.presetParam)
+      }
+
+      if (parsed.hasRange) {
+        const startISO = parsed.startISO
+        const endISO = parsed.endISO
+        const kind = parsed.hasPreset ? 'preset' : 'custom'
+        setActiveRange({
+          kind,
+          preset: kind === 'preset' ? parsed.presetParam : null,
+          start: startISO,
+          end: endISO,
+        })
+        setRangeStartInput(isoToLocalInputValue(startISO))
+        setRangeEndInput(isoToLocalInputValue(endISO))
+      } else if (parsed.hasPreset) {
+        const bounds = rangeBoundsFromPreset(parsed.presetParam)
+        setActiveRange({ kind: 'preset', preset: parsed.presetParam, start: bounds.start, end: bounds.end })
+        setRangeStartInput(isoToLocalInputValue(bounds.start))
+        setRangeEndInput(isoToLocalInputValue(bounds.end))
+      }
+
+      if (parsed.metric) {
+        setSelectedMetricKey(parsed.metric)
+      }
+
+      setIsLivePlaying(parsed.live)
+      if (parsed.live) {
+        setFocusedTs(null)
+      } else if (parsed.focusTs) {
+        setFocusedTs(parsed.focusTs)
+        setIsLivePlaying(false)
+      } else {
+        setFocusedTs(null)
+      }
+    }
+
+    applyFromURL()
+    const onNav = () => applyFromURL()
+    window.addEventListener('popstate', onNav)
+    window.addEventListener('hashchange', onNav)
+
+    setURLStateReady(true)
+    return () => {
+      window.removeEventListener('popstate', onNav)
+      window.removeEventListener('hashchange', onNav)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispatch])
+
+  useEffect(() => {
+    if (!urlStateReady) return
+    const params = new URLSearchParams()
+    params.set('site', siteKey)
+    params.set('live', isLivePlaying ? '1' : '0')
+    params.set('start', activeRange.start)
+    params.set('end', activeRange.end)
+    params.set('metric', selectedMetricKey)
+    if (activeRange.kind === 'preset' && activeRange.preset) {
+      params.set('preset', activeRange.preset)
+    }
+    if (!isLivePlaying && focusedTs) {
+      params.set('focus', new Date(focusedTs).toISOString())
+    }
+    pushHashParams(params)
+  }, [urlStateReady, siteKey, isLivePlaying, activeRange, selectedMetricKey, focusedTs])
 
   const Schematic =
     selectedSystem === 'Bluerock'
@@ -362,9 +509,16 @@ const DetailedDashboard = () => {
   }
 
   const roStatusBadge = () => {
+    const stateCode = Number.isInteger(data.state) ? data.state : null
+    if (stateCode === 0) return <CBadge color="danger">RO Off</CBadge>
+    if (stateCode === 1) return <CBadge color="danger">EStop Pressed</CBadge>
+    if (stateCode === 2) return <CBadge color="success">RO Running</CBadge>
+    if (stateCode === 3) return <CBadge color="warning">RO Standby</CBadge>
+    if (stateCode === 5 || stateCode === 8) return <CBadge color="info">Flushing</CBadge>
+
     if (data.rostandby) return <CBadge color="warning">RO Standby</CBadge>
     if (data.ropumprun) return <CBadge color="success">RO Running</CBadge>
-    return <CBadge color="danger">RO Offline</CBadge>
+    return <CBadge color="danger">RO Off</CBadge>
   }
 
   const warnings = []
@@ -375,6 +529,13 @@ const DetailedDashboard = () => {
   if (stateError) warnings.push(`Data stream error: ${stateError}`)
   const roRecovery =
     typeof data.ro_recovery === 'number' && Number.isFinite(data.ro_recovery) ? data.ro_recovery : null
+  const totalROFlow = firstFiniteNumber(data.totalroflow)
+  const totalFeedOrInletFlow = firstFiniteNumber(data.totalfeedflow, data.totalinletflow)
+  const totalRecycleOrConcFlow = firstFiniteNumber(data.totalrecycleflow, data.totalconcflow)
+  const totalDeliveryFlow = firstFiniteNumber(data.totaldelflow)
+  const alarmWord = Number.isInteger(data.alarmword) ? data.alarmword : 0
+  const warnWord0 = Number.isInteger(data.warnword0) ? data.warnword0 : 0
+  const warnWord1 = Number.isInteger(data.warnword1) ? data.warnword1 : 0
 
   const chartPoints = timelineRows
     .map((row) => {
@@ -620,50 +781,62 @@ const DetailedDashboard = () => {
           <CCard>
             <CCardHeader>Sensor Status</CCardHeader>
             <CCardBody>
-              <div className="small text-body-secondary mb-2">System Summary</div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>RO Recovery</span>
-                <span className="fw-semibold">
-                  {roRecovery === null ? 'N/A' : `${roRecovery.toFixed(2)}%`}
-                </span>
-              </div>
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>Alarm</span>
-                {boolBadge(data.alarm, 'Active', 'Clear')}
-              </div>
-              <div className="d-flex justify-content-between align-items-center mb-3">
-                <span>Lockout</span>
-                {boolBadge(data.lockout, 'Locked', 'Normal')}
-              </div>
-              <hr className="my-2" />
-              <div className="small text-body-secondary mb-2">Pump and Valve States</div>
+              <div className="small text-body-secondary mb-2">Operational Snapshot</div>
               <div className="d-flex justify-content-between align-items-center mb-2">
                 <span>RO Status</span>
                 {roStatusBadge()}
               </div>
               <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>Well Pump</span>
-                {boolBadge(data.wellpumprun)}
+                <span>PLC State</span>
+                <span className="fw-semibold">
+                  {Number.isInteger(data.state) ? `${data.state}` : 'N/A'}
+                </span>
+              </div>
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <span>RO Recovery</span>
+                <span className="fw-semibold">
+                  {roRecovery === null ? 'N/A' : `${roRecovery.toFixed(2)}%`}
+                </span>
+              </div>
+              <hr className="my-2" />
+              <div className="small text-body-secondary mb-2">Totalizers</div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>Total RO Flow</span>
+                <span className="fw-semibold">{formatSnapshotNumber(totalROFlow)} gal</span>
               </div>
               <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>P1 Feed Pump</span>
-                {boolBadge(data.feedpumprun)}
+                <span>Total Feed/Inlet Flow</span>
+                <span className="fw-semibold">{formatSnapshotNumber(totalFeedOrInletFlow)} gal</span>
               </div>
               <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>AV1 Inlet Valve</span>
-                {boolBadge(data.inletrun, 'Open', 'Closed')}
+                <span>Total Recycle/Conc Flow</span>
+                <span className="fw-semibold">{formatSnapshotNumber(totalRecycleOrConcFlow)} gal</span>
               </div>
               <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>P2 RO Pump</span>
-                {boolBadge(data.ropumprun)}
+                <span>Total Delivery Flow</span>
+                <span className="fw-semibold">{formatSnapshotNumber(totalDeliveryFlow)} gal</span>
+              </div>
+              <hr className="my-2" />
+              <div className="small text-body-secondary mb-2">Alarm and Warning Registers</div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>Alarm</span>
+                {boolBadge(data.alarm, 'Active', 'Clear')}
               </div>
               <div className="d-flex justify-content-between align-items-center mb-2">
-                <span>AV6 Product Diversion Valve</span>
-                {boolBadge(data.proddiversionrun, 'To Product Tank', 'Divert to Residual Line')}
+                <span>Lockout</span>
+                {boolBadge(data.lockout, 'Locked', 'Normal')}
+              </div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>Alarm Word</span>
+                <span className="fw-semibold">{alarmWord}</span>
+              </div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>Warn Word 0</span>
+                <span className="fw-semibold">{warnWord0}</span>
               </div>
               <div className="d-flex justify-content-between align-items-center">
-                <span>P3 Delivery Pump</span>
-                {boolBadge(data.deliveryrun)}
+                <span>Warn Word 1</span>
+                <span className="fw-semibold">{warnWord1}</span>
               </div>
             </CCardBody>
           </CCard>
