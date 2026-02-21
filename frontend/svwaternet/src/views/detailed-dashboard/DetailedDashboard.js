@@ -7,9 +7,6 @@ import {
   CCardBody,
   CCardHeader,
   CCol,
-  CFormCheck,
-  CFormInput,
-  CFormSelect,
   CRow,
 } from '@coreui/react'
 import { CChartLine } from '@coreui/react-chartjs'
@@ -20,6 +17,7 @@ import PryorFarmsSchematic from '../../components/detailed/PryorFarmsSchematic'
 import { fetchStateRange } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 import { bitTables, decodeBitfield } from '../../utils/bitfields'
+import PlaybackTimePicker from './PlaybackTimePicker'
 
 const ABBR = {
   feedtanklevel: 'LT1',
@@ -161,7 +159,11 @@ function nearestRow(rows, ts) {
 }
 
 function formatTsLabel(ts) {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const d = new Date(ts)
+  return [
+    d.toLocaleDateString([], { month: '2-digit', day: '2-digit', year: '2-digit' }),
+    d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  ]
 }
 
 function rangeBoundsFromPreset(preset) {
@@ -286,13 +288,13 @@ const DetailedDashboard = () => {
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const [timelineRows, setTimelineRows] = useState([])
   const [stateError, setStateError] = useState('')
+  const [isRangeLoading, setIsRangeLoading] = useState(false)
   const [streamState, setStreamState] = useState('connecting')
   const [isLivePlaying, setIsLivePlaying] = useState(true)
   const [focusedTs, setFocusedTs] = useState(null)
   const [hoverTs, setHoverTs] = useState(null)
   const [frozenTs, setFrozenTs] = useState(null)
   const [timePreset, setTimePreset] = useState('1h')
-  const [showCustomRange, setShowCustomRange] = useState(false)
   const initialBounds = rangeBoundsFromPreset('1h')
   const [rangeStartInput, setRangeStartInput] = useState(isoToLocalInputValue(initialBounds.start))
   const [rangeEndInput, setRangeEndInput] = useState(isoToLocalInputValue(initialBounds.end))
@@ -428,6 +430,8 @@ const DetailedDashboard = () => {
 
   useEffect(() => {
     const controller = new AbortController()
+    let active = true
+    setIsRangeLoading(true)
 
     fetchStateRange(siteKey, {
       signal: controller.signal,
@@ -446,8 +450,14 @@ const DetailedDashboard = () => {
         if (err?.name === 'AbortError') return
         setStateError(err?.message || 'Failed to load time range')
       })
+      .finally(() => {
+        if (active) setIsRangeLoading(false)
+      })
 
-    return () => controller.abort()
+    return () => {
+      active = false
+      controller.abort()
+    }
   }, [siteKey, activeRange])
 
   useEffect(() => {
@@ -598,7 +608,7 @@ const DetailedDashboard = () => {
       x: {
         ticks: { maxTicksLimit: 8 },
         grid: { color: 'rgba(120,120,120,0.15)' },
-        title: { display: true, text: 'Time' },
+        title: { display: true, text: 'Date / Time' },
       },
       y: {
         beginAtZero: hasNumericMetric,
@@ -714,9 +724,9 @@ const DetailedDashboard = () => {
 
     const startISO = new Date(startTs).toISOString()
     const endISO = new Date(endTs).toISOString()
+    setActiveRange({ kind: 'custom', preset: null, start: startISO, end: endISO })
     setRangeStartInput(isoToLocalInputValue(startISO))
     setRangeEndInput(isoToLocalInputValue(endISO))
-    setActiveRange({ kind: 'custom', preset: null, start: startISO, end: endISO })
     setIsLivePlaying(false)
     setFocusedTs(null)
     setFrozenTs(endTs)
@@ -749,120 +759,77 @@ const DetailedDashboard = () => {
     }
     setStateError('')
     setActiveRange({ kind: 'custom', preset: null, start, end })
+    setFocusedTs(null)
+    setHoverTs(null)
+    setFrozenTs(new Date(end).getTime())
+    setIsLivePlaying(false)
   }
 
-  const streamBadge =
-    streamState === 'connected' ? (
-      <CBadge color="success">Connected</CBadge>
-    ) : streamState === 'reconnecting' || streamState === 'connecting' ? (
-      <CBadge color="warning">Reconnecting...</CBadge>
-    ) : (
-      <CBadge color="secondary">Disconnected</CBadge>
-    )
+  const handleTogglePlay = () => {
+    setIsLivePlaying((prev) => {
+      if (prev) {
+        return false
+      }
+      setFocusedTs(null)
+      setFrozenTs(null)
+      return true
+    })
+  }
+
+  const shiftActiveWindowByIntervals = (intervalDelta) => {
+    const startMs = new Date(activeRange.start).getTime()
+    const endMs = new Date(activeRange.end).getTime()
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return
+
+    const windowDuration = endMs - startMs
+    const stepMs = intervalDelta * windowDuration
+    const now = Date.now()
+    let nextStart = startMs + stepMs
+    let nextEnd = endMs + stepMs
+
+    if (nextEnd > now) {
+      nextEnd = now
+      nextStart = now - windowDuration
+    }
+
+    setActiveRange({
+      kind: 'custom',
+      preset: null,
+      start: new Date(nextStart).toISOString(),
+      end: new Date(nextEnd).toISOString(),
+    })
+    setRangeStartInput(isoToLocalInputValue(new Date(nextStart).toISOString()))
+    setRangeEndInput(isoToLocalInputValue(new Date(nextEnd).toISOString()))
+    setFocusedTs(null)
+    setHoverTs(null)
+    setFrozenTs(nextEnd)
+    setIsLivePlaying(false)
+  }
+
+  const canStepForward = new Date(activeRange.end).getTime() < Date.now() - 5000
 
   return (
     <>
-      <CRow className="mb-3">
-        <CCol>
-          <CCard>
-            <CCardBody style={{ paddingTop: '0.75rem', paddingBottom: '0.75rem' }}>
-              <div className="d-flex flex-wrap align-items-end gap-2">
-                <div className="d-flex align-items-center me-2">
-                  <CFormCheck
-                    id="liveData"
-                    label="Live Data"
-                    checked={isLivePlaying}
-                  onChange={(e) => {
-                    const next = e.target.checked
-                    setIsLivePlaying(next)
-                      if (next) {
-                        setFocusedTs(null)
-                        setFrozenTs(null)
-                      }
-                    }}
-                  />
-                </div>
-                <div style={{ minWidth: 190 }}>
-                  <CFormSelect
-                    size="sm"
-                    value={timePreset}
-                    onChange={(e) => applyPreset(e.target.value)}
-                    options={Object.entries(PRESETS).map(([value, cfg]) => ({ value, label: cfg.label }))}
-                  />
-                </div>
-                <CButton color="secondary" variant="outline" size="sm" onClick={applyCustomRange}>
-                  Apply
-                </CButton>
-                <CButton color="secondary" variant="ghost" size="sm" onClick={() => applyPreset(timePreset)}>
-                  Reset
-                </CButton>
-                <CButton
-                  color="secondary"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowCustomRange((v) => !v)}
-                >
-                  {showCustomRange ? 'Hide Custom' : 'Custom Range'}
-                </CButton>
-                <CButton
-                  color={isLivePlaying ? 'primary' : 'secondary'}
-                  variant={isLivePlaying ? undefined : 'outline'}
-                  size="sm"
-                  onClick={() => {
-                    setIsLivePlaying((v) => !v)
-                    if (!isLivePlaying) {
-                      setFocusedTs(null)
-                    }
-                  }}
-                >
-                  {isLivePlaying ? 'Pause' : 'Play'}
-                </CButton>
-                {!isLivePlaying && (
-                  <CButton
-                    color="success"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setHoverTs(null)
-                      setFocusedTs(null)
-                      setFrozenTs(null)
-                      setIsLivePlaying(true)
-                    }}
-                  >
-                    Back to Live
-                  </CButton>
-                )}
-                <CBadge color={focusedTs ? 'warning' : isLivePlaying ? 'success' : 'secondary'}>
-                  {focusedTs ? 'FOCUSED' : isLivePlaying ? 'LIVE' : 'PAUSED'}
-                </CBadge>
-                {streamBadge}
-                <div className="small text-body-secondary ms-auto">{activeRangeLabel} (UTC)</div>
-              </div>
-              {showCustomRange && (
-                <div className="d-flex flex-wrap align-items-center gap-2 mt-2">
-                  <div style={{ minWidth: 190 }}>
-                    <CFormInput
-                      size="sm"
-                      type="datetime-local"
-                      value={rangeStartInput}
-                      onChange={(e) => setRangeStartInput(e.target.value)}
-                    />
-                  </div>
-                  <div style={{ minWidth: 190 }}>
-                    <CFormInput
-                      size="sm"
-                      type="datetime-local"
-                      value={rangeEndInput}
-                      onChange={(e) => setRangeEndInput(e.target.value)}
-                    />
-                  </div>
-                  <div className="small text-body-secondary ms-1">Shortcuts: `Space` pause/play, `L` live</div>
-                </div>
-              )}
-            </CCardBody>
-          </CCard>
-        </CCol>
-      </CRow>
+      <PlaybackTimePicker
+        isLivePlaying={isLivePlaying}
+        focusedTs={focusedTs}
+        streamState={streamState}
+        activeRangeLabel={activeRangeLabel}
+        activeRangeKind={activeRange.kind}
+        timePreset={timePreset}
+        presets={PRESETS}
+        isRangeLoading={isRangeLoading}
+        onSelectPreset={applyPreset}
+        rangeStartInput={rangeStartInput}
+        rangeEndInput={rangeEndInput}
+        onRangeStartChange={setRangeStartInput}
+        onRangeEndChange={setRangeEndInput}
+        onApplyCustomRange={applyCustomRange}
+        onTogglePlay={handleTogglePlay}
+        onStepBackInterval={() => shiftActiveWindowByIntervals(-1)}
+        onStepForwardInterval={() => shiftActiveWindowByIntervals(1)}
+        canStepForward={canStepForward}
+      />
 
       <CRow className="mb-4">
         <CCol lg={8} className="mb-4 mb-lg-0">
