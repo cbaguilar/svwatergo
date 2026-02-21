@@ -241,8 +241,7 @@ function ROSystem({ md, pipe_info }) {
                 line="left"
                 innerText="PT3"
                 textDir="up"
-                sensorKey="ropressure" md={md}
-                on_click={md.get("ropressure", "on_click")} />
+                sensorKey="ropressure" md={md} />
             <SensorIndicator
                 x="912" y="270"
                 innerText="CT1"
@@ -299,24 +298,20 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="972" y="475"
                 innerText="NT1"
-                sensorKey="permnitrate" md={md}
-                on_click={md.get("permnitrate", "on_click")} />
+                sensorKey="permnitrate" md={md} />
             <SensorIndicator
                 x="972" y="525"
                 innerText="CT2"
                 sensorKey="permtds" md={md}
-                on_click={md.get("permtds", "on_click")}
             />
             <SensorIndicator
                 x="972" y="575"
                 innerText="FT3"
-                sensorKey="permeateflow" md={md}
-                on_click={md.get("permeateflow", "on_click")} />
+                sensorKey="permeateflow" md={md} />
             <SensorIndicator
                 x="972" y="625"
                 innerText="TT1"
-                sensorKey="permtemp" md={md}
-                on_click={md.get("permtemp", "on_click")} />
+                sensorKey="permtemp" md={md} />
             <SensorIndicator
                 x="942" y="399"
                 line="down"
@@ -454,8 +449,7 @@ function DeliverySystem({ md, pipe_info }) {
                 x="1170" y="544.5"
                 innerText="CT3"
                 textDir="left"
-                sensorKey="producttds" md={md}
-                on_click={md.get("producttds", "on_click")} />
+                sensorKey="producttds" md={md} />
 
         </>
     )

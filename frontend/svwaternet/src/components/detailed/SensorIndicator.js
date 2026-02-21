@@ -6,7 +6,7 @@ import { RelativeText } from './RelativeText';
 export function SensorIndicator({
     x = "0",
     y = "0",
-    innerText = "",
+    innerText = null,
     outerText = null,
     sensorKey = "",
     md = null,
@@ -15,7 +15,7 @@ export function SensorIndicator({
     smallInner = false,
     WaterScope = false,
     loadIfBlank = true,
-    on_click = ()=>{}
+    on_click = null
 }) {
     // svg sensor indicator, circle about the size of a pump with a small label in the middle
     // it has a red border if the sensor is not working
@@ -24,8 +24,14 @@ export function SensorIndicator({
     const transstr = 'translate(' + x + ',' + y + ')';
 
     const color = WaterScope ? LIGHTGREYCOLOR : BLUECOLOR;
+    const resolvedOnClick = (() => {
+        if (typeof on_click === 'function') return on_click;
+        if (!sensorKey || !md || typeof md.get !== 'function') return () => {};
+        const fromModel = md.get(sensorKey, "on_click");
+        return typeof fromModel === 'function' ? fromModel : () => {};
+    })();
     const handleActivate = () => {
-        on_click();
+        resolvedOnClick();
     };
 
     const LINELENGTH = 35;
@@ -37,6 +43,11 @@ export function SensorIndicator({
         const units = md.get(sensorKey, "units");
         if (currentValue === undefined || currentValue === null || currentValue === "") return "";
         return `${currentValue}${units ? ` ${units}` : ""}`;
+    })();
+    const computedInnerText = (() => {
+        if (innerText !== null && innerText !== undefined) return innerText;
+        if (!sensorKey || !md || typeof md.get !== 'function') return "";
+        return md.get(sensorKey, "abbreviated_name") || "";
     })();
 
 
@@ -86,7 +97,7 @@ export function SensorIndicator({
                     alignmentBaseline="middle"
                     fontSize={smallInner ? "13" : "16"}
                     fill="#000">
-                    {innerText}
+                    {computedInnerText}
                 </text>
                 <RelativeText
                     dir="right"
@@ -95,7 +106,7 @@ export function SensorIndicator({
                     positions={[[0, -34], [32, 2], [0, 38], [-32, 2]]}
                     small
                 />
-                { loadIfBlank && (innerText == "" || innerText == undefined) &&
+                { loadIfBlank && (computedInnerText === "" || computedInnerText === undefined) &&
                 <g transform={`translate(-12,-12)`}>
                     <image href={spinnerUrl} width="24" height="24" />
                 </g>

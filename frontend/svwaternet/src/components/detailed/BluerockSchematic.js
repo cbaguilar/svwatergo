@@ -28,8 +28,6 @@ function FeedTankSystem({ md }) {
                 y="79"
                 line="down"
                 textDir="left"
-                innerText={md.get("feedtanklevel", "abbreviated_name")}
-                on_click={md.get("feedtanklevel", "on_click")}
                 sensorKey="feedtanklevel" md={md}
             />
             <LiquidFillGaugeWrapper
@@ -252,8 +250,6 @@ function ROSystem({ md }) {
             <SensorIndicator
                 x="638"
                 y="161"
-                innerText={md.get("inletpressure", "abbreviated_name")}
-                on_click={md.get("inletpressure", "on_click")}
                 sensorKey="inletpressure" md={md}
                 textDir='down'
             />
@@ -277,8 +273,6 @@ function ROSystem({ md }) {
                 x="993.5"
                 y="127"
                 line="down"
-                innerText={md.get("feedpressure", "abbreviated_name")}
-                on_click={md.get("feedpressure", "on_click")}
                 sensorKey="feedpressure" md={md}
             />
             <SensorIndicator
@@ -291,8 +285,6 @@ function ROSystem({ md }) {
             />
             {/* <SensorIndicator
                 x="632.5" y="261.5" textDir='up'
-                innerText={md.get("feedflow", "abbreviated_name")}
-                on_click={md.get("feedflow", "on_click")}
                 sensorKey="feedflow" md={md}
             /> */}
             <SensorIndicator
@@ -327,15 +319,11 @@ function ROSystem({ md }) {
             />
             <SensorIndicator
                 x="854.5" y="296.5" line="down"
-                innerText={md.get("ropressure", "abbreviated_name")}
-                on_click={md.get("ropressure", "on_click")}
                 sensorKey="ropressure" md={md}
             />
             <CheckValve dir="up" x="544.5" y="381.5" />
             <SensorIndicator
                 dir="up" x="544.5" y="455"
-                innerText={md.get("recycleflow", "abbreviated_name")}
-                on_click={md.get("recycleflow", "on_click")}
                 sensorKey="recycleflow" md={md}
             />
             <VariablePieValveIndicator
@@ -350,8 +338,6 @@ function ROSystem({ md }) {
             />
             <SensorIndicator
                 x="933" y="508" line="left"
-                innerText={md.get("concentratepressure", "abbreviated_name")}
-                on_click={md.get("concentratepressure", "on_click")}
                 sensorKey="concentratepressure" md={md}
             />
             <VariablePieValveIndicator
@@ -372,8 +358,6 @@ function ROSystem({ md }) {
             />
             <SensorIndicator
                 x="610" y="606.5" textDir='up'
-                innerText={md.get("concentrateflow", "abbreviated_name")}
-                on_click={md.get("concentrateflow", "on_click")}
                 sensorKey="concentrateflow" md={md}
             />
             <ThreeWayValveIndicator
@@ -390,8 +374,6 @@ function ROSystem({ md }) {
             />
             <SensorIndicator
                 x="372" y="431" line="down" textDir='up'
-                innerText={md.get("residualtanklevel", "abbreviated_name")}
-                on_click={md.get("residualtanklevel", "on_click")}
                 sensorKey="residualtanklevel" md={md}
             />
             <SensorIndicator
@@ -400,32 +382,22 @@ function ROSystem({ md }) {
             <SensorIndicator WaterScope x="492" y="707.5" line="up" innerText='200' textDir='left' outerText='123456' />
             <SensorIndicator
                 x="1027.5" y="544.5" textDir='left'
-                innerText={md.get("permtemp", "abbreviated_name")}
-                on_click={md.get("permtemp", "on_click")}
                 sensorKey="permtemp" md={md}
             />
             <SensorIndicator
                 x="1027.5" y="594.5" textDir='left'
-                innerText={md.get("permeateflow", "abbreviated_name")}
-                on_click={md.get("permeateflow", "on_click")}
                 sensorKey="permeateflow" md={md}
             />
             <SensorIndicator
                 x="1027.5" y="644.5" textDir='left'
-                innerText={md.get("permnitrate", "abbreviated_name")}
-                on_click={md.get("permnitrate", "on_click")}
                 sensorKey="permnitrate" md={md}
             />
             <SensorIndicator
                 x="965" y="388.5" line="down" textDir='up'
-                innerText={md.get("permtds", "abbreviated_name")}
-                on_click={md.get("permtds", "on_click")}
                 sensorKey="permtds" md={md}
             />
             <SensorIndicator
                 x="1027" y="424" textDir='up'
-                innerText={md.get("permeatepressure", "abbreviated_name")}
-                on_click={md.get("permeatepressure", "on_click")}
                 sensorKey="permeatepressure" md={md}
             />
             <ThreeWayValveIndicator
@@ -514,8 +486,6 @@ function WaterDeliverSystem({ md }) {
             />
             <SensorIndicator
                 x="1224" y="644.5" line="down" textDir='up'
-                innerText={md.get("prodtanklevel", "abbreviated_name")}
-                on_click={md.get("prodtanklevel", "on_click")}
                 sensorKey="prodtanklevel" md={md}
             />
             <ArrowPolyLine stroke="black" points="1150.5,695 1150.5,565 1173.5,565" />
@@ -539,8 +509,6 @@ function WaterDeliverSystem({ md }) {
             </text>
             <SensorIndicator
                 x="1382" y="538.5" textDir='left'
-                innerText={md.get("deliveryflow", "abbreviated_name")}
-                on_click={md.get("deliveryflow", "on_click")}
                 sensorKey="deliveryflow" md={md}
             />
             {/* <SensorIndicator
@@ -552,8 +520,6 @@ function WaterDeliverSystem({ md }) {
             <CheckValve dir="left" x="1317.5" y="395.5" />
             <SensorIndicator
                 x="1169" y="245.5" textDir='right'
-                innerText={md.get("deliverypressure", "abbreviated_name")}
-                on_click={md.get("deliverypressure", "on_click")}
                 sensorKey="deliverypressure" md={md}
             />
             <MultiMediaFilter x="1237.5" y="425.5" textDir="down" outerText='Remineralizer' />
