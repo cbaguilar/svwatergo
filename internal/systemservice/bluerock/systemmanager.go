@@ -19,7 +19,9 @@ type BluerockManager struct {
 func NewBluerockManager(client database.SQLXClient) *BluerockManager {
 	log.Default().Println("Initializing BluerockManager with database client.")
 	ourDbstore := NewBluerockDBStore(client)
-	EnsureSchema(&client, ourDbstore.Store.TableName)
+	if err := EnsureSchema(&client, ourDbstore.Store.TableName); err != nil {
+		log.Printf("EnsureSchema(%s) error: %v", ourDbstore.Store.TableName, err)
+	}
 	return &BluerockManager{
 		DB: ourDbstore,
 	}

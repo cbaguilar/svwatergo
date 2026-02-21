@@ -103,6 +103,9 @@ func (s *QueryService) QuerySiteEvents(site string, req QueryRequest) (QueryResu
 	if err != nil {
 		return QueryResult{}, err
 	}
+	if s.driver == "postgres" {
+		sqlText = s.db.Rebind(sqlText)
+	}
 
 	type row struct {
 		PLCTime any `db:"plctime"`
