@@ -535,14 +535,11 @@ const DetailedDashboard = () => {
     return <CBadge color="secondary">Unknown</CBadge>
   }
 
-  const warnings = []
   const decodedAlarmBits = decodeBitfield(Number(data.alarmword || 0), bitTables.alarm)
   const decodedWarn0Bits = decodeBitfield(Number(data.warnword0 || 0), bitTables.warning1)
   const decodedWarn1Bits = decodeBitfield(Number(data.warnword1 || 0), bitTables.warning2)
   const registerWarnings = Array.from(new Set([...decodedAlarmBits, ...decodedWarn0Bits, ...decodedWarn1Bits]))
-  if (data.alarm) warnings.push('Alarm Active')
-  registerWarnings.forEach((label) => warnings.push(label))
-  if (stateError) warnings.push(`Data stream error: ${stateError}`)
+  const activeWarningItems = stateError ? [...registerWarnings, `Data stream error: ${stateError}`] : registerWarnings
   const totalROFlow = firstFiniteNumber(data.totalroflow)
   const totalFeedOrInletFlow = firstFiniteNumber(data.totalfeedflow, data.totalinletflow)
   const totalRecycleOrConcFlow = firstFiniteNumber(data.totalrecycleflow, data.totalconcflow)
@@ -612,8 +609,8 @@ const DetailedDashboard = () => {
         data: chartPoints.map((p) => p.val),
         borderColor: selectedMetricType === 'boolean' ? '#22c55e' : '#0ea5e9',
         backgroundColor:
-          selectedMetricType === 'boolean' ? 'rgba(34,197,94,0.28)' : 'rgba(14,165,233,0.15)',
-        pointHoverRadius: 4,
+          selectedMetricType === 'boolean' ? 'rgba(34,197,94,0.38)' : 'rgba(14,165,233,0.28)',
+        pointHoverRadius: 6,
         pointBackgroundColor: chartPoints.map((_p, idx) =>
           idx === focusedIndex
             ? '#f59e0b'
@@ -627,9 +624,9 @@ const DetailedDashboard = () => {
           idx === focusedIndex ? '#f59e0b' : idx === hoverIndex ? '#a855f7' : 'transparent',
         ),
         pointRadius: chartPoints.map((_p, idx) => (idx === focusedIndex || idx === hoverIndex ? 4 : 0)),
-        borderWidth: 2,
+        borderWidth: 3,
         fill: true,
-        tension: selectedMetricType === 'boolean' ? 0 : 0.2,
+        tension: selectedMetricType === 'boolean' ? 0 : 0.32,
         stepped: selectedMetricType === 'boolean' ? 'before' : false,
       },
     ],
@@ -962,8 +959,8 @@ const DetailedDashboard = () => {
               )}
               <div className="small text-body-secondary mt-2 mb-1">Active Warnings</div>
               <ul className="mb-0 ps-3 small">
-                {registerWarnings.length === 0 && <li>No active alarm/warning bits.</li>}
-                {registerWarnings.map((entry) => (
+                {activeWarningItems.length === 0 && <li>No active alarm/warning bits.</li>}
+                {activeWarningItems.map((entry) => (
                   <li key={entry}>{entry}</li>
                 ))}
               </ul>
@@ -1025,7 +1022,7 @@ const DetailedDashboard = () => {
               )}
             </CCardHeader>
             <CCardBody>
-              <div style={{ height: 320 }}>
+              <div style={{ height: 300 }}>
                 {chartPoints.length === 0 ? (
                   <div className="h-100 d-flex flex-column align-items-center justify-content-center text-body-secondary">
                     <div className="mb-1">No data in this window.</div>
@@ -1039,7 +1036,7 @@ const DetailedDashboard = () => {
                     onMouseUp={finishDragSelect}
                     onMouseLeave={finishDragSelect}
                   >
-                    <CChartLine ref={chartRef} data={chartData} options={chartOptions} />
+                    <CChartLine ref={chartRef} data={chartData} options={chartOptions} style={{ height: '100%' }} />
                     {dragSelect && chartRef.current?.chartArea && (
                       <div
                         style={{
@@ -1065,21 +1062,6 @@ const DetailedDashboard = () => {
         </CCol>
       </CRow>
 
-      <CRow>
-        <CCol>
-          <CCard>
-            <CCardHeader>Current Warnings</CCardHeader>
-            <CCardBody className="text-body-secondary">
-              <ul className="mb-0">
-                {warnings.length === 0 && <li>No active warnings.</li>}
-                {warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            </CCardBody>
-          </CCard>
-        </CCol>
-      </CRow>
     </>
   )
 }
