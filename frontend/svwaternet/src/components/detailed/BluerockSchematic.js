@@ -274,8 +274,6 @@ function ROSystem({ md }) {
             <SensorIndicator
                 x="552.5"
                 y="261.5"
-                innerText={md.get("feedtds", "abbreviated_name")}
-                on_click={md.get("feedtds", "on_click")}
                 textDir='up'
                 sensorKey="feedtds" md={md}
             />
@@ -286,8 +284,6 @@ function ROSystem({ md }) {
             <SensorIndicator
                 x="650" y="331.5" textDir="down"
                 sensorKey="inletflow" md={md}
-                innerText={md.get("inletflow", "abbreviated_name")}
-                on_click={md.get("inletflow", "on_click")}
             />
             <PumpSymbol
                 x="800" y="331.5"

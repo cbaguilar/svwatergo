@@ -31,10 +31,8 @@ function FeedTankSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="334.5" y="169.5"
                 line="up"
-                innerText="LT1"
                 textDir="down"
-                on_click={md.get("feedtanklevel", "on_click")}
-                // sensorKey="feedtanklevel" md={md}
+                sensorKey="feedtanklevel" md={md}
             />
             <PumpSymbol x="260" y="160" pumpKey="wellpumprun" md={md} />
             <LiquidFillGaugeWrapper x="320" y="90" fillLevel={md.get("feedtanklevel", "current_value")} />
@@ -69,10 +67,8 @@ function FlushTankSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="290" y="400"
                 line="up"
-                innerText="LT3"
                 textDir="right"
-                on_click={md.get("flushtanklevel", "on_click")}
-                // sensorKey="flushtanklevel" md={md} 
+                sensorKey="flushtanklevel" md={md}
             />
             <PumpSymbol x="382.5" y="330" pumpKey="runflush" md={md} />
         </g>
@@ -198,10 +194,8 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="628"
                 y="100"
-                innerText="PT1"
                 sensorKey="inletpressure" md={md}
-                textDir="up"
-                on_click={md.get("inletpressure", "on_click")} />
+                textDir="up" />
             <MultiMediaFilter
                 x="703" y="130"
                 textDir="down"
@@ -218,30 +212,23 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="590" y="360"
                 textDir="down"
-                sensorKey="feedpressure" md={md}
-                innerText="PT2"
-                on_click={md.get("feedpressure", "on_click")} />
+                sensorKey="feedpressure" md={md} />
             <SensorIndicator
                 x="670" y="360"
-                innerText="FT1"
                 sensorKey="inletflow" md={md}
-                textDir="up"
-                on_click={md.get("inletflow", "on_click")} />
+                textDir="up" />
             <PumpSymbol
                 x="750" y="360"
                 pumpKey="ropumprun" md={md} />
             <SensorIndicator
                 x="860" y="360"
                 line="left"
-                innerText="PT3"
                 textDir="up"
                 sensorKey="ropressure" md={md} />
             <SensorIndicator
                 x="912" y="270"
-                innerText="CT1"
                 textDir="up"
-                sensorKey="inletflow" md={md}
-                on_click={md.get("feedtds", "on_click")} />
+                sensorKey="feedtds" md={md} />
             <SensorIndicator
                 x="762" y="270"
                 innerText="FTF"
@@ -291,28 +278,22 @@ function ROSystem({ md, pipe_info }) {
                 on_click={md.get("concbypassrun", "on_click")} />
             <SensorIndicator
                 x="972" y="475"
-                innerText="NT1"
                 sensorKey="permnitrate" md={md} />
             <SensorIndicator
                 x="972" y="525"
-                innerText="CT2"
                 sensorKey="permtds" md={md}
             />
             <SensorIndicator
                 x="972" y="575"
-                innerText="FT3"
                 sensorKey="permeateflow" md={md} />
             <SensorIndicator
                 x="972" y="625"
-                innerText="TT1"
                 sensorKey="permtemp" md={md} />
             <SensorIndicator
                 x="942" y="399"
                 line="down"
-                innerText="PT5"
                 sensorKey="permeatepressure" md={md}
-                textDir="up"
-                on_click={md.get("permeatepressure", "on_click")} />
+                textDir="up" />
         </>
     )
 }
@@ -335,10 +316,8 @@ function ROSystemTopLayer({ md, pipeinfo }) {
                 innerText="200" />
             <SensorIndicator
                 x="602.5" y="634.5"
-                innerText="FT2"
                 sensorKey="concentrateflow" md={md}
                 textDir="up"
-                on_click={md.get("concentrateflow", "on_click")}
             />
             <ThreeWayValveIndicator
                 dir="left"
@@ -408,10 +387,8 @@ function DeliverySystem({ md, pipe_info }) {
             />
             <SensorIndicator
                 x="1181.5" y="262.5" line="down"
-                innerText="LT2"
                 textDir="up"
-                on_click={md.get("prodtanklevel", "on_click")}
-                // sensorKey="prodtanklevel" md={md} 
+                sensorKey="prodtanklevel" md={md}
             />
             <LiquidFillGaugeWrapper 
                 x="1181.5" 
@@ -436,7 +413,6 @@ function DeliverySystem({ md, pipe_info }) {
                 textDir="down" />
             <SensorIndicator
                 x="1170" y="544.5"
-                innerText="CT3"
                 textDir="left"
                 sensorKey="producttds" md={md} />
 
