@@ -2,11 +2,13 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
+	"github.com/cbaguilar/svwatergo/internal/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -100,6 +102,169 @@ func (a *SiteAPI) GetSeries(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errJSON("BadRequest", "invalid format", gin.H{"format": format}))
 		return
 	}
+}
+
+func (a *SiteAPI) GetDailySummary(c *gin.Context) {
+	site, mgr, ok := a.parseSite(c)
+	if !ok {
+		c.JSON(http.StatusNotFound, errJSON("NotFound", "unknown site", gin.H{"site": site}))
+		return
+	}
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		loc = time.FixedZone("PST", -8*3600)
+	}
+	nowUTC := time.Now().UTC()
+	nowPT := nowUTC.In(loc)
+	startPT := time.Date(nowPT.Year(), nowPT.Month(), nowPT.Day(), 0, 0, 0, 0, loc)
+	startUTC := startPT.UTC()
+
+	// Include a small lookback so we can use the latest sample before midnight when available.
+	lookbackStart := startUTC.Add(-15 * time.Minute)
+	rows, err := mgr.GetRange(lookbackStart, nowUTC)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "get range error", gin.H{"err": err.Error()}))
+		return
+	}
+	if len(rows) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"meta": gin.H{
+				"site":              site,
+				"timezone":          "America/Los_Angeles",
+				"day_start_pacific": startPT.Format(time.RFC3339),
+				"as_of":             nowUTC.Format(time.RFC3339),
+			},
+			"data": gin.H{
+				"feed_gallons":                  nil,
+				"permeate_gallons":              nil,
+				"energy_kwh":                    nil,
+				"specific_energy_kwh_per_1000g": nil,
+				"estimated_cost_per_1000g_usd":  nil,
+			},
+		})
+		return
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rowTimestamp(rows[i]).Before(rowTimestamp(rows[j]))
+	})
+
+	latest, err := mgr.GetLatest()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "failed to get latest", gin.H{"err": err.Error()}))
+		return
+	}
+
+	baseline := pickDailyBaseline(rows, startUTC)
+	current := latest
+	if rowTimestamp(current).Before(startUTC) {
+		current = rows[len(rows)-1]
+	}
+
+	feedDelta, feedField := deltaFromTotalizers(baseline, current, "totalfeedflow", "totalinletflow")
+	permDelta, permField := deltaFromTotalizers(baseline, current, "totalroflow")
+	energyDelta, energyField := deltaFromTotalizers(baseline, current, "powermeter")
+
+	var specificEnergy any = nil
+	if permDelta > 0 && energyDelta >= 0 {
+		specificEnergy = util.Round2((energyDelta / permDelta) * 1000)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"meta": gin.H{
+			"site":                  site,
+			"timezone":              "America/Los_Angeles",
+			"day_start_pacific":     startPT.Format(time.RFC3339),
+			"day_start_utc":         startUTC.Format(time.RFC3339),
+			"as_of":                 nowUTC.Format(time.RFC3339),
+			"baseline_row_time_utc": rowTimestamp(baseline).UTC().Format(time.RFC3339),
+			"current_row_time_utc":  rowTimestamp(current).UTC().Format(time.RFC3339),
+			"computed_from": gin.H{
+				"feed_totalizer":     feedField,
+				"permeate_totalizer": permField,
+				"energy_totalizer":   energyField,
+			},
+		},
+		"data": gin.H{
+			"feed_gallons":                  nullableNumber(feedDelta),
+			"permeate_gallons":              nullableNumber(permDelta),
+			"energy_kwh":                    nullableNumber(energyDelta),
+			"specific_energy_kwh_per_1000g": specificEnergy,
+			"estimated_cost_per_1000g_usd":  nil, // external utility API integration TBD
+		},
+	})
+}
+
+func rowTimestamp(row map[string]any) time.Time {
+	if row == nil {
+		return time.Time{}
+	}
+	if v, ok := row["plctime"]; ok {
+		if t, ok := util.CoerceUTCTime(v); ok {
+			return t
+		}
+	}
+	if v, ok := row["recordtime"]; ok {
+		if t, ok := util.CoerceUTCTime(v); ok {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+func pickDailyBaseline(rows []map[string]any, startUTC time.Time) map[string]any {
+	if len(rows) == 0 {
+		return nil
+	}
+	var lastBefore map[string]any
+	var firstAfter map[string]any
+	for _, row := range rows {
+		ts := rowTimestamp(row)
+		if ts.IsZero() {
+			continue
+		}
+		if !ts.After(startUTC) {
+			lastBefore = row
+			continue
+		}
+		if firstAfter == nil {
+			firstAfter = row
+		}
+	}
+	if lastBefore != nil {
+		return lastBefore
+	}
+	return firstAfter
+}
+
+func deltaFromTotalizers(startRow, endRow map[string]any, keys ...string) (float64, string) {
+	if startRow == nil || endRow == nil {
+		return -1, ""
+	}
+	for _, key := range keys {
+		startV, ok1 := util.NumberFromAny(startRow[key])
+		endV, ok2 := util.NumberFromAny(endRow[key])
+		if !ok1 || !ok2 {
+			continue
+		}
+		delta := endV - startV
+		if delta < 0 {
+			return -1, key
+		}
+		return delta, key
+	}
+	if len(keys) == 0 {
+		return -1, ""
+	}
+	return -1, keys[0]
+}
+
+func nullableNumber(v float64) any {
+	if v < 0 {
+		return nil
+	}
+	return util.Round2(v)
 }
 
 func parseFields(s string) []string {

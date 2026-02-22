@@ -283,7 +283,8 @@ function ROSystem({ md }) {
             /> */}
             <SensorIndicator
                 x="650" y="331.5" textDir="down"
-                sensorKey="inletflow" md={md}
+                innerText="FT0"
+                sensorKey="feedflow" md={md}
             />
             <PumpSymbol
                 x="800" y="331.5"

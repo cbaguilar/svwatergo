@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
 import { CCard, CCardBody, CCardHeader, CCol, CRow } from '@coreui/react'
 import SimplifiedROSystem from '../../components/SimplifiedROSystem'
-import { fetchLatestState } from '../../api/state'
+import { fetchDailySummary, fetchLatestState } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 
 const DASHBOARD_LATEST_CACHE_PREFIX = 'svwn_dashboard_latest_v1:'
@@ -66,6 +66,8 @@ const Dashboard = () => {
   const [latestState, setLatestState] = useState(null)
   const [loadingState, setLoadingState] = useState(true)
   const [stateError, setStateError] = useState('')
+  const [dailySummary, setDailySummary] = useState(null)
+  const [dailySummaryError, setDailySummaryError] = useState('')
 
   const systemDetails = {
     Bluerock: {
@@ -106,6 +108,26 @@ const Dashboard = () => {
       setStateError('')
     } else {
       setLatestState(null)
+    }
+  }, [siteKey])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+    setDailySummaryError('')
+    fetchDailySummary(siteKey, { signal: controller.signal })
+      .then((payload) => {
+        if (!active) return
+        setDailySummary(payload)
+      })
+      .catch((err) => {
+        if (!active || err?.name === 'AbortError') return
+        setDailySummary(null)
+        setDailySummaryError(err?.message || 'Failed to load daily summary')
+      })
+    return () => {
+      active = false
+      controller.abort()
     }
   }, [siteKey])
 
@@ -202,6 +224,11 @@ const Dashboard = () => {
   const lastUpdated = lastUpdatedRaw ? new Date(lastUpdatedRaw) : null
   const hasLastUpdated = Boolean(lastUpdated && !Number.isNaN(lastUpdated.getTime()))
   const simplifiedMd = useMemo(() => buildSimplifiedMd(latestState?.data || {}), [latestState])
+  const summaryData = dailySummary?.data || {}
+  const fmtNum = (value, suffix = '') =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix ? ` ${suffix}` : ''}`
+      : 'Unavailable'
 
   return (
     <>
@@ -266,6 +293,41 @@ const Dashboard = () => {
                     {hasDailyPermFlow
                       ? `${Number(dailyPermFlow).toLocaleString(undefined, { maximumFractionDigits: 2 })} gallons`
                       : 'Unavailable'}
+                  </div>
+                  <hr className="my-4" />
+                  <div className="text-body-secondary mb-2" style={{ fontSize: '0.85rem' }}>
+                    Daily Operational Metrics (Midnight Pacific to now)
+                  </div>
+                  {dailySummaryError && (
+                    <div className="text-danger mb-2" style={{ fontSize: '0.9rem' }}>
+                      {dailySummaryError}
+                    </div>
+                  )}
+                  <div className="d-flex justify-content-between mb-2">
+                    <span className="text-body-secondary">RO Feed Inflow</span>
+                    <span className="fw-semibold">{fmtNum(summaryData.feed_gallons, 'gallons')}</span>
+                  </div>
+                  <div className="d-flex justify-content-between mb-2">
+                    <span className="text-body-secondary">Permeate Production</span>
+                    <span className="fw-semibold">{fmtNum(summaryData.permeate_gallons, 'gallons')}</span>
+                  </div>
+                  <div className="d-flex justify-content-between mb-2">
+                    <span className="text-body-secondary">Energy Usage</span>
+                    <span className="fw-semibold">{fmtNum(summaryData.energy_kwh, 'kWh')}</span>
+                  </div>
+                  <div className="d-flex justify-content-between mb-2">
+                    <span className="text-body-secondary">Specific Energy</span>
+                    <span className="fw-semibold">
+                      {fmtNum(summaryData.specific_energy_kwh_per_1000g, 'kWh/1000-gallon')}
+                    </span>
+                  </div>
+                  <div className="d-flex justify-content-between">
+                    <span className="text-body-secondary">Estimated Cost / 1000 gal</span>
+                    <span className="fw-semibold">
+                      {summaryData.estimated_cost_per_1000g_usd == null
+                        ? 'TBD'
+                        : fmtNum(summaryData.estimated_cost_per_1000g_usd, 'USD')}
+                    </span>
                   </div>
                 </>
               )}

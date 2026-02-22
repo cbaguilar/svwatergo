@@ -19,3 +19,8 @@ export function fetchStateRange(site, { start, end, soft = true, signal } = {}) 
   const path = `/api/v1/sites/${safeSite}/state?${params.toString()}`
   return apiGet(path, { signal })
 }
+
+export function fetchDailySummary(site, { signal } = {}) {
+  const safeSite = encodeURIComponent(site)
+  return apiGet(`/api/v1/sites/${safeSite}/summary/daily`, { signal })
+}

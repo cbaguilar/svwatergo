@@ -42,6 +42,22 @@ func parseAnyUTC(s string) (time.Time, error) {
 	return time.Time{}, errors.New("unsupported time " + s)
 }
 
+// CoerceUTCTime converts common timestamp representations into UTC time.
+func CoerceUTCTime(v any) (time.Time, bool) {
+	switch t := v.(type) {
+	case time.Time:
+		return t.UTC(), true
+	case string:
+		tt, err := parseAnyUTC(t)
+		return tt, err == nil
+	case []byte:
+		tt, err := parseAnyUTC(string(t))
+		return tt, err == nil
+	default:
+		return time.Time{}, false
+	}
+}
+
 func (t *UTCTime) Scan(src any) error {
 	switch v := src.(type) {
 	case time.Time:
