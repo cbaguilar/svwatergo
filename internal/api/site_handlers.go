@@ -18,6 +18,7 @@ type SiteAPI struct {
 }
 
 const powerMeterTickKWh = 1.25 / 1000.0
+const pgeResidentialDefaultPlan = "pge_e_tou_d_est"
 
 func NewSiteAPI(reg systemservice.Registry, meta *metadata.Store) *SiteAPI {
 	return &SiteAPI{Reg: reg, Meta: meta}
@@ -171,10 +172,15 @@ func (a *SiteAPI) GetDailySummary(c *gin.Context) {
 	if energyTicksDelta >= 0 {
 		energyKWh = energyTicksDelta * powerMeterTickKWh
 	}
+	estimatedCostUSD, avgCostPerKWhUSD := estimateDailyResidentialEnergyCost(rows, startUTC, nowUTC, loc)
 
 	var specificEnergy any = nil
 	if permDelta > 0 && energyKWh >= 0 {
 		specificEnergy = util.Round2((energyKWh / permDelta) * 1000)
+	}
+	var estimatedCostPer1000g any = nil
+	if permDelta > 0 && estimatedCostUSD >= 0 {
+		estimatedCostPer1000g = util.Round2((estimatedCostUSD / permDelta) * 1000)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -191,13 +197,22 @@ func (a *SiteAPI) GetDailySummary(c *gin.Context) {
 				"permeate_totalizer": permField,
 				"energy_totalizer":   energyField,
 			},
+			"cost_model": gin.H{
+				"plan":                pgeResidentialDefaultPlan,
+				"energy_source":       "powermeter interval deltas",
+				"power_meter_to_kwh":  "ticks * 1.25 / 1000",
+				"tariff_source":       "static backend estimate",
+				"timezone_for_tariff": "America/Los_Angeles",
+			},
 		},
 		"data": gin.H{
 			"feed_gallons":                  nullableNumber(feedDelta),
 			"permeate_gallons":              nullableNumber(permDelta),
 			"energy_kwh":                    nullableNumber(energyKWh),
 			"specific_energy_kwh_per_1000g": specificEnergy,
-			"estimated_cost_per_1000g_usd":  nil, // external utility API integration TBD
+			"estimated_cost_usd":            nullableNumber(estimatedCostUSD),
+			"estimated_cost_usd_per_kwh":    nullableNumber(avgCostPerKWhUSD),
+			"estimated_cost_per_1000g_usd":  estimatedCostPer1000g,
 		},
 	})
 }
@@ -271,6 +286,102 @@ func nullableNumber(v float64) any {
 		return nil
 	}
 	return util.Round2(v)
+}
+
+func estimateDailyResidentialEnergyCost(rows []map[string]any, startUTC, endUTC time.Time, loc *time.Location) (float64, float64) {
+	if len(rows) < 2 || loc == nil || !startUTC.Before(endUTC) {
+		return -1, -1
+	}
+	totalCost := 0.0
+	totalKWh := 0.0
+
+	for i := 1; i < len(rows); i++ {
+		prev := rows[i-1]
+		cur := rows[i]
+		t0 := rowTimestamp(prev)
+		t1 := rowTimestamp(cur)
+		if t0.IsZero() || t1.IsZero() || !t0.Before(t1) {
+			continue
+		}
+		if !t1.After(startUTC) || !t0.Before(endUTC) {
+			continue
+		}
+
+		p0, ok0 := util.NumberFromAny(prev["powermeter"])
+		p1, ok1 := util.NumberFromAny(cur["powermeter"])
+		if !ok0 || !ok1 || p1 < p0 {
+			continue
+		}
+		tickDelta := p1 - p0
+		if tickDelta <= 0 {
+			continue
+		}
+
+		segmentStart := maxTime(t0, startUTC)
+		segmentEnd := minTime(t1, endUTC)
+		if !segmentStart.Before(segmentEnd) {
+			continue
+		}
+		fullDur := t1.Sub(t0)
+		segDur := segmentEnd.Sub(segmentStart)
+		if fullDur <= 0 || segDur <= 0 {
+			continue
+		}
+
+		frac := float64(segDur) / float64(fullDur)
+		if frac <= 0 {
+			continue
+		}
+		intervalKWh := tickDelta * powerMeterTickKWh * frac
+		if intervalKWh <= 0 {
+			continue
+		}
+
+		mid := segmentStart.Add(segDur / 2).In(loc)
+		rate := pgeResidentialTOURateUSDPerKWh(mid)
+		totalKWh += intervalKWh
+		totalCost += intervalKWh * rate
+	}
+
+	if totalKWh <= 0 {
+		return -1, -1
+	}
+	return util.Round2(totalCost), util.Round2(totalCost / totalKWh)
+}
+
+func pgeResidentialTOURateUSDPerKWh(t time.Time) float64 {
+	month := t.Month()
+	isSummer := month >= time.June && month <= time.September
+	isWeekday := t.Weekday() >= time.Monday && t.Weekday() <= time.Friday
+	minutes := t.Hour()*60 + t.Minute()
+
+	// Estimated PG&E residential TOU using the user-provided chart (E-TOU-D style).
+	// Summer peak: 5-8pm weekdays; Winter peak: 5-8pm weekdays.
+	isPeak := isWeekday && minutes >= 17*60 && minutes < 20*60
+	if isSummer {
+		if isPeak {
+			return 0.54
+		}
+		return 0.40
+	}
+	if isPeak {
+		return 0.45
+	}
+	return 0.41
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 func parseFields(s string) []string {
