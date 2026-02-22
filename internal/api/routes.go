@@ -22,7 +22,18 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		AllowOriginFunc: func(origin string) bool {
 			o := strings.ToLower(strings.TrimSpace(origin))
 			switch o {
-			case "http://localhost:3000", "https://localhost:3000", "https://svwaternet.org", "https://www.svwaternet.org", "http://svwaternet.org:3000":
+			case "http://localhost:3000",
+				"https://localhost:3000",
+				"http://localhost:5173",
+				"https://localhost:5173",
+				"http://127.0.0.1:3000",
+				"https://127.0.0.1:3000",
+				"http://127.0.0.1:5173",
+				"https://127.0.0.1:5173",
+				"https://new.svwaternet.org",
+				"https://svwaternet.org",
+				"https://www.svwaternet.org",
+				"http://svwaternet.org:3000":
 				return true
 			default:
 				return false
