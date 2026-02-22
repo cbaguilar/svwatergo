@@ -877,12 +877,12 @@ const DetailedDashboard = () => {
 
   return (
     <>
-      <CRow className="mb-4">
+      <CRow className="mb-3">
         <CCol lg={8} className="mb-4 mb-lg-0">
           <CCard className="detailed-schematic-card">
             <CCardHeader>Detailed Process Flow</CCardHeader>
             <CCardBody className="detailed-schematic-body">
-              <div className="w-100" style={{ height: 500 }}>
+              <div className="w-100" style={{ height: 450 }}>
                 <Schematic md={md} />
               </div>
             </CCardBody>
