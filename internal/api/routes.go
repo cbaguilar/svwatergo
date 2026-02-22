@@ -87,6 +87,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		sites.GET("/coverage", site.GetCoverage)
 		sites.GET("/series", site.GetSeries)
 		sites.GET("/summary/daily", site.GetDailySummary)
+		sites.GET("/forecast/next-state", site.GetNextStateForecast)
 		sites.POST("/events/query", eventsAPI.QueryInterestingTimestamps)
 
 		operatorReports := sites.Group("/operator-reports")

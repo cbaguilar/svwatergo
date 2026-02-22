@@ -19,6 +19,8 @@ type SiteAPI struct {
 
 const powerMeterTickKWh = 1.25 / 1000.0
 const pgeResidentialDefaultPlan = "pge_e_tou_d_est"
+const defaultForecastTargetPct = 75.0
+const defaultForecastProductTankCapacityGal = 1000.0
 
 func NewSiteAPI(reg systemservice.Registry, meta *metadata.Store) *SiteAPI {
 	return &SiteAPI{Reg: reg, Meta: meta}
@@ -217,6 +219,113 @@ func (a *SiteAPI) GetDailySummary(c *gin.Context) {
 	})
 }
 
+func (a *SiteAPI) GetNextStateForecast(c *gin.Context) {
+	site, mgr, ok := a.parseSite(c)
+	if !ok {
+		c.JSON(http.StatusNotFound, errJSON("NotFound", "unknown site", gin.H{"site": site}))
+		return
+	}
+
+	latest, err := mgr.GetLatest()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "failed to get latest", gin.H{"err": err.Error()}))
+		return
+	}
+
+	targetPct := qfloat(c.Query("target_pct"), defaultForecastTargetPct)
+	if targetPct < 0 {
+		targetPct = 0
+	}
+	if targetPct > 100 {
+		targetPct = 100
+	}
+	capacityGal := qfloat(c.Query("product_tank_capacity_gal"), defaultForecastProductTankCapacityGal)
+	if capacityGal <= 0 {
+		capacityGal = defaultForecastProductTankCapacityGal
+	}
+
+	asOf := rowTimestamp(latest)
+	if asOf.IsZero() {
+		asOf = time.Now().UTC()
+	}
+	currentStateCode, _ := util.NumberFromAny(latest["state"])
+	roPumpRun, _ := boolFromAny(latest["ropumprun"])
+	isRORunning := int(currentStateCode) == 2 || roPumpRun
+
+	currentTankPct, haveTankPct := util.NumberFromAny(latest["prodtanklevel"])
+	permeateFlowGPM, havePermFlow := util.NumberFromAny(latest["permeateflow"])
+
+	response := gin.H{
+		"meta": gin.H{
+			"site":  site,
+			"as_of": asOf.UTC().Format(time.RFC3339),
+		},
+		"data": gin.H{
+			"current_state_code":              nullableNumber(currentStateCode),
+			"is_ro_running":                   isRORunning,
+			"forecast_method":                 "fill_to_target_pct_at_current_permeate_flow",
+			"assumed_target_pct":              util.Round2(targetPct),
+			"assumed_product_tank_capacity_gal": util.Round2(capacityGal),
+			"current_product_tank_pct":        nil,
+			"current_permeate_flow_gpm":       nil,
+			"estimated_next_state":            nil,
+			"estimated_time_to_next_state_s":  nil,
+			"estimated_time_to_next_state_min": nil,
+			"estimated_transition_at":         nil,
+		},
+	}
+
+	data := response["data"].(gin.H)
+	if haveTankPct {
+		data["current_product_tank_pct"] = util.Round2(currentTankPct)
+	}
+	if havePermFlow {
+		data["current_permeate_flow_gpm"] = util.Round2(permeateFlowGPM)
+	}
+
+	if !isRORunning {
+		data["estimated_next_state"] = "unknown"
+		data["reason"] = "RO is not currently running"
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	if !haveTankPct {
+		data["estimated_next_state"] = "unknown"
+		data["reason"] = "missing prodtanklevel"
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	if !havePermFlow || permeateFlowGPM <= 0 {
+		data["estimated_next_state"] = "unknown"
+		data["reason"] = "permeateflow is unavailable or non-positive"
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	if currentTankPct >= targetPct {
+		data["estimated_next_state"] = "ro_standby_or_stop"
+		data["estimated_time_to_next_state_s"] = 0
+		data["estimated_time_to_next_state_min"] = 0
+		data["estimated_transition_at"] = asOf.UTC().Format(time.RFC3339)
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
+	gallonsNeeded := ((targetPct - currentTankPct) / 100.0) * capacityGal
+	if gallonsNeeded < 0 {
+		gallonsNeeded = 0
+	}
+	etaMinutes := gallonsNeeded / permeateFlowGPM
+	etaSeconds := etaMinutes * 60.0
+	transitionAt := asOf.Add(time.Duration(etaSeconds * float64(time.Second)))
+
+	data["estimated_next_state"] = "ro_standby_or_stop"
+	data["estimated_time_to_next_state_s"] = int64(etaSeconds + 0.5)
+	data["estimated_time_to_next_state_min"] = util.Round2(etaMinutes)
+	data["estimated_transition_at"] = transitionAt.UTC().Format(time.RFC3339)
+
+	c.JSON(http.StatusOK, response)
+}
+
 func rowTimestamp(row map[string]any) time.Time {
 	if row == nil {
 		return time.Time{}
@@ -286,6 +395,28 @@ func nullableNumber(v float64) any {
 		return nil
 	}
 	return util.Round2(v)
+}
+
+func boolFromAny(v any) (bool, bool) {
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case int:
+		return b != 0, true
+	case int64:
+		return b != 0, true
+	case float64:
+		return b != 0, true
+	case string:
+		s := strings.TrimSpace(strings.ToLower(b))
+		switch s {
+		case "1", "true", "t", "yes", "y", "on":
+			return true, true
+		case "0", "false", "f", "no", "n", "off":
+			return false, true
+		}
+	}
+	return false, false
 }
 
 func estimateDailyResidentialEnergyCost(rows []map[string]any, startUTC, endUTC time.Time, loc *time.Location) (float64, float64) {
@@ -397,6 +528,16 @@ func parseFields(s string) []string {
 		}
 	}
 	return out
+}
+
+func qfloat(s string, def float64) float64 {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	if v, ok := util.NumberFromAny(s); ok {
+		return v
+	}
+	return def
 }
 
 func parseSoftInclude(s string) bool {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
 import { CCard, CCardBody, CCardHeader, CCol, CRow } from '@coreui/react'
 import SimplifiedROSystem from '../../components/SimplifiedROSystem'
-import { fetchDailySummary, fetchLatestState } from '../../api/state'
+import { fetchDailySummary, fetchLatestState, fetchNextStateForecast } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 
 const DASHBOARD_LATEST_CACHE_PREFIX = 'svwn_dashboard_latest_v1:'
@@ -69,6 +69,10 @@ const Dashboard = () => {
   const [dailySummary, setDailySummary] = useState(null)
   const [dailySummaryError, setDailySummaryError] = useState('')
   const [loadingDailySummary, setLoadingDailySummary] = useState(true)
+  const [nextStateForecast, setNextStateForecast] = useState(null)
+  const [nextStateForecastError, setNextStateForecastError] = useState('')
+  const [loadingNextStateForecast, setLoadingNextStateForecast] = useState(true)
+  const [countdownNowMs, setCountdownNowMs] = useState(Date.now())
 
   const systemDetails = {
     Bluerock: {
@@ -111,6 +115,48 @@ const Dashboard = () => {
       setLatestState(null)
     }
   }, [siteKey])
+
+  useEffect(() => {
+    let active = true
+    let timer = null
+    const loadForecast = (showLoading) => {
+      if (showLoading) setLoadingNextStateForecast(true)
+      setNextStateForecastError('')
+      const controller = new AbortController()
+      fetchNextStateForecast(siteKey, { signal: controller.signal })
+        .then((payload) => {
+          if (!active) return
+          setNextStateForecast(payload)
+        })
+        .catch((err) => {
+          if (!active || err?.name === 'AbortError') return
+          setNextStateForecast(null)
+          setNextStateForecastError(err?.message || 'Failed to load next-state forecast')
+        })
+        .finally(() => {
+          if (!active) return
+          setLoadingNextStateForecast(false)
+        })
+      return controller
+    }
+
+    let currentController = loadForecast(true)
+    timer = setInterval(() => {
+      if (currentController) currentController.abort()
+      currentController = loadForecast(false)
+    }, 30000)
+
+    return () => {
+      active = false
+      if (timer) clearInterval(timer)
+      if (currentController) currentController.abort()
+    }
+  }, [siteKey])
+
+  useEffect(() => {
+    const timer = setInterval(() => setCountdownNowMs(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -229,6 +275,7 @@ const Dashboard = () => {
   const hasLastUpdated = Boolean(lastUpdated && !Number.isNaN(lastUpdated.getTime()))
   const simplifiedMd = useMemo(() => buildSimplifiedMd(latestState?.data || {}), [latestState])
   const summaryData = dailySummary?.data || {}
+  const forecastData = nextStateForecast?.data || {}
   const fmtNum = (value, suffix = '') =>
     typeof value === 'number' && Number.isFinite(value)
         ? `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix ? ` ${suffix}` : ''}`
@@ -252,23 +299,33 @@ const Dashboard = () => {
     ) : (
       text
     )
+  const forecastTransitionRaw = forecastData.estimated_transition_at
+  const forecastTransition = forecastTransitionRaw ? new Date(forecastTransitionRaw) : null
+  const forecastRemainingMs =
+    forecastTransition && !Number.isNaN(forecastTransition.getTime())
+      ? Math.max(0, forecastTransition.getTime() - countdownNowMs)
+      : null
+  const forecastRunning = Boolean(forecastData.is_ro_running)
+  const formatCountdownHoursMinutes = (ms) => {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) return 'Unavailable'
+    const totalMinutes = Math.max(0, Math.ceil(ms / 60000))
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
+    if (hours <= 0) return `${minutes}m`
+    return `${hours}h ${minutes}m`
+  }
 
   return (
     <>
-      <CRow className="mb-4">
-        <CCol>
-          <CCard>
+      <CRow>
+        <CCol lg={7} className="mb-4 mb-lg-0">
+          <CCard className="mb-4">
             <CCardHeader>System Overview</CCardHeader>
             <CCardBody>
               <h4 className="mb-2">{currentSystem.name}</h4>
               <p className="text-body-secondary mb-0">{currentSystem.description}</p>
             </CCardBody>
           </CCard>
-        </CCol>
-      </CRow>
-
-      <CRow>
-        <CCol lg={7} className="mb-4 mb-lg-0">
           <CCard>
             <CCardHeader>Simplified RO System</CCardHeader>
             <CCardBody>
@@ -301,6 +358,20 @@ const Dashboard = () => {
                           })
                         : 'Unavailable'}
                     </div>
+                    {(loadingNextStateForecast || forecastRunning || nextStateForecastError) && (
+                      <div className="mt-2" style={{ fontSize: '0.95rem', lineHeight: 1.25 }}>
+                        {loadingNextStateForecast ? (
+                          <span className="text-body-secondary">Loading runtime forecast...</span>
+                        ) : nextStateForecastError ? (
+                          <span className="text-danger">{nextStateForecastError}</span>
+                        ) : forecastRunning ? (
+                          <>
+                            <span className="text-body-secondary">Estimated remaining runtime: </span>
+                            <span className="fw-semibold">{formatCountdownHoursMinutes(forecastRemainingMs)}</span>
+                          </>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                   <hr className="my-3" />
                   <div className="text-body-secondary mb-2" style={{ fontSize: '0.85rem' }}>

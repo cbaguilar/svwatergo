@@ -24,3 +24,8 @@ export function fetchDailySummary(site, { signal } = {}) {
   const safeSite = encodeURIComponent(site)
   return apiGet(`/api/v1/sites/${safeSite}/summary/daily`, { signal })
 }
+
+export function fetchNextStateForecast(site, { signal } = {}) {
+  const safeSite = encodeURIComponent(site)
+  return apiGet(`/api/v1/sites/${safeSite}/forecast/next-state`, { signal })
+}
