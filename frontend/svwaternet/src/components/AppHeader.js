@@ -15,7 +15,7 @@ import { useHeaderContent } from './header/HeaderContentContext'
 import { AppBreadcrumb } from './index'
 import { AppHeaderDropdown } from './header/index'
 
-const AppHeader = () => {
+const AppHeader = ({ currentUser, onLogout }) => {
   const headerRef = useRef()
 
   const dispatch = useDispatch()
@@ -47,7 +47,7 @@ const AppHeader = () => {
           <div className="fw-semibold">WaTeR System</div>
         </CHeaderNav>
         {headerContent && (
-          <div className="d-none d-xl-flex align-items-center flex-grow-1 mx-3 app-header-slot">{headerContent}</div>
+          <div className="d-flex align-items-center flex-grow-1 mx-3 app-header-slot">{headerContent}</div>
         )}
         <CHeaderNav className="align-items-center ms-auto app-header-controls">
           <span className="me-2 small text-body-secondary app-header-label">WaTeR System ID:</span>
@@ -83,7 +83,7 @@ const AppHeader = () => {
               </option>
             ))}
           </CFormSelect>
-          <AppHeaderDropdown />
+          <AppHeaderDropdown currentUser={currentUser} onLogout={onLogout} />
         </CHeaderNav>
       </CContainer>
       <CContainer className="px-4" fluid>

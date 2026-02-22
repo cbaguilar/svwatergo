@@ -66,6 +66,93 @@ body {
   white-space: nowrap;
 }
 
+@media (max-width: 991.98px) {
+  .app-header-bar {
+    flex-wrap: wrap;
+    row-gap: 0.25rem;
+    align-items: center;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+  }
+
+  .app-header-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+    justify-content: center;
+    display: flex;
+  }
+
+  .app-header-slot {
+    order: 3;
+    width: 100%;
+    margin: 0.125rem 0 0 !important;
+    padding-bottom: 0.125rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-header-slot > * {
+    flex: 0 0 auto;
+  }
+
+  .app-header-controls {
+    order: 2;
+    width: 100%;
+    margin-left: 0 !important;
+    gap: 0.375rem;
+    align-items: center;
+  }
+
+  .app-header-label {
+    display: none;
+  }
+
+  .app-header-select {
+    min-width: 0;
+    flex: 1 1 0;
+    max-width: 45%;
+  }
+
+  .app-header-controls .me-3 {
+    margin-right: 0 !important;
+  }
+
+  .app-header-user-dropdown {
+    margin-left: auto;
+    flex: 0 0 auto;
+  }
+
+  .app-header-user-toggle {
+    min-height: 1.75rem;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .app-header-bar {
+    padding-inline: 0.5rem !important;
+  }
+
+  .app-header-title {
+    font-size: 0.9rem;
+  }
+
+  .app-header-controls {
+    gap: 0.25rem;
+  }
+
+  .app-header-select {
+    font-size: 0.75rem;
+    max-width: calc(50% - 1.25rem);
+  }
+
+  .app-header-slot {
+    margin-top: 0 !important;
+  }
+}
+
 .sidebar-brand-full {
   margin-left: 3px;
 }

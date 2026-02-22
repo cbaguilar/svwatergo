@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from './backend'
+import { getAuthToken } from '../auth/session'
 
 const DEFAULT_HEADERS = {
   Accept: 'application/json',
@@ -24,12 +25,24 @@ async function handleJsonResponse(response) {
   throw err
 }
 
-export async function apiGet(path, options = {}) {
-  const url = `${getApiBaseUrl()}${path}`
+function buildHeaders(options = {}, isJSON = false) {
   const headers = {
     ...DEFAULT_HEADERS,
+    ...(isJSON ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers || {}),
   }
+  if (!options.skipAuth) {
+    const token = getAuthToken()
+    if (token && !headers.Authorization) {
+      headers.Authorization = `Bearer ${token}`
+    }
+  }
+  return headers
+}
+
+export async function apiGet(path, options = {}) {
+  const url = `${getApiBaseUrl()}${path}`
+  const headers = buildHeaders(options, false)
   const response = await fetch(url, {
     method: 'GET',
     headers,
@@ -40,11 +53,7 @@ export async function apiGet(path, options = {}) {
 
 export async function apiPost(path, body, options = {}) {
   const url = `${getApiBaseUrl()}${path}`
-  const headers = {
-    ...DEFAULT_HEADERS,
-    'Content-Type': 'application/json',
-    ...(options.headers || {}),
-  }
+  const headers = buildHeaders(options, true)
   const response = await fetch(url, {
     method: 'POST',
     headers,

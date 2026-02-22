@@ -60,7 +60,19 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
 	eventsAPI := NewEventsAPI()
+	authAPI := NewAuthAPI(authn)
 	ingestion.OnIngest = liveState.NotifySiteUpdated
+
+	authGroup := r.Group("/api/v1/auth")
+	{
+		authGroup.GET("/config", authAPI.GetConfig)
+		authGroup.POST("/google/exchange", authAPI.ExchangeGoogle)
+		if authn != nil {
+			authGroup.GET("/me", authn.GinMiddleware(), authAPI.Me)
+		} else {
+			authGroup.GET("/me", authAPI.Me)
+		}
+	}
 
 	v1 := r.Group("/api/v1")
 	if authn != nil {

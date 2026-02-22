@@ -590,6 +590,18 @@ const DetailedDashboard = () => {
   const chartPoints = timelineRows
     .map((row, rowIndex) => ({ ts: toTs(row), row, rowIndex }))
     .filter((p) => p.ts > 0)
+  const chartGapThresholdMs = useMemo(() => {
+    if (chartPoints.length < 3) return 5 * 60 * 1000
+    const deltas = []
+    for (let i = 1; i < chartPoints.length; i += 1) {
+      const dt = chartPoints[i].ts - chartPoints[i - 1].ts
+      if (Number.isFinite(dt) && dt > 0) deltas.push(dt)
+    }
+    if (!deltas.length) return 5 * 60 * 1000
+    deltas.sort((a, b) => a - b)
+    const median = deltas[Math.floor(deltas.length / 2)] || 60000
+    return Math.max(median * 5, 2 * 60 * 1000)
+  }, [chartPoints])
   const chartPointToRowIndex = useMemo(
     () => new Map(chartPoints.map((point, pointIndex) => [pointIndex, point.rowIndex])),
     [chartPoints],
@@ -600,7 +612,6 @@ const DetailedDashboard = () => {
   const hasNumericMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) !== 'boolean')
 
   const chartData = {
-    labels: chartPoints.map((p) => formatTsLabel(p.ts)),
     datasets: activeMetricKeys.map((metricKey, datasetIdx) => {
       const metricType = inferSensorType(timelineRows, metricKey)
       const unit = SENSOR_META[metricKey]?.unit || ''
@@ -615,7 +626,10 @@ const DetailedDashboard = () => {
         label,
         data: chartPoints.map((p) => {
           const raw = p.row?.[metricKey]
-          return metricType === 'boolean' ? (raw ? 1 : 0) : Number(raw ?? 0)
+          return {
+            x: p.ts,
+            y: metricType === 'boolean' ? (raw ? 1 : 0) : Number(raw ?? 0),
+          }
         }),
         borderColor: lineColor,
         backgroundColor: fillColor,
@@ -630,6 +644,7 @@ const DetailedDashboard = () => {
         borderWidth: 3,
         fill: datasetIdx === 0,
         tension: metricType === 'boolean' ? 0 : 0.32,
+        spanGaps: chartGapThresholdMs,
         stepped: metricType === 'boolean' ? 'before' : false,
         yAxisID: metricType === 'boolean' ? 'yBool' : 'y',
       }
@@ -642,8 +657,12 @@ const DetailedDashboard = () => {
     interaction: { mode: 'index', intersect: false },
     scales: {
       x: {
-        ticks: { maxTicksLimit: 8 },
+        type: 'linear',
         grid: { color: 'rgba(120,120,120,0.15)' },
+        ticks: {
+          maxTicksLimit: 8,
+          callback: (value) => formatTsLabel(Number(value)),
+        },
         title: { display: true, text: 'Date / Time' },
       },
       y: {
@@ -678,6 +697,11 @@ const DetailedDashboard = () => {
         mode: 'index',
         intersect: false,
         callbacks: {
+          title: (items) => {
+            const ts = Number(items?.[0]?.parsed?.x)
+            if (!Number.isFinite(ts)) return ''
+            return new Date(ts).toLocaleString()
+          },
           label: (ctx) => {
             const metricKey = ctx.dataset?.metricKey || DEFAULT_METRIC_KEY
             const metricType = inferSensorType(timelineRows, metricKey)
@@ -770,10 +794,23 @@ const DetailedDashboard = () => {
 
     const xScale = chart.scales?.x
     if (!xScale || chartPoints.length < 2) return
-    const startIndex = Math.max(0, Math.min(chartPoints.length - 1, Math.round(Number(xScale.getValueForPixel(minX)))))
-    const endIndex = Math.max(0, Math.min(chartPoints.length - 1, Math.round(Number(xScale.getValueForPixel(maxX)))))
-    const startTs = chartPoints[Math.min(startIndex, endIndex)]?.ts
-    const endTs = chartPoints[Math.max(startIndex, endIndex)]?.ts
+    const startValue = Number(xScale.getValueForPixel(minX))
+    const endValue = Number(xScale.getValueForPixel(maxX))
+    if (!Number.isFinite(startValue) || !Number.isFinite(endValue)) return
+    const nearestTs = (target) => {
+      let bestTs = null
+      let bestDist = Number.POSITIVE_INFINITY
+      for (const p of chartPoints) {
+        const dist = Math.abs(p.ts - target)
+        if (dist < bestDist) {
+          bestDist = dist
+          bestTs = p.ts
+        }
+      }
+      return bestTs
+    }
+    const startTs = nearestTs(Math.min(startValue, endValue))
+    const endTs = nearestTs(Math.max(startValue, endValue))
     if (!startTs || !endTs || startTs >= endTs) return
 
     const startISO = new Date(startTs).toISOString()

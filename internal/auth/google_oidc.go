@@ -17,18 +17,22 @@ import (
 const googleIssuer = "https://accounts.google.com"
 
 type AuthConfig struct {
-	ClientID    string
-	AdminEmails map[string]struct{}
+	ClientID      string
+	AdminEmails   map[string]struct{}
+	AllowedEmails map[string]struct{}
 }
 
 type Auth struct {
 	cfg      AuthConfig
 	verifier *oidc.IDTokenVerifier
+	session  *SessionJWT
 }
 
 type Identity struct {
-	Email string
-	Sub   string
+	Email   string
+	Sub     string
+	Name    string
+	Picture string
 }
 
 type ctxKey int
@@ -41,19 +45,26 @@ func NewFromEnv(ctx context.Context) (*Auth, error) {
 		return nil, fmt.Errorf("GOOGLE_CLIENT_ID is required")
 	}
 	admins := parseAllowlist(os.Getenv("ADMIN_EMAILS"))
+	allowed := parseAllowlist(os.Getenv("ALLOWED_EMAILS"))
 
 	provider, err := oidc.NewProvider(ctx, googleIssuer)
 	if err != nil {
 		return nil, fmt.Errorf("oidc provider: %w", err)
 	}
 	verifier := provider.Verifier(&oidc.Config{ClientID: clientID})
+	session, err := NewSessionJWTFromEnv()
+	if err != nil {
+		return nil, err
+	}
 
 	return &Auth{
 		cfg: AuthConfig{
-			ClientID:    clientID,
-			AdminEmails: admins,
+			ClientID:      clientID,
+			AdminEmails:   admins,
+			AllowedEmails: allowed,
 		},
 		verifier: verifier,
+		session:  session,
 	}, nil
 }
 
@@ -87,7 +98,11 @@ func (a *Auth) Middleware() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity, err := a.verifyRequest(r)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
+				code := http.StatusUnauthorized
+				if isForbiddenErr(err) {
+					code = http.StatusForbidden
+				}
+				http.Error(w, err.Error(), code)
 				return
 			}
 			ctx := context.WithValue(r.Context(), identityKey, identity)
@@ -100,7 +115,11 @@ func (a *Auth) GinMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		identity, err := a.verifyRequest(c.Request)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			code := http.StatusUnauthorized
+			if isForbiddenErr(err) {
+				code = http.StatusForbidden
+			}
+			c.AbortWithStatusJSON(code, gin.H{"error": err.Error()})
 			return
 		}
 		ctx := context.WithValue(c.Request.Context(), identityKey, identity)
@@ -150,6 +169,46 @@ func (a *Auth) AdminEmails() []string {
 	return out
 }
 
+func (a *Auth) AllowedEmails() []string {
+	if a == nil {
+		return nil
+	}
+	out := make([]string, 0, len(a.cfg.AllowedEmails))
+	for email := range a.cfg.AllowedEmails {
+		out = append(out, email)
+	}
+	return out
+}
+
+func (a *Auth) GoogleClientID() string {
+	if a == nil {
+		return ""
+	}
+	return a.cfg.ClientID
+}
+
+func (a *Auth) SessionEnabled() bool {
+	return a != nil && a.session != nil && a.session.Enabled()
+}
+
+func (a *Auth) ExchangeGoogleToken(ctx context.Context, raw string) (Identity, string, time.Time, error) {
+	id, _, err := a.verifyGoogleToken(ctx, raw)
+	if err != nil {
+		return Identity{}, "", time.Time{}, err
+	}
+	if err := a.ensureAllowed(id); err != nil {
+		return Identity{}, "", time.Time{}, err
+	}
+	if !a.SessionEnabled() {
+		return Identity{}, "", time.Time{}, fmt.Errorf("session jwt disabled")
+	}
+	jwt, exp, err := a.session.Issue(ctx, id)
+	if err != nil {
+		return Identity{}, "", time.Time{}, err
+	}
+	return id, jwt, exp, nil
+}
+
 func IdentityFromContext(ctx context.Context) (Identity, bool) {
 	v := ctx.Value(identityKey)
 	if v == nil {
@@ -183,20 +242,53 @@ func (a *Auth) verifyRequest(r *http.Request) (Identity, error) {
 	if v, ok := tokenCache.Load(token); ok {
 		ct := v.(cachedToken)
 		if time.Now().Before(ct.until) {
+			if err := a.ensureAllowed(ct.id); err != nil {
+				return Identity{}, err
+			}
 			return ct.id, nil
 		}
 		tokenCache.Delete(token)
 	}
 
-	id, exp, err := a.verifyToken(r.Context(), token)
+	if a.SessionEnabled() {
+		if id, exp, err := a.session.Verify(r.Context(), token); err == nil {
+			if err := a.ensureAllowed(id); err != nil {
+				return Identity{}, err
+			}
+			tokenCache.Store(token, cachedToken{id: id, until: exp})
+			return id, nil
+		}
+	}
+
+	id, exp, err := a.verifyGoogleToken(r.Context(), token)
 	if err != nil {
+		return Identity{}, err
+	}
+	if err := a.ensureAllowed(id); err != nil {
 		return Identity{}, err
 	}
 	tokenCache.Store(token, cachedToken{id: id, until: exp})
 	return id, nil
 }
 
-func (a *Auth) verifyToken(ctx context.Context, raw string) (Identity, time.Time, error) {
+func (a *Auth) ensureAllowed(id Identity) error {
+	if a == nil {
+		return nil
+	}
+	if len(a.cfg.AllowedEmails) == 0 {
+		return nil
+	}
+	if _, ok := a.cfg.AllowedEmails[strings.ToLower(strings.TrimSpace(id.Email))]; !ok {
+		return fmt.Errorf("forbidden")
+	}
+	return nil
+}
+
+func isForbiddenErr(err error) bool {
+	return err != nil && err.Error() == "forbidden"
+}
+
+func (a *Auth) verifyGoogleToken(ctx context.Context, raw string) (Identity, time.Time, error) {
 	idToken, err := a.verifier.Verify(ctx, raw)
 	if err != nil {
 		return Identity{}, time.Time{}, fmt.Errorf("invalid token")
@@ -206,6 +298,8 @@ func (a *Auth) verifyToken(ctx context.Context, raw string) (Identity, time.Time
 		Email         string `json:"email"`
 		EmailVerified bool   `json:"email_verified"`
 		Sub           string `json:"sub"`
+		Name          string `json:"name"`
+		Picture       string `json:"picture"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return Identity{}, time.Time{}, fmt.Errorf("invalid token claims")
@@ -220,8 +314,10 @@ func (a *Auth) verifyToken(ctx context.Context, raw string) (Identity, time.Time
 	}
 
 	return Identity{
-		Email: claims.Email,
-		Sub:   claims.Sub,
+		Email:   claims.Email,
+		Sub:     claims.Sub,
+		Name:    claims.Name,
+		Picture: claims.Picture,
 	}, exp, nil
 }
 
