@@ -474,6 +474,7 @@ function WaterDeliverSystem({ md }) {
             <LiquidFillGaugeWrapper
                 x={PRODUCT_TANK_X} y="710" textDir='down'
                 text="Product Tank"
+                fillLevel={md.get("prodtanklevel", "current_value")}
             />
             <SensorIndicator
                 x={PRODUCT_TANK_X} y="644.5" line="down" textDir='up'
