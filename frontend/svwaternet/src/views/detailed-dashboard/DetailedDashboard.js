@@ -1016,7 +1016,7 @@ const DetailedDashboard = () => {
               )}
             </CCardHeader>
             <CCardBody>
-              <div style={{ height: 300 }}>
+              <div style={{ height: 255 }}>
                 {chartPoints.length === 0 ? (
                   <div className="h-100 d-flex flex-column align-items-center justify-content-center text-body-secondary">
                     <div className="mb-1">No data in this window.</div>
