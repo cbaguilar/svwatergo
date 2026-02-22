@@ -3,6 +3,7 @@ import React from 'react'
 import {
   AnimatedPipe,
   LiquidFillGaugeWrapper,
+  PumpSymbol,
   SensorIndicator,
   TreatmentSystem,
   titleProps,
@@ -27,6 +28,16 @@ const buildMockMd = () => {
 }
 
 const SimplifiedROSystem = ({ md = buildMockMd() }) => {
+  const getCurrent = (...keys) => {
+    for (const key of keys) {
+      const value = md?.get?.(key, 'current_value')
+      if (value !== undefined && value !== null) return value
+    }
+    return 0
+  }
+
+  const roRun = Boolean(getCurrent('rorun', 'ropumprun'))
+
   return (
     <svg viewBox="0 0 720 360" width="100%" height="320" role="img" aria-label="Simplified RO system">
       <rect rx="12" x="10" y="10" width="700" height="340" fill="#f5f7fa" stroke="#d9e2ec" />
@@ -42,7 +53,7 @@ const SimplifiedROSystem = ({ md = buildMockMd() }) => {
         y="125"
         text=""
         textDir="down"
-        fillLevel={md.get('feedtanklevel', 'current_value')}
+        fillLevel={getCurrent('feedtanklevel')}
         fillColor="#8bc34a"
       />
 
@@ -51,6 +62,7 @@ const SimplifiedROSystem = ({ md = buildMockMd() }) => {
         paths={[[[180, 125], [430, 125]]]}
         pipeOn={md.get('feedpumprun', 'current_value')}
       />
+      <PumpSymbol x={305} y={125} innerText="P2" flow={roRun} pumpKey="ropumprun" md={md} textDir="up" />
 
       <text x="420" y="70" fontSize="14" fontWeight="600">
         Treatment System
@@ -60,7 +72,7 @@ const SimplifiedROSystem = ({ md = buildMockMd() }) => {
       <AnimatedPipe
         stroke="#1c8bd3"
         paths={[[[470, 145], [470, 190], [520, 190], [150, 190], [150, 245]]]}
-        pipeOn={md.get('ropumprun', 'current_value')}
+        pipeOn={roRun}
       />
       <text x="250" y="185" fontSize="12" fill="#2f4f6a">
         Treated Water Stream
@@ -73,7 +85,7 @@ const SimplifiedROSystem = ({ md = buildMockMd() }) => {
           [[320, 190], [320, 240]],
           [[520, 190], [520, 240]],
         ]}
-        pipeOn={md.get('ropumprun', 'current_value')}
+        pipeOn={roRun}
       />
 
       <LiquidFillGaugeWrapper
@@ -81,10 +93,10 @@ const SimplifiedROSystem = ({ md = buildMockMd() }) => {
         y="265"
         text=""
         textDir="down"
-        fillLevel={md.get('producttanklevel', 'current_value')}
+        fillLevel={getCurrent('prodtanklevel', 'producttanklevel')}
         fillColor="#1c8bd3"
       />
-      <text x="110" y="305" fontSize="14" fontWeight="600">
+      <text x="110" y="336" fontSize="14" fontWeight="600">
         Product Tank
       </text>
 
@@ -93,9 +105,8 @@ const SimplifiedROSystem = ({ md = buildMockMd() }) => {
         y="270"
         line="up"
         textDir="down"
-        innerText="CTP"
-        outerText="7.59 ppm"
-        on_click={md.get('permeatesalinity', 'on_click')}
+        sensorKey="permtds"
+        md={md}
         smallInner
         loadIfBlank={false}
       />
@@ -104,9 +115,8 @@ const SimplifiedROSystem = ({ md = buildMockMd() }) => {
         y="270"
         line="up"
         textDir="down"
-        innerText="NTP"
-        outerText="0.03 mg/L"
-        on_click={md.get('inflownitrate', 'on_click')}
+        sensorKey="permnitrate"
+        md={md}
         smallInner
         loadIfBlank={false}
       />

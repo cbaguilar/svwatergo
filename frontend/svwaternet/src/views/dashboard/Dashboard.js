@@ -5,6 +5,38 @@ import SimplifiedROSystem from '../../components/SimplifiedROSystem'
 import { fetchLatestState } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 
+const SIMPLIFIED_ABBR = {
+  feedtanklevel: 'LT1',
+  prodtanklevel: 'LT2',
+  producttanklevel: 'LT2',
+  feedpumprun: 'P1',
+  ropumprun: 'P2',
+  rorun: 'P2',
+  permtds: 'CTP',
+  permnitrate: 'NTP',
+}
+
+const SIMPLIFIED_UNITS = {
+  feedtanklevel: '%',
+  prodtanklevel: '%',
+  producttanklevel: '%',
+  permtds: 'uS',
+  permnitrate: 'mg/L',
+}
+
+function buildSimplifiedMd(data = {}) {
+  return {
+    get: (key, field) => {
+      if (field === 'current_value') return data?.[key]
+      if (field === 'abbreviated_name') return SIMPLIFIED_ABBR[key] || key?.slice(0, 3)?.toUpperCase() || ''
+      if (field === 'units') return SIMPLIFIED_UNITS[key] || ''
+      if (field === 'is_selected') return false
+      if (field === 'on_click') return () => {}
+      return ''
+    },
+  }
+}
+
 const Dashboard = () => {
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const [latestState, setLatestState] = useState(null)
@@ -130,6 +162,7 @@ const Dashboard = () => {
   const lastUpdatedRaw = latestState?.data?.plctime || latestState?.data?.recordtime
   const lastUpdated = lastUpdatedRaw ? new Date(lastUpdatedRaw) : null
   const hasLastUpdated = Boolean(lastUpdated && !Number.isNaN(lastUpdated.getTime()))
+  const simplifiedMd = useMemo(() => buildSimplifiedMd(latestState?.data || {}), [latestState])
 
   return (
     <>
@@ -157,7 +190,7 @@ const Dashboard = () => {
           <CCard>
             <CCardHeader>Simplified RO System</CCardHeader>
             <CCardBody>
-              <SimplifiedROSystem />
+              <SimplifiedROSystem md={simplifiedMd} />
             </CCardBody>
           </CCard>
         </CCol>
