@@ -12,10 +12,10 @@ function browserStorage() {
 
 export function getBackendKey() {
   const storage = browserStorage()
-  if (!storage) return 'local'
+  if (!storage) return 'remote'
   const key = storage.getItem(STORAGE_KEY)
-  if (!key) return 'local'
-  return BACKEND_OPTIONS.some((opt) => opt.value === key) ? key : 'local'
+  if (!key) return 'remote'
+  return BACKEND_OPTIONS.some((opt) => opt.value === key) ? key : 'remote'
 }
 
 export function setBackendKey(value) {
