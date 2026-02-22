@@ -9,7 +9,7 @@ import {
     PressureTank, ROVessel, TextArray, Drain, KeyElementWrapper, Key,
     LiquidFillGaugeWrapper, DevToolsDisplay, AnimatedPipe, ThreeWayVariableValveIndicator,
     VariablePieValveIndicator, ThreeWayVariablePieValveIndicator
-} from "./index"
+} from "../components"
 
 import React from 'react';
 

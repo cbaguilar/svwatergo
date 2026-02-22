@@ -112,8 +112,24 @@ const Dashboard = () => {
     }
   }, [siteKey])
 
-  const roRecovery = latestState?.data?.ro_recovery
-  const hasRoRecovery = typeof roRecovery === 'number'
+  const dailyPermFlow = latestState?.data?.dailypermflow
+  const hasDailyPermFlow = typeof dailyPermFlow === 'number' && Number.isFinite(dailyPermFlow)
+  const stateCode = latestState?.data?.state
+  const stateLabel =
+    stateCode === 0
+      ? 'RO Off'
+      : stateCode === 1
+        ? 'E-Stop Pressed'
+        : stateCode === 2
+          ? 'RO Running'
+          : stateCode === 3
+            ? 'RO Standby'
+            : stateCode === 5 || stateCode === 8
+              ? 'Flushing'
+              : 'Unknown'
+  const lastUpdatedRaw = latestState?.data?.plctime || latestState?.data?.recordtime
+  const lastUpdated = lastUpdatedRaw ? new Date(lastUpdatedRaw) : null
+  const hasLastUpdated = Boolean(lastUpdated && !Number.isNaN(lastUpdated.getTime()))
 
   return (
     <>
@@ -153,29 +169,32 @@ const Dashboard = () => {
               {stateError && <div className="text-danger">{stateError}</div>}
               {!loadingState && !stateError && (
                 <>
-                  <div className="mb-3">
-                    <div className="text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                      Soft Sensor
+                  <div className="mb-4">
+                    <div className="mb-2 fw-semibold" style={{ fontSize: '1.25rem', lineHeight: 1.25 }}>
+                      Current State: {stateLabel}
                     </div>
-                    <div className="fw-semibold" style={{ fontSize: '1.1rem' }}>
-                      RO Recovery:{' '}
-                      {hasRoRecovery ? `${Number(roRecovery).toFixed(2)}%` : 'Unavailable (check feedflow/permeateflow)'}
+                    <div className="text-body-secondary" style={{ fontSize: '1.05rem', lineHeight: 1.25 }}>
+                      Last Updated:{' '}
+                      {hasLastUpdated
+                        ? lastUpdated.toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })
+                        : 'Unavailable'}
                     </div>
                   </div>
-                  <pre
-                    className="mb-0"
-                    style={{
-                      background: '#0f172a',
-                      color: '#e2e8f0',
-                      padding: '0.75rem',
-                      borderRadius: 8,
-                      fontSize: '0.8rem',
-                      maxHeight: 460,
-                      overflow: 'auto',
-                    }}
-                  >
-                    {JSON.stringify(latestState, null, 2)}
-                  </pre>
+                  <div className="text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                    Daily Permeate Flow
+                  </div>
+                  <div className="fw-semibold" style={{ fontSize: '1.1rem' }}>
+                    {hasDailyPermFlow
+                      ? `${Number(dailyPermFlow).toLocaleString(undefined, { maximumFractionDigits: 2 })} gallons`
+                      : 'Unavailable'}
+                  </div>
                 </>
               )}
             </CCardBody>

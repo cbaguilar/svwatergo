@@ -9,7 +9,7 @@ import {
     PressureTank, ROVessel, TextArray, Drain, KeyElementWrapper, Key,
     LiquidFillGaugeWrapper, DevToolsDisplay, AnimatedPipe,
     TreatmentSystem, VariablePieValveIndicator
-} from "./index"
+} from "../components"
 
 function FeedTankSystem({ md }) {
     return (

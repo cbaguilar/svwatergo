@@ -11,9 +11,9 @@ import {
 } from '@coreui/react'
 import { CChartLine } from '@coreui/react-chartjs'
 
-import BluerockSchematic from '../../components/detailed/BluerockSchematic'
-import SantaTeresaSchematic from '../../components/detailed/SantaTeresaSchematic'
-import PryorFarmsSchematic from '../../components/detailed/PryorFarmsSchematic'
+import BluerockSchematic from '../../components/detailed/schematics/BluerockSchematic'
+import SantaTeresaSchematic from '../../components/detailed/schematics/SantaTeresaSchematic'
+import PryorFarmsSchematic from '../../components/detailed/schematics/PryorFarmsSchematic'
 import { fetchStateRange } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 import { bitTables, decodeBitfield } from '../../utils/bitfields'
@@ -561,6 +561,14 @@ const DetailedDashboard = () => {
     if (value) return <CBadge color="success">{trueText}</CBadge>
     return <CBadge color="danger">{falseText}</CBadge>
   }
+  const valveOpenBadge = (value) => {
+    if (value) return <CBadge color="success">Open</CBadge>
+    return <CBadge color="danger">Closed</CBadge>
+  }
+  const av6ModeBadge = (isFillingProductTank) => {
+    if (isFillingProductTank) return <CBadge color="success">Fill Product Tank</CBadge>
+    return <CBadge color="warning">Divert Product</CBadge>
+  }
 
   const roStatusBadge = () => {
     const stateCode = Number.isInteger(data.state) ? data.state : null
@@ -577,13 +585,6 @@ const DetailedDashboard = () => {
   const decodedWarn1Bits = decodeBitfield(Number(data.warnword1 || 0), bitTables.warning2)
   const registerWarnings = Array.from(new Set([...decodedAlarmBits, ...decodedWarn0Bits, ...decodedWarn1Bits]))
   const activeWarningItems = stateError ? [...registerWarnings, `Data stream error: ${stateError}`] : registerWarnings
-  const totalROFlow = firstFiniteNumber(data.totalroflow)
-  const totalFeedOrInletFlow = firstFiniteNumber(data.totalfeedflow, data.totalinletflow)
-  const totalRecycleOrConcFlow = firstFiniteNumber(data.totalrecycleflow, data.totalconcflow)
-  const totalDeliveryFlow = firstFiniteNumber(data.totaldelflow)
-  const powerMeter = firstFiniteNumber(data.powermeter)
-  const totalFeedMetricKey = typeof data.totalfeedflow === 'number' ? 'totalfeedflow' : 'totalinletflow'
-  const totalRecycleMetricKey = typeof data.totalrecycleflow === 'number' ? 'totalrecycleflow' : 'totalconcflow'
   const activeMetricKeys = selectedMetricKeys.length ? selectedMetricKeys : [DEFAULT_METRIC_KEY]
   const metricPalette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6']
   const chartPoints = timelineRows
@@ -1037,46 +1038,54 @@ const DetailedDashboard = () => {
                 {boolBadge(data.lockout, 'Active', 'Inactive')}
               </div>
               <hr className="my-2" />
-              <div className="small text-body-secondary mb-2">Totalizers</div>
+              <div className="small text-body-secondary mb-2">Key Sensors</div>
               <div
                 className="d-flex justify-content-between align-items-center mb-2"
                 style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('totalroflow')}
+                onClick={() => selectTrendMetric('wellpumprun')}
               >
-                <span>Total RO Flow</span>
-                <span className="fw-semibold">{formatSnapshotNumber(totalROFlow)} gal</span>
+                <span>Well Pump</span>
+                {boolBadge(data.wellpumprun)}
               </div>
               <div
                 className="d-flex justify-content-between align-items-center mb-2"
                 style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric(totalFeedMetricKey)}
+                onClick={() => selectTrendMetric('feedpumprun')}
               >
-                <span>Total Feed/Inlet Flow</span>
-                <span className="fw-semibold">{formatSnapshotNumber(totalFeedOrInletFlow)} gal</span>
+                <span>P1 Feed Pump</span>
+                {boolBadge(data.feedpumprun)}
               </div>
               <div
                 className="d-flex justify-content-between align-items-center mb-2"
                 style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric(totalRecycleMetricKey)}
+                onClick={() => selectTrendMetric('inletrun')}
               >
-                <span>Total Recycle/Conc Flow</span>
-                <span className="fw-semibold">{formatSnapshotNumber(totalRecycleOrConcFlow)} gal</span>
+                <span>AV1 Inlet Valve</span>
+                {valveOpenBadge(data.inletrun)}
               </div>
               <div
                 className="d-flex justify-content-between align-items-center mb-2"
                 style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('totaldelflow')}
+                onClick={() => selectTrendMetric('ropumprun')}
               >
-                <span>Total Delivery Flow</span>
-                <span className="fw-semibold">{formatSnapshotNumber(totalDeliveryFlow)} gal</span>
+                <span>P2 RO Pump</span>
+                {boolBadge(data.ropumprun)}
               </div>
               <div
                 className="d-flex justify-content-between align-items-center mb-2"
                 style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('powermeter')}
+                onClick={() => selectTrendMetric('proddiversionrun')}
               >
-                <span>Power Meter</span>
-                <span className="fw-semibold">{formatSnapshotNumber(powerMeter)}</span>
+                <span>AV6 Product Diversion Valve</span>
+                {av6ModeBadge(data.proddiversionrun)}
+              </div>
+              <div
+                className="d-flex justify-content-between align-items-center mb-2"
+                style={{ cursor: 'pointer' }}
+                onClick={() => selectTrendMetric('deliveryrun')}
+              >
+                <span>P3 Delivery Pump</span>
+                {boolBadge(data.deliveryrun)}
               </div>
               <hr className="my-2" />
               <div className="small text-body-secondary mb-2">Alarm and Warning Registers</div>
