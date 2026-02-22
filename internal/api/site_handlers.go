@@ -17,6 +17,8 @@ type SiteAPI struct {
 	Meta *metadata.Store
 }
 
+const powerMeterTickKWh = 1.25 / 1000.0
+
 func NewSiteAPI(reg systemservice.Registry, meta *metadata.Store) *SiteAPI {
 	return &SiteAPI{Reg: reg, Meta: meta}
 }
@@ -164,11 +166,15 @@ func (a *SiteAPI) GetDailySummary(c *gin.Context) {
 
 	feedDelta, feedField := deltaFromTotalizers(baseline, current, "totalfeedflow", "totalinletflow")
 	permDelta, permField := deltaFromTotalizers(baseline, current, "totalroflow")
-	energyDelta, energyField := deltaFromTotalizers(baseline, current, "powermeter")
+	energyTicksDelta, energyField := deltaFromTotalizers(baseline, current, "powermeter")
+	energyKWh := -1.0
+	if energyTicksDelta >= 0 {
+		energyKWh = energyTicksDelta * powerMeterTickKWh
+	}
 
 	var specificEnergy any = nil
-	if permDelta > 0 && energyDelta >= 0 {
-		specificEnergy = util.Round2((energyDelta / permDelta) * 1000)
+	if permDelta > 0 && energyKWh >= 0 {
+		specificEnergy = util.Round2((energyKWh / permDelta) * 1000)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -189,7 +195,7 @@ func (a *SiteAPI) GetDailySummary(c *gin.Context) {
 		"data": gin.H{
 			"feed_gallons":                  nullableNumber(feedDelta),
 			"permeate_gallons":              nullableNumber(permDelta),
-			"energy_kwh":                    nullableNumber(energyDelta),
+			"energy_kwh":                    nullableNumber(energyKWh),
 			"specific_energy_kwh_per_1000g": specificEnergy,
 			"estimated_cost_per_1000g_usd":  nil, // external utility API integration TBD
 		},
