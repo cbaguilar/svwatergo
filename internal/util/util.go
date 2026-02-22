@@ -83,6 +83,12 @@ func NumberFromAny(v any) (float64, bool) {
 			return 0, false
 		}
 		return f, true
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return 0, false
+		}
+		return f, true
 	default:
 		return 0, false
 	}
