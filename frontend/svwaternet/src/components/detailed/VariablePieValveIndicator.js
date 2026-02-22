@@ -63,7 +63,7 @@ export function VariablePieValveIndicator({
         ? {
             cursor: 'pointer',
             outline: 'none',
-            filter: 'drop-shadow(0 0 4px rgba(255,32,32,0.95)) drop-shadow(0 0 10px rgba(255,0,0,0.90))',
+            filter: 'drop-shadow(0 0 4px rgba(255,230,0,0.98)) drop-shadow(0 0 11px rgba(255,200,0,0.95))',
         }
         : { cursor: 'pointer', outline: 'none' };
     let PO = percentOpen / 100;
