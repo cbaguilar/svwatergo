@@ -68,6 +68,7 @@ const Dashboard = () => {
   const [stateError, setStateError] = useState('')
   const [dailySummary, setDailySummary] = useState(null)
   const [dailySummaryError, setDailySummaryError] = useState('')
+  const [loadingDailySummary, setLoadingDailySummary] = useState(true)
 
   const systemDetails = {
     Bluerock: {
@@ -115,6 +116,7 @@ const Dashboard = () => {
     const controller = new AbortController()
     let active = true
     setDailySummaryError('')
+    setLoadingDailySummary(true)
     fetchDailySummary(siteKey, { signal: controller.signal })
       .then((payload) => {
         if (!active) return
@@ -124,6 +126,10 @@ const Dashboard = () => {
         if (!active || err?.name === 'AbortError') return
         setDailySummary(null)
         setDailySummaryError(err?.message || 'Failed to load daily summary')
+      })
+      .finally(() => {
+        if (!active) return
+        setLoadingDailySummary(false)
       })
     return () => {
       active = false
@@ -205,8 +211,6 @@ const Dashboard = () => {
     }
   }, [siteKey])
 
-  const dailyPermFlow = latestState?.data?.dailypermflow
-  const hasDailyPermFlow = typeof dailyPermFlow === 'number' && Number.isFinite(dailyPermFlow)
   const stateCode = latestState?.data?.state
   const stateLabel =
     stateCode === 0
@@ -227,18 +231,30 @@ const Dashboard = () => {
   const summaryData = dailySummary?.data || {}
   const fmtNum = (value, suffix = '') =>
     typeof value === 'number' && Number.isFinite(value)
-      ? `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix ? ` ${suffix}` : ''}`
-      : 'Unavailable'
+        ? `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix ? ` ${suffix}` : ''}`
+        : 'Unavailable'
+  const fmtCostPer1000 = () =>
+    summaryData.estimated_cost_per_1000g_usd == null
+        ? 'TBD'
+        : fmtNum(summaryData.estimated_cost_per_1000g_usd, 'USD')
+  const metricValueCell = (text) =>
+    loadingDailySummary ? (
+      <span
+        aria-hidden="true"
+        style={{
+          display: 'inline-block',
+          width: 120,
+          height: 18,
+          borderRadius: 4,
+          background: 'rgba(120,120,120,0.18)',
+        }}
+      />
+    ) : (
+      text
+    )
 
   return (
     <>
-      <CRow className="mb-4">
-        <CCol>
-          <h2 className="mb-1">Home</h2>
-          <div className="text-body-secondary">Basic System Overview</div>
-        </CCol>
-      </CRow>
-
       <CRow className="mb-4">
         <CCol>
           <CCard>
@@ -286,18 +302,15 @@ const Dashboard = () => {
                         : 'Unavailable'}
                     </div>
                   </div>
-                  <div className="text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                    Daily Permeate Flow
-                  </div>
-                  <div className="fw-semibold" style={{ fontSize: '1.1rem' }}>
-                    {hasDailyPermFlow
-                      ? `${Number(dailyPermFlow).toLocaleString(undefined, { maximumFractionDigits: 2 })} gallons`
-                      : 'Unavailable'}
-                  </div>
-                  <hr className="my-4" />
+                  <hr className="my-3" />
                   <div className="text-body-secondary mb-2" style={{ fontSize: '0.85rem' }}>
                     Daily Operational Metrics (Midnight Pacific to now)
                   </div>
+                  {loadingDailySummary && (
+                    <div className="text-body-secondary mb-2" style={{ fontSize: '0.9rem' }}>
+                      Loading daily operational metrics...
+                    </div>
+                  )}
                   {dailySummaryError && (
                     <div className="text-danger mb-2" style={{ fontSize: '0.9rem' }}>
                       {dailySummaryError}
@@ -305,29 +318,27 @@ const Dashboard = () => {
                   )}
                   <div className="d-flex justify-content-between mb-2">
                     <span className="text-body-secondary">RO Feed Inflow</span>
-                    <span className="fw-semibold">{fmtNum(summaryData.feed_gallons, 'gallons')}</span>
+                    <span className="fw-semibold">{metricValueCell(fmtNum(summaryData.feed_gallons, 'gallons'))}</span>
                   </div>
                   <div className="d-flex justify-content-between mb-2">
                     <span className="text-body-secondary">Permeate Production</span>
-                    <span className="fw-semibold">{fmtNum(summaryData.permeate_gallons, 'gallons')}</span>
+                    <span className="fw-semibold">
+                      {metricValueCell(fmtNum(summaryData.permeate_gallons, 'gallons'))}
+                    </span>
                   </div>
                   <div className="d-flex justify-content-between mb-2">
                     <span className="text-body-secondary">Energy Usage</span>
-                    <span className="fw-semibold">{fmtNum(summaryData.energy_kwh, 'kWh')}</span>
+                    <span className="fw-semibold">{metricValueCell(fmtNum(summaryData.energy_kwh, 'kWh'))}</span>
                   </div>
                   <div className="d-flex justify-content-between mb-2">
                     <span className="text-body-secondary">Specific Energy</span>
                     <span className="fw-semibold">
-                      {fmtNum(summaryData.specific_energy_kwh_per_1000g, 'kWh/1000-gallon')}
+                      {metricValueCell(fmtNum(summaryData.specific_energy_kwh_per_1000g, 'kWh/1000-gallon'))}
                     </span>
                   </div>
                   <div className="d-flex justify-content-between">
                     <span className="text-body-secondary">Estimated Cost / 1000 gal</span>
-                    <span className="fw-semibold">
-                      {summaryData.estimated_cost_per_1000g_usd == null
-                        ? 'TBD'
-                        : fmtNum(summaryData.estimated_cost_per_1000g_usd, 'USD')}
-                    </span>
+                    <span className="fw-semibold">{metricValueCell(fmtCostPer1000())}</span>
                   </div>
                 </>
               )}
