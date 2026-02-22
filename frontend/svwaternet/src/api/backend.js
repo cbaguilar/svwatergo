@@ -2,7 +2,7 @@ const STORAGE_KEY = 'svwaternet_api_backend'
 
 export const BACKEND_OPTIONS = [
   { value: 'local', label: 'Localhost', baseUrl: 'http://localhost:8080' },
-  { value: 'remote', label: 'svwaternet.org', baseUrl: 'http://svwaternet.org:8080' },
+  { value: 'remote', label: 'svwaternet.org', baseUrl: 'https://svwaternet.org' },
 ]
 
 function browserStorage() {
