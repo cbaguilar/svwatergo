@@ -312,6 +312,7 @@ const DetailedDashboard = () => {
   const [focusedTs, setFocusedTs] = useState(null)
   const [hoverTs, setHoverTs] = useState(null)
   const [hoverRow, setHoverRow] = useState(null)
+  const [hoverPointIndex, setHoverPointIndex] = useState(-1)
   const [frozenTs, setFrozenTs] = useState(null)
   const [timePreset, setTimePreset] = useState('1h')
   const initialBounds = rangeBoundsFromPreset('1h')
@@ -329,6 +330,8 @@ const DetailedDashboard = () => {
   const [dragSelect, setDragSelect] = useState(null)
   const chartRef = useRef(null)
   const suppressNextChartClickRef = useRef(false)
+  const chartPointsRef = useRef([])
+  const timelineRowsRef = useRef([])
 
   const siteKey =
     selectedSystem === 'Bluerock'
@@ -372,14 +375,7 @@ const DetailedDashboard = () => {
       }
 
       setIsLivePlaying(parsed.live)
-      if (parsed.live) {
-        setFocusedTs(null)
-      } else if (parsed.focusTs) {
-        setFocusedTs(parsed.focusTs)
-        setIsLivePlaying(false)
-      } else {
-        setFocusedTs(null)
-      }
+      setFocusedTs(null)
     }
 
     applyFromURL()
@@ -406,11 +402,8 @@ const DetailedDashboard = () => {
     if (activeRange.kind === 'preset' && activeRange.preset) {
       params.set('preset', activeRange.preset)
     }
-    if (!isLivePlaying && focusedTs) {
-      params.set('focus', new Date(focusedTs).toISOString())
-    }
     pushHashParams(params)
-  }, [urlStateReady, siteKey, isLivePlaying, activeRange, selectedMetricKeys, focusedTs])
+  }, [urlStateReady, siteKey, isLivePlaying, activeRange, selectedMetricKeys])
 
   const Schematic =
     selectedSystem === 'Bluerock'
@@ -420,7 +413,7 @@ const DetailedDashboard = () => {
         : SantaTeresaSchematic
 
   const latestRow = timelineRows.length ? timelineRows[timelineRows.length - 1] : null
-  const activeTs = hoverTs ?? focusedTs ?? (isLivePlaying ? toTs(latestRow) : frozenTs)
+  const activeTs = hoverTs ?? (isLivePlaying ? toTs(latestRow) : frozenTs)
   const activeRow = hoverRow || (activeTs ? nearestRow(timelineRows, activeTs) : latestRow)
   const data = activeRow || {}
   const selectedMetricKey = selectedMetricKeys[0] || DEFAULT_METRIC_KEY
@@ -469,6 +462,7 @@ const DetailedDashboard = () => {
         setFocusedTs(null)
         setHoverTs(null)
         setHoverRow(null)
+        setHoverPointIndex(-1)
         setFrozenTs(rows.length ? toTs(rows[rows.length - 1]) : null)
         setStateError('')
       })
@@ -587,9 +581,17 @@ const DetailedDashboard = () => {
   const activeWarningItems = stateError ? [...registerWarnings, `Data stream error: ${stateError}`] : registerWarnings
   const activeMetricKeys = selectedMetricKeys.length ? selectedMetricKeys : [DEFAULT_METRIC_KEY]
   const metricPalette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6']
+  const activeRangeStartMs = new Date(activeRange.start).getTime()
+  const activeRangeEndMs = new Date(activeRange.end).getTime()
+  const shouldRestrictChartToActiveRange =
+    !isLivePlaying && Number.isFinite(activeRangeStartMs) && Number.isFinite(activeRangeEndMs)
   const chartPoints = timelineRows
     .map((row, rowIndex) => ({ ts: toTs(row), row, rowIndex }))
     .filter((p) => p.ts > 0)
+    .filter((p) => {
+      if (!shouldRestrictChartToActiveRange) return true
+      return p.ts >= activeRangeStartMs && p.ts <= activeRangeEndMs
+    })
   const chartGapThresholdMs = useMemo(() => {
     if (chartPoints.length < 3) return 5 * 60 * 1000
     const deltas = []
@@ -606,8 +608,12 @@ const DetailedDashboard = () => {
     () => new Map(chartPoints.map((point, pointIndex) => [pointIndex, point.rowIndex])),
     [chartPoints],
   )
-  const focusedIndex = focusedTs ? chartPoints.findIndex((p) => p.ts === focusedTs) : -1
-  const hoverIndex = hoverTs ? chartPoints.findIndex((p) => p.ts === hoverTs) : -1
+  chartPointsRef.current = chartPoints
+  timelineRowsRef.current = timelineRows
+  const focusedIndex = -1
+  const hoverIndex = hoverPointIndex >= 0 && hoverPointIndex < chartPoints.length ? hoverPointIndex : -1
+  const hoveredPoint = hoverIndex >= 0 ? chartPoints[hoverIndex] : null
+  const hoveredRowIndex = hoverIndex >= 0 ? chartPointToRowIndex.get(hoverIndex) : null
   const hasBooleanMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) === 'boolean')
   const hasNumericMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) !== 'boolean')
 
@@ -635,10 +641,10 @@ const DetailedDashboard = () => {
         backgroundColor: fillColor,
         pointHoverRadius: datasetIdx === 0 ? 6 : 4,
         pointBackgroundColor: chartPoints.map((_p, idx) =>
-          idx === focusedIndex ? '#f59e0b' : idx === hoverIndex ? '#a855f7' : lineColor,
+          idx === focusedIndex ? '#f59e0b' : idx === hoverIndex ? lineColor : lineColor,
         ),
         pointBorderColor: chartPoints.map((_p, idx) =>
-          idx === focusedIndex ? '#f59e0b' : idx === hoverIndex ? '#a855f7' : 'transparent',
+          idx === focusedIndex ? '#f59e0b' : idx === hoverIndex ? lineColor : 'transparent',
         ),
         pointRadius: chartPoints.map((_p, idx) => (idx === focusedIndex || idx === hoverIndex ? 4 : 0)),
         borderWidth: 3,
@@ -721,15 +727,7 @@ const DetailedDashboard = () => {
         return
       }
       if (!elements?.length) return
-      const idx = elements[0].index
-      const rowIndex = chartPointToRowIndex.get(idx)
-      if (!Number.isInteger(rowIndex)) return
-      const row = timelineRows[rowIndex]
-      if (!row) return
-      setHoverTs(null)
-      setHoverRow(null)
-      setFocusedTs(toTs(row))
-      setIsLivePlaying(false)
+      // Click-to-focus disabled. Hover preview is the only point inspection mode.
     },
     onHover: (event, elements, chart) => {
       const resolvedElements =
@@ -737,23 +735,20 @@ const DetailedDashboard = () => {
       if (!resolvedElements.length) {
         setHoverTs(null)
         setHoverRow(null)
+        setHoverPointIndex(-1)
         return
       }
       const idx = resolvedElements[0].index
-      const rowIndex = chartPointToRowIndex.get(idx)
-      if (!Number.isInteger(rowIndex)) {
+      const point = chartPointsRef.current[idx]
+      if (!point?.row) {
         setHoverTs(null)
         setHoverRow(null)
+        setHoverPointIndex(-1)
         return
       }
-      const row = timelineRows[rowIndex]
-      if (!row) {
-        setHoverTs(null)
-        setHoverRow(null)
-        return
-      }
-      setHoverTs(toTs(row))
-      setHoverRow(row)
+      setHoverPointIndex(idx)
+      setHoverTs(point.ts)
+      setHoverRow(point.row)
     },
   }
 
@@ -821,6 +816,9 @@ const DetailedDashboard = () => {
     setRangeEndInput(isoToLocalInputValue(endISO))
     setIsLivePlaying(false)
     setFocusedTs(null)
+    setHoverTs(null)
+    setHoverRow(null)
+    setHoverPointIndex(-1)
     setFrozenTs(endTs)
     suppressNextChartClickRef.current = true
   }
@@ -854,6 +852,7 @@ const DetailedDashboard = () => {
     setFocusedTs(null)
     setHoverTs(null)
     setHoverRow(null)
+    setHoverPointIndex(-1)
     setFrozenTs(new Date(end).getTime())
     setIsLivePlaying(false)
   }
@@ -896,6 +895,7 @@ const DetailedDashboard = () => {
     setFocusedTs(null)
     setHoverTs(null)
     setHoverRow(null)
+    setHoverPointIndex(-1)
     setFrozenTs(nextEnd)
     setIsLivePlaying(false)
   }
@@ -956,7 +956,7 @@ const DetailedDashboard = () => {
                 +{selectedMetricKeys.length - 1} compared
               </span>
             )}
-            {!focusedTs && isLivePlaying && (
+            {isLivePlaying && (
               <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
                 Following latest
               </span>
@@ -964,30 +964,10 @@ const DetailedDashboard = () => {
             <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
               Ctrl/Cmd+click sensors to compare
             </span>
-            {focusedTs && (
-              <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                Focused at {new Date(focusedTs).toLocaleString()}
-              </span>
-            )}
-            {hoverTs && !focusedTs && (
+            {hoverTs && (
               <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
                 Preview at {new Date(hoverTs).toLocaleString()}
               </span>
-            )}
-            {focusedTs && (
-              <CButton
-                color="success"
-                variant="outline"
-                size="sm"
-                className="ms-2"
-                onClick={() => {
-                  setFocusedTs(null)
-                  setFrozenTs(null)
-                  setIsLivePlaying(true)
-                }}
-              >
-                Back to Live
-              </CButton>
             )}
             <CButton
               color="secondary"
@@ -1035,6 +1015,45 @@ const DetailedDashboard = () => {
                 </div>
               )}
             </div>
+            <details className="mt-2">
+              <summary className="small text-body-secondary" style={{ cursor: 'pointer' }}>
+                Hover Debug
+              </summary>
+              <pre
+                className="small mt-2 mb-0 p-2 border rounded bg-body-tertiary"
+                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+              >
+                {JSON.stringify(
+                  {
+                    siteKey,
+                    isLivePlaying,
+                    streamState,
+                    activeRange,
+                    selectedMetricKeys,
+                    hoverPointIndex,
+                    hoverIndex,
+                    hoveredRowIndex,
+                    hoverTs,
+                    hoverTsISO: hoverTs ? new Date(hoverTs).toISOString() : null,
+                    hoveredPointTs: hoveredPoint?.ts ?? null,
+                    hoveredPointTsISO: hoveredPoint?.ts ? new Date(hoveredPoint.ts).toISOString() : null,
+                    hoveredPointRowIndex: hoveredPoint?.rowIndex ?? null,
+                    hoverRowTs: hoverRow ? toTs(hoverRow) : null,
+                    hoverRowTsISO: hoverRow ? new Date(toTs(hoverRow)).toISOString() : null,
+                    activeTs,
+                    activeTsISO: activeTs ? new Date(activeTs).toISOString() : null,
+                    latestRowTs: latestRow ? toTs(latestRow) : null,
+                    latestRowTsISO: latestRow ? new Date(toTs(latestRow)).toISOString() : null,
+                    frozenTs,
+                    frozenTsISO: frozenTs ? new Date(frozenTs).toISOString() : null,
+                    chartPointsCount: chartPoints.length,
+                    timelineRowsCount: timelineRows.length,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </details>
           </CCardBody>
         </CCard>
       </CCol>

@@ -239,9 +239,9 @@ func (a *SiteAPI) GetNextStateForecast(c *gin.Context) {
 	if targetPct > 100 {
 		targetPct = 100
 	}
-	capacityGal := qfloat(c.Query("product_tank_capacity_gal"), defaultForecastProductTankCapacityGal)
+	capacityGal := qfloat(c.Query("product_tank_capacity_gal"), forecastProductTankCapacityGallons(site))
 	if capacityGal <= 0 {
-		capacityGal = defaultForecastProductTankCapacityGal
+		capacityGal = forecastProductTankCapacityGallons(site)
 	}
 
 	asOf := rowTimestamp(latest)
@@ -538,6 +538,17 @@ func qfloat(s string, def float64) float64 {
 		return v
 	}
 	return def
+}
+
+func forecastProductTankCapacityGallons(site string) float64 {
+	switch strings.ToLower(strings.TrimSpace(site)) {
+	case "bluerock":
+		return 5000.0
+	case "santateresa", "pryorfarm":
+		return 3653.6
+	default:
+		return defaultForecastProductTankCapacityGal
+	}
 }
 
 func parseSoftInclude(s string) bool {
