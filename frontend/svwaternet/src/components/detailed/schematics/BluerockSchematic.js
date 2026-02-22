@@ -329,6 +329,7 @@ function ROSystem({ md }) {
             />
             <SensorIndicator
                 x="933" y="508" line="left"
+                textDir="up"
                 sensorKey="concentratepressure" md={md}
             />
             <VariablePieValveIndicator

@@ -66,7 +66,7 @@ const SENSOR_META = {
   permtds: { label: 'Permeate Conductivity', unit: 'uS', type: 'number' },
   feedtds: { label: 'Feed Conductivity', unit: 'uS', type: 'number' },
   permnitrate: { label: 'Permeate Nitrate', unit: 'mg/L', type: 'number' },
-  permtemp: { label: 'Permeate Temperature', unit: 'C', type: 'number' },
+  permtemp: { label: 'Permeate Temperature', unit: '°C', type: 'number' },
   inletpressure: { label: 'Inlet Pressure', unit: 'PSI', type: 'number' },
   feedpressure: { label: 'Feed Pressure', unit: 'PSI', type: 'number' },
   ropressure: { label: 'RO Pressure', unit: 'PSI', type: 'number' },
