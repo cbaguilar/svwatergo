@@ -20,6 +20,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/svwaternet
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       S3_BUCKET: ${{ vars.S3_BUCKET }}
@@ -33,17 +36,13 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: frontend/svwaternet/package-lock.json
 
       - name: Install dependencies
-        run: |
-          cd frontend/svwaternet
-          npm ci
+        run: npm ci
 
       - name: Build
-        run: |
-          cd frontend/svwaternet
-          npm run build
+        run: npm run build
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -58,14 +57,14 @@ jobs:
 
       - name: Upload assets (long cache)
         run: |
-          aws s3 sync ./frontend/svwaternet/build "s3://$S3_BUCKET" \
+          aws s3 sync ./build "s3://$S3_BUCKET" \
             --delete \
             --exclude "index.html" \
             --cache-control "public,max-age=31536000,immutable"
 
       - name: Upload index.html (no cache)
         run: |
-          aws s3 cp ./frontend/svwaternet/build/index.html "s3://$S3_BUCKET/index.html" \
+          aws s3 cp ./build/index.html "s3://$S3_BUCKET/index.html" \
             --cache-control "no-cache,no-store,must-revalidate" \
             --content-type "text/html; charset=utf-8"
 
