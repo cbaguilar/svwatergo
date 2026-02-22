@@ -40,9 +40,10 @@ export function ThreeWayValveIndicator({
     const interactiveStyle = isSelected
         ? {
             cursor: 'pointer',
+            outline: 'none',
             filter: 'drop-shadow(0 0 4px rgba(255,32,32,0.95)) drop-shadow(0 0 10px rgba(255,0,0,0.90))',
         }
-        : { cursor: 'pointer' };
+        : { cursor: 'pointer', outline: 'none' };
     const handleActivate = (event) => {
         on_click(event);
     };
