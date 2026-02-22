@@ -9,6 +9,7 @@ import {
   CDropdownMenu,
   CDropdownToggle,
   CFormInput,
+  CFormSelect,
   CSpinner,
 } from '@coreui/react'
 
@@ -48,38 +49,69 @@ const PlaybackTimePicker = ({
 
   return (
     <div className={`d-flex align-items-center gap-2 ${embedded ? 'flex-nowrap' : 'flex-wrap'}`}>
-      <CDropdown>
-        <CDropdownToggle color="light" size="sm" className="text-start" style={{ minWidth: embedded ? 170 : 220 }}>
-          {activeRangeKind === 'preset' ? presets[timePreset]?.label || activeRangeLabel : activeRangeLabel}
-        </CDropdownToggle>
-        <CDropdownMenu style={{ minWidth: 320 }}>
-          {Object.entries(presets).map(([value, cfg]) => (
-            <CDropdownItem key={value} active={timePreset === value} onClick={() => onSelectPreset(value)}>
-              {cfg.label}
-            </CDropdownItem>
-          ))}
-          <div className="dropdown-divider" />
-          <div className="px-3 py-2">
-            <div className="small text-body-secondary mb-1">Start</div>
-            <CFormInput
-              size="sm"
-              type="datetime-local"
-              value={rangeStartInput}
-              onChange={(e) => onRangeStartChange(e.target.value)}
-            />
-            <div className="small text-body-secondary mb-1 mt-2">End</div>
-            <CFormInput
-              size="sm"
-              type="datetime-local"
-              value={rangeEndInput}
-              onChange={(e) => onRangeEndChange(e.target.value)}
-            />
-            <CButton color="secondary" variant="outline" size="sm" className="mt-2 w-100" onClick={onApplyCustomRange}>
-              Apply Range
-            </CButton>
-          </div>
-        </CDropdownMenu>
-      </CDropdown>
+      <>
+        {embedded && (
+          <CFormSelect
+            size="sm"
+            className="d-inline-block d-lg-none"
+            style={{ minWidth: 170 }}
+            aria-label="Time range preset"
+            value={activeRangeKind === 'preset' ? timePreset : ''}
+            onChange={(e) => {
+              if (e.target.value) onSelectPreset(e.target.value)
+            }}
+          >
+            {Object.entries(presets).map(([value, cfg]) => (
+              <option key={value} value={value}>
+                {cfg.label}
+              </option>
+            ))}
+          </CFormSelect>
+        )}
+        <CDropdown>
+          <CDropdownToggle
+            color="light"
+            size="sm"
+            className={`text-start ${embedded ? 'd-none d-lg-inline-flex' : ''}`}
+            style={{ minWidth: embedded ? 170 : 220 }}
+          >
+            {activeRangeKind === 'preset' ? presets[timePreset]?.label || activeRangeLabel : activeRangeLabel}
+          </CDropdownToggle>
+          <CDropdownMenu style={{ minWidth: 320 }}>
+            {Object.entries(presets).map(([value, cfg]) => (
+              <CDropdownItem key={value} active={timePreset === value} onClick={() => onSelectPreset(value)}>
+                {cfg.label}
+              </CDropdownItem>
+            ))}
+            <div className="dropdown-divider" />
+            <div className="px-3 py-2">
+              <div className="small text-body-secondary mb-1">Start</div>
+              <CFormInput
+                size="sm"
+                type="datetime-local"
+                value={rangeStartInput}
+                onChange={(e) => onRangeStartChange(e.target.value)}
+              />
+              <div className="small text-body-secondary mb-1 mt-2">End</div>
+              <CFormInput
+                size="sm"
+                type="datetime-local"
+                value={rangeEndInput}
+                onChange={(e) => onRangeEndChange(e.target.value)}
+              />
+              <CButton
+                color="secondary"
+                variant="outline"
+                size="sm"
+                className="mt-2 w-100"
+                onClick={onApplyCustomRange}
+              >
+                Apply Range
+              </CButton>
+            </div>
+          </CDropdownMenu>
+        </CDropdown>
+      </>
 
       <div className="d-flex align-items-center">
         <CButton

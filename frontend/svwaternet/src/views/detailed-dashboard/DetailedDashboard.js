@@ -658,6 +658,7 @@ const DetailedDashboard = () => {
     scales: {
       x: {
         type: 'linear',
+        bounds: 'data',
         grid: { color: 'rgba(120,120,120,0.15)' },
         ticks: {
           maxTicksLimit: 8,

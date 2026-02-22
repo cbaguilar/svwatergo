@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from './backend'
+import { getAuthToken } from '../auth/session'
 
 function toWsUrl(path) {
   const apiBaseUrl = getApiBaseUrl()
@@ -13,7 +14,11 @@ function toWsUrl(path) {
 
 export function subscribeLatestState(site, { onMessage, onError, onOpen, soft = true } = {}) {
   const safeSite = encodeURIComponent(site)
-  const query = soft ? '?soft=include' : ''
+  const params = new URLSearchParams()
+  if (soft) params.set('soft', 'include')
+  const token = getAuthToken()
+  if (token) params.set('access_token', token)
+  const query = params.toString() ? `?${params.toString()}` : ''
   const ws = new WebSocket(toWsUrl(`/api/v1/sites/${safeSite}/state/stream${query}`))
 
   ws.onopen = () => {

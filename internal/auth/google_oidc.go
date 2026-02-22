@@ -226,15 +226,10 @@ type cachedToken struct {
 var tokenCache sync.Map
 
 func (a *Auth) verifyRequest(r *http.Request) (Identity, error) {
-	authz := r.Header.Get("Authorization")
-	if authz == "" {
-		return Identity{}, fmt.Errorf("missing Authorization header")
+	token, err := bearerTokenFromRequest(r)
+	if err != nil {
+		return Identity{}, err
 	}
-	parts := strings.SplitN(authz, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return Identity{}, fmt.Errorf("invalid Authorization header")
-	}
-	token := strings.TrimSpace(parts[1])
 	if token == "" {
 		return Identity{}, fmt.Errorf("empty bearer token")
 	}
@@ -269,6 +264,26 @@ func (a *Auth) verifyRequest(r *http.Request) (Identity, error) {
 	}
 	tokenCache.Store(token, cachedToken{id: id, until: exp})
 	return id, nil
+}
+
+func bearerTokenFromRequest(r *http.Request) (string, error) {
+	authz := r.Header.Get("Authorization")
+	if authz != "" {
+		parts := strings.SplitN(authz, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			return "", fmt.Errorf("invalid Authorization header")
+		}
+		return strings.TrimSpace(parts[1]), nil
+	}
+
+	// Browser WebSocket clients cannot set Authorization headers during the handshake.
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		if token := strings.TrimSpace(r.URL.Query().Get("access_token")); token != "" {
+			return token, nil
+		}
+	}
+
+	return "", fmt.Errorf("missing Authorization header")
 }
 
 func (a *Auth) ensureAllowed(id Identity) error {
