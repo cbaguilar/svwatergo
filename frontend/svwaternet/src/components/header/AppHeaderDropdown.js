@@ -14,10 +14,10 @@ import avatar8 from './../../assets/images/avatars/8.jpg'
 
 const AppHeaderDropdown = () => {
   return (
-    <CDropdown variant="nav-item">
-      <CDropdownToggle placement="bottom-end" className="py-0 pe-0" caret={false}>
-        <CAvatar src={avatar8} size="md" />
-        <span className="ms-2 d-none d-md-inline">Christian Aguilar</span>
+    <CDropdown variant="nav-item" className="app-header-user-dropdown">
+      <CDropdownToggle placement="bottom-end" className="py-0 pe-0 app-header-user-toggle" caret={false}>
+        <CAvatar src={avatar8} size="sm" />
+        <span className="ms-2 d-none d-lg-inline app-header-user-name">Christian Aguilar</span>
       </CDropdownToggle>
       <CDropdownMenu className="pt-0" placement="bottom-end">
         <CDropdownItem href="#">
