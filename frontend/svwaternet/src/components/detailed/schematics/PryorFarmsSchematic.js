@@ -254,8 +254,8 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="902" y="505.5"
                 innerText="PT4"
-                outerText="999 PSI"
-                textDir="up"
+                sensorKey="concentratepressure" md={md}
+                textDir="left"
                 on_click={md.get("concentratepressure", "on_click")} />
             <VariablePieValveIndicator
                 x="812" y="560.5"
