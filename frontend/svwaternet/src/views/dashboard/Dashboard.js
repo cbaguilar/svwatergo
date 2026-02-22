@@ -5,6 +5,30 @@ import SimplifiedROSystem from '../../components/SimplifiedROSystem'
 import { fetchLatestState } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 
+const DASHBOARD_LATEST_CACHE_PREFIX = 'svwn_dashboard_latest_v1:'
+
+function readDashboardLatestCache(siteKey) {
+  if (typeof window === 'undefined' || !siteKey) return null
+  try {
+    const raw = window.sessionStorage.getItem(`${DASHBOARD_LATEST_CACHE_PREFIX}${siteKey}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || !parsed.data || typeof parsed.data !== 'object') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeDashboardLatestCache(siteKey, payload) {
+  if (typeof window === 'undefined' || !siteKey || !payload) return
+  try {
+    window.sessionStorage.setItem(`${DASHBOARD_LATEST_CACHE_PREFIX}${siteKey}`, JSON.stringify(payload))
+  } catch {
+    // ignore storage errors (quota/private mode)
+  }
+}
+
 const SIMPLIFIED_ABBR = {
   feedtanklevel: 'LT1',
   prodtanklevel: 'LT2',
@@ -75,15 +99,28 @@ const Dashboard = () => {
   }, [selectedSystem])
 
   useEffect(() => {
+    const cached = readDashboardLatestCache(siteKey)
+    if (cached) {
+      setLatestState(cached)
+      setLoadingState(false)
+      setStateError('')
+    } else {
+      setLatestState(null)
+    }
+  }, [siteKey])
+
+  useEffect(() => {
     const controller = new AbortController()
     let active = true
+    const hasCached = Boolean(readDashboardLatestCache(siteKey))
 
-    setLoadingState(true)
+    setLoadingState(!hasCached)
     setStateError('')
     fetchLatestState(siteKey, { signal: controller.signal, soft: true })
       .then((payload) => {
         if (!active) return
         setLatestState(payload)
+        writeDashboardLatestCache(siteKey, payload)
       })
       .catch((err) => {
         if (!active || err?.name === 'AbortError') return
@@ -113,10 +150,12 @@ const Dashboard = () => {
         onMessage: (payload) => {
           if (!active) return
           if (payload?.type === 'state.latest') {
-            setLatestState({
+            const next = {
               data: payload.data || {},
               meta: payload.meta || {},
-            })
+            }
+            setLatestState(next)
+            writeDashboardLatestCache(siteKey, next)
             setStateError('')
             setLoadingState(false)
           }
