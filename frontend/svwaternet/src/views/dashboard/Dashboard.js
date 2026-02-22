@@ -306,13 +306,13 @@ const Dashboard = () => {
       ? Math.max(0, forecastTransition.getTime() - countdownNowMs)
       : null
   const forecastRunning = Boolean(forecastData.is_ro_running)
-  const formatCountdownHoursMinutes = (ms) => {
+  const formatCountdownHMS = (ms) => {
     if (typeof ms !== 'number' || !Number.isFinite(ms)) return 'Unavailable'
-    const totalMinutes = Math.max(0, Math.ceil(ms / 60000))
-    const hours = Math.floor(totalMinutes / 60)
-    const minutes = totalMinutes % 60
-    if (hours <= 0) return `${minutes}m`
-    return `${hours}h ${minutes}m`
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    return `${hours}h ${minutes}m ${seconds}s`
   }
 
   return (
@@ -367,7 +367,7 @@ const Dashboard = () => {
                         ) : forecastRunning ? (
                           <>
                             <span className="text-body-secondary">Estimated remaining runtime: </span>
-                            <span className="fw-semibold">{formatCountdownHoursMinutes(forecastRemainingMs)}</span>
+                            <span className="fw-semibold">{formatCountdownHMS(forecastRemainingMs)}</span>
                           </>
                         ) : null}
                       </div>
