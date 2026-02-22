@@ -107,13 +107,21 @@ body {
 }
 
 .detailed-schematic-body {
-  min-height: 470px;
+  min-height: 440px;
   display: flex;
   align-items: center;
   justify-content: center;
   background-color: var(--cui-tertiary-bg);
   border-radius: calc(var(--cui-card-border-radius) - 1px);
   color-scheme: light dark;
+}
+
+.sensor-status-card-body {
+  font-size: 0.92rem;
+}
+
+.sensor-status-card-body .small {
+  font-size: 0.8rem !important;
 }
 
 @include color-mode(dark) {

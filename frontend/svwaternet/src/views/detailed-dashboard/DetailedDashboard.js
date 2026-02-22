@@ -311,6 +311,7 @@ const DetailedDashboard = () => {
   const [isLivePlaying, setIsLivePlaying] = useState(true)
   const [focusedTs, setFocusedTs] = useState(null)
   const [hoverTs, setHoverTs] = useState(null)
+  const [hoverRow, setHoverRow] = useState(null)
   const [frozenTs, setFrozenTs] = useState(null)
   const [timePreset, setTimePreset] = useState('1h')
   const initialBounds = rangeBoundsFromPreset('1h')
@@ -323,6 +324,7 @@ const DetailedDashboard = () => {
     end: initialBounds.end,
   })
   const [selectedMetricKeys, setSelectedMetricKeys] = useState([DEFAULT_METRIC_KEY])
+  const [isTrendExpanded, setIsTrendExpanded] = useState(false)
   const [urlStateReady, setURLStateReady] = useState(false)
   const [dragSelect, setDragSelect] = useState(null)
   const chartRef = useRef(null)
@@ -419,7 +421,7 @@ const DetailedDashboard = () => {
 
   const latestRow = timelineRows.length ? timelineRows[timelineRows.length - 1] : null
   const activeTs = hoverTs ?? focusedTs ?? (isLivePlaying ? toTs(latestRow) : frozenTs)
-  const activeRow = activeTs ? nearestRow(timelineRows, activeTs) : latestRow
+  const activeRow = hoverRow || (activeTs ? nearestRow(timelineRows, activeTs) : latestRow)
   const data = activeRow || {}
   const selectedMetricKey = selectedMetricKeys[0] || DEFAULT_METRIC_KEY
   const handleSelectSensor = (key, event) => {
@@ -465,6 +467,8 @@ const DetailedDashboard = () => {
         const rows = Array.isArray(payload?.data) ? payload.data : []
         setTimelineRows(rows)
         setFocusedTs(null)
+        setHoverTs(null)
+        setHoverRow(null)
         setFrozenTs(rows.length ? toTs(rows[rows.length - 1]) : null)
         setStateError('')
       })
@@ -582,7 +586,13 @@ const DetailedDashboard = () => {
   const totalRecycleMetricKey = typeof data.totalrecycleflow === 'number' ? 'totalrecycleflow' : 'totalconcflow'
   const activeMetricKeys = selectedMetricKeys.length ? selectedMetricKeys : [DEFAULT_METRIC_KEY]
   const metricPalette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6']
-  const chartPoints = timelineRows.map((row) => ({ ts: toTs(row), row })).filter((p) => p.ts > 0)
+  const chartPoints = timelineRows
+    .map((row, rowIndex) => ({ ts: toTs(row), row, rowIndex }))
+    .filter((p) => p.ts > 0)
+  const chartPointToRowIndex = useMemo(
+    () => new Map(chartPoints.map((point, pointIndex) => [pointIndex, point.rowIndex])),
+    [chartPoints],
+  )
   const focusedIndex = focusedTs ? chartPoints.findIndex((p) => p.ts === focusedTs) : -1
   const hoverIndex = hoverTs ? chartPoints.findIndex((p) => p.ts === hoverTs) : -1
   const hasBooleanMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) === 'boolean')
@@ -600,6 +610,7 @@ const DetailedDashboard = () => {
       const lineColor = metricPalette[datasetIdx % metricPalette.length]
       const fillColor = metricType === 'boolean' ? 'rgba(34,197,94,0.22)' : 'rgba(14,165,233,0.10)'
       return {
+        metricKey,
         label,
         data: chartPoints.map((p) => {
           const raw = p.row?.[metricKey]
@@ -667,7 +678,7 @@ const DetailedDashboard = () => {
         intersect: false,
         callbacks: {
           label: (ctx) => {
-            const metricKey = activeMetricKeys[ctx.datasetIndex] || DEFAULT_METRIC_KEY
+            const metricKey = ctx.dataset?.metricKey || DEFAULT_METRIC_KEY
             const metricType = inferSensorType(timelineRows, metricKey)
             const label = sensorDisplayName(metricKey)
             const unit = SENSOR_META[metricKey]?.unit || ''
@@ -685,20 +696,38 @@ const DetailedDashboard = () => {
       }
       if (!elements?.length) return
       const idx = elements[0].index
-      const p = chartPoints[idx]
-      if (!p) return
+      const rowIndex = chartPointToRowIndex.get(idx)
+      if (!Number.isInteger(rowIndex)) return
+      const row = timelineRows[rowIndex]
+      if (!row) return
       setHoverTs(null)
-      setFocusedTs(p.ts)
+      setHoverRow(null)
+      setFocusedTs(toTs(row))
       setIsLivePlaying(false)
     },
-    onHover: (_event, elements) => {
-      if (!elements?.length) {
+    onHover: (event, elements, chart) => {
+      const resolvedElements =
+        chart?.getElementsAtEventForMode?.(event, 'index', { intersect: false }, false) || elements || []
+      if (!resolvedElements.length) {
         setHoverTs(null)
+        setHoverRow(null)
         return
       }
-      const idx = elements[0].index
-      const p = chartPoints[idx]
-      setHoverTs(p?.ts || null)
+      const idx = resolvedElements[0].index
+      const rowIndex = chartPointToRowIndex.get(idx)
+      if (!Number.isInteger(rowIndex)) {
+        setHoverTs(null)
+        setHoverRow(null)
+        return
+      }
+      const row = timelineRows[rowIndex]
+      if (!row) {
+        setHoverTs(null)
+        setHoverRow(null)
+        return
+      }
+      setHoverTs(toTs(row))
+      setHoverRow(row)
     },
   }
 
@@ -785,6 +814,7 @@ const DetailedDashboard = () => {
     setActiveRange({ kind: 'custom', preset: null, start, end })
     setFocusedTs(null)
     setHoverTs(null)
+    setHoverRow(null)
     setFrozenTs(new Date(end).getTime())
     setIsLivePlaying(false)
   }
@@ -826,6 +856,7 @@ const DetailedDashboard = () => {
     setRangeEndInput(isoToLocalInputValue(new Date(nextEnd).toISOString()))
     setFocusedTs(null)
     setHoverTs(null)
+    setHoverRow(null)
     setFrozenTs(nextEnd)
     setIsLivePlaying(false)
   }
@@ -875,6 +906,102 @@ const DetailedDashboard = () => {
     return () => setHeaderContent(null)
   }, [headerTimePicker, setHeaderContent])
 
+  const liveTrendPanel = (
+    <CRow className="mb-4">
+      <CCol>
+        <CCard>
+          <CCardHeader>
+            Live Trend - {selectedMetricLabel}
+            {selectedMetricKeys.length > 1 && (
+              <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                +{selectedMetricKeys.length - 1} compared
+              </span>
+            )}
+            {!focusedTs && isLivePlaying && (
+              <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                Following latest
+              </span>
+            )}
+            <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+              Ctrl/Cmd+click sensors to compare
+            </span>
+            {focusedTs && (
+              <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                Focused at {new Date(focusedTs).toLocaleString()}
+              </span>
+            )}
+            {hoverTs && !focusedTs && (
+              <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                Preview at {new Date(hoverTs).toLocaleString()}
+              </span>
+            )}
+            {focusedTs && (
+              <CButton
+                color="success"
+                variant="outline"
+                size="sm"
+                className="ms-2"
+                onClick={() => {
+                  setFocusedTs(null)
+                  setFrozenTs(null)
+                  setIsLivePlaying(true)
+                }}
+              >
+                Back to Live
+              </CButton>
+            )}
+            <CButton
+              color="secondary"
+              variant="outline"
+              size="sm"
+              className="ms-2"
+              onClick={() => setIsTrendExpanded((prev) => !prev)}
+            >
+              {isTrendExpanded ? 'Compact Trend' : 'Expand Trend'}
+            </CButton>
+          </CCardHeader>
+          <CCardBody>
+            <div style={{ height: isTrendExpanded ? 320 : 128 }}>
+              {chartPoints.length === 0 ? (
+                <div className="h-100 d-flex flex-column align-items-center justify-content-center text-body-secondary">
+                  <div className="mb-1">No data in this window.</div>
+                  <div className="small">Try 24h/7d preset or apply a wider custom range.</div>
+                </div>
+              ) : (
+                <div
+                  style={{ height: '100%', position: 'relative' }}
+                  onMouseDown={beginDragSelect}
+                  onMouseMove={updateDragSelect}
+                  onMouseUp={finishDragSelect}
+                  onMouseLeave={finishDragSelect}
+                >
+                  <CChartLine ref={chartRef} data={chartData} options={chartOptions} style={{ height: '100%' }} />
+                  {dragSelect && chartRef.current?.chartArea && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: chartRef.current.chartArea.top,
+                        height: chartRef.current.chartArea.bottom - chartRef.current.chartArea.top,
+                        left: Math.max(
+                          chartRef.current.chartArea.left,
+                          Math.min(dragSelect.startX, dragSelect.currentX),
+                        ),
+                        width: Math.max(1, Math.abs(dragSelect.currentX - dragSelect.startX)),
+                        background: 'rgba(14,165,233,0.18)',
+                        border: '1px solid rgba(14,165,233,0.55)',
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+    </CRow>
+  )
+
   return (
     <>
       <CRow className="mb-3">
@@ -882,7 +1009,7 @@ const DetailedDashboard = () => {
           <CCard className="detailed-schematic-card">
             <CCardHeader>Detailed Process Flow</CCardHeader>
             <CCardBody className="detailed-schematic-body">
-              <div className="w-100" style={{ height: 450 }}>
+              <div className="w-100" style={{ height: 420 }}>
                 <Schematic md={md} />
               </div>
             </CCardBody>
@@ -891,7 +1018,7 @@ const DetailedDashboard = () => {
         <CCol lg={4}>
           <CCard>
             <CCardHeader>Sensor Status</CCardHeader>
-            <CCardBody>
+            <CCardBody className="sensor-status-card-body">
               <div className="small text-body-secondary mb-2">Operational Snapshot</div>
               <div
                 className="d-flex justify-content-between align-items-center mb-2"
@@ -970,91 +1097,7 @@ const DetailedDashboard = () => {
           </CCard>
         </CCol>
       </CRow>
-
-      <CRow className="mb-4">
-        <CCol>
-          <CCard>
-            <CCardHeader>
-              Live Trend - {selectedMetricLabel}
-              {selectedMetricKeys.length > 1 && (
-                <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                  +{selectedMetricKeys.length - 1} compared
-                </span>
-              )}
-              {!focusedTs && isLivePlaying && (
-                <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                  Following latest
-                </span>
-              )}
-              <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                Ctrl/Cmd+click sensors to compare
-              </span>
-              {focusedTs && (
-                <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                  Focused at {new Date(focusedTs).toLocaleString()}
-                </span>
-              )}
-              {hoverTs && !focusedTs && (
-                <span className="ms-2 text-body-secondary" style={{ fontSize: '0.85rem' }}>
-                  Preview at {new Date(hoverTs).toLocaleString()}
-                </span>
-              )}
-              {focusedTs && (
-                <CButton
-                  color="success"
-                  variant="outline"
-                  size="sm"
-                  className="ms-2"
-                  onClick={() => {
-                    setFocusedTs(null)
-                    setFrozenTs(null)
-                    setIsLivePlaying(true)
-                  }}
-                >
-                  Back to Live
-                </CButton>
-              )}
-            </CCardHeader>
-            <CCardBody>
-              <div style={{ height: 255 }}>
-                {chartPoints.length === 0 ? (
-                  <div className="h-100 d-flex flex-column align-items-center justify-content-center text-body-secondary">
-                    <div className="mb-1">No data in this window.</div>
-                    <div className="small">Try 24h/7d preset or apply a wider custom range.</div>
-                  </div>
-                ) : (
-                  <div
-                    style={{ height: '100%', position: 'relative' }}
-                    onMouseDown={beginDragSelect}
-                    onMouseMove={updateDragSelect}
-                    onMouseUp={finishDragSelect}
-                    onMouseLeave={finishDragSelect}
-                  >
-                    <CChartLine ref={chartRef} data={chartData} options={chartOptions} style={{ height: '100%' }} />
-                    {dragSelect && chartRef.current?.chartArea && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: chartRef.current.chartArea.top,
-                          height: chartRef.current.chartArea.bottom - chartRef.current.chartArea.top,
-                          left: Math.max(
-                            chartRef.current.chartArea.left,
-                            Math.min(dragSelect.startX, dragSelect.currentX),
-                          ),
-                          width: Math.max(1, Math.abs(dragSelect.currentX - dragSelect.startX)),
-                          background: 'rgba(14,165,233,0.18)',
-                          border: '1px solid rgba(14,165,233,0.55)',
-                          pointerEvents: 'none',
-                        }}
-                      />
-                    )}
-                  </div>
-                )}
-              </div>
-            </CCardBody>
-          </CCard>
-        </CCol>
-      </CRow>
+      {liveTrendPanel}
 
     </>
   )
