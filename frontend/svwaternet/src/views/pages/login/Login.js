@@ -103,6 +103,16 @@ const Login = ({ authConfig, authError, onLoginSuccess }) => {
       : ''
 
   const showGoogle = authConfig?.enabled && authConfig?.googleClientId && authConfig?.sessionJwt
+  const normalizeAccessError = (value) => {
+    const msg = String(value || '').trim().toLowerCase()
+    if (!msg) return value
+    if (msg.includes('forbidden') || msg.includes('unauthorized') || msg.includes('403')) {
+      return 'Unauthorized, please reach out to the UCLA WaTeR group for access.'
+    }
+    return value
+  }
+  const normalizedAuthError = normalizeAccessError(authError)
+  const normalizedLocalError = normalizeAccessError(localError)
 
   return (
     <div className="bg-body-tertiary min-vh-100 d-flex flex-row align-items-center">
@@ -114,9 +124,9 @@ const Login = ({ authConfig, authError, onLoginSuccess }) => {
                 <CCardBody>
                   <h1>Login</h1>
                   <p className="text-body-secondary">Sign in with your Google account</p>
-                  {authError ? <CAlert color="danger">{authError}</CAlert> : null}
+                  {normalizedAuthError ? <CAlert color="danger">{normalizedAuthError}</CAlert> : null}
                   {configError ? <CAlert color="warning">{configError}</CAlert> : null}
-                  {localError ? <CAlert color="danger">{localError}</CAlert> : null}
+                  {normalizedLocalError ? <CAlert color="danger">{normalizedLocalError}</CAlert> : null}
                   {!authConfig?.enabled ? (
                     <CAlert color="info">Authentication is disabled on this backend.</CAlert>
                   ) : null}
@@ -136,9 +146,21 @@ const Login = ({ authConfig, authError, onLoginSuccess }) => {
               <CCard className="text-white bg-primary py-5" style={{ width: '44%' }}>
                 <CCardBody className="text-center">
                   <div>
-                    <h2>SV WaterNet</h2>
+                    <h2>SVWATERNET</h2>
                     <p>
-                      Operational dashboards and reporting for water treatment systems.
+                      Live monitoring and analysis of remote drinking water systems in the Salinas
+                      Valley of Central California.
+                    </p>
+                    <p className="mb-0">
+                      A project of the WaTeR group at UCLA. Learn more at{' '}
+                      <a
+                        href="https://cleanwater.seas.ucla.edu/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-white"
+                      >
+                        cleanwater.seas.ucla.edu
+                      </a>
                     </p>
                     <Link to="/">
                       <CButton color="light" className="mt-3" variant="outline" tabIndex={-1}>
