@@ -17,6 +17,7 @@ import PryorFarmsSchematic from '../../components/detailed/PryorFarmsSchematic'
 import { fetchStateRange } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 import { bitTables, decodeBitfield } from '../../utils/bitfields'
+import { useHeaderContent } from '../../components/header/HeaderContentContext'
 import PlaybackTimePicker from './PlaybackTimePicker'
 
 const ABBR = {
@@ -278,22 +279,30 @@ function formatSnapshotNumber(value, fractionDigits = 0) {
   })
 }
 
-const buildLiveMd = (data = {}, onSelectSensor = () => {}) => ({
+const buildLiveMd = (data = {}, onSelectSensor = () => {}, selectedKeys = []) => {
+  const selectedSet = new Set(selectedKeys)
+  return {
   get: (key, field) => {
     const value = data?.[key]
     if (field === 'abbreviated_name') return ABBR[key] || key?.slice(0, 3)?.toUpperCase() || ''
     if (field === 'units') return SENSOR_META[key]?.unit || ''
     if (field === 'current_value') return value ?? 0
+    if (field === 'is_selected') return selectedSet.has(key)
     if (field === 'on_click') {
       if (!key || key === '???') return () => {}
-      return (event) => onSelectSensor(key, event)
+      const handler = (event) => onSelectSensor(key, event)
+      handler.__sensorKey = key
+      handler.__isSelected = selectedSet.has(key)
+      return handler
     }
     return ''
   },
-})
+  }
+}
 
 const DetailedDashboard = () => {
   const dispatch = useDispatch()
+  const { setHeaderContent } = useHeaderContent()
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const [timelineRows, setTimelineRows] = useState([])
   const [stateError, setStateError] = useState('')
@@ -437,8 +446,8 @@ const DetailedDashboard = () => {
   }
 
   const md = useMemo(
-    () => buildLiveMd(data, handleSelectSensor),
-    [data],
+    () => buildLiveMd(data, handleSelectSensor, selectedMetricKeys),
+    [data, selectedMetricKeys],
   )
 
   useEffect(() => {
@@ -822,9 +831,8 @@ const DetailedDashboard = () => {
   }
 
   const canStepForward = new Date(activeRange.end).getTime() < Date.now() - 5000
-
-  return (
-    <>
+  const headerTimePicker = useMemo(
+    () => (
       <PlaybackTimePicker
         isLivePlaying={isLivePlaying}
         focusedTs={focusedTs}
@@ -844,8 +852,31 @@ const DetailedDashboard = () => {
         onStepBackInterval={() => shiftActiveWindowByIntervals(-1)}
         onStepForwardInterval={() => shiftActiveWindowByIntervals(1)}
         canStepForward={canStepForward}
+        embedded
+        showRangeSummary={false}
       />
+    ),
+    [
+      isLivePlaying,
+      focusedTs,
+      streamState,
+      activeRangeLabel,
+      activeRange.kind,
+      timePreset,
+      isRangeLoading,
+      rangeStartInput,
+      rangeEndInput,
+      canStepForward,
+    ],
+  )
 
+  useEffect(() => {
+    setHeaderContent(headerTimePicker)
+    return () => setHeaderContent(null)
+  }, [headerTimePicker, setHeaderContent])
+
+  return (
+    <>
       <CRow className="mb-4">
         <CCol lg={8} className="mb-4 mb-lg-0">
           <CCard className="detailed-schematic-card">

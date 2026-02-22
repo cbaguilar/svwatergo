@@ -1,5 +1,5 @@
 import React from 'react';
-import { LIGHTGREYCOLOR, REDCOLOR } from './shared';
+import { LIGHTGREYCOLOR, REDCOLOR, isHandlerSelected } from './shared';
 import { RelativeText } from './RelativeText';
 import { StaticRelativeText } from './StaticRelativeText';
 import { getAngle } from './getAngle';
@@ -21,8 +21,15 @@ export function VariableValveIndicator({
     // the text orientation should always be normal
     const transstr = 'translate(' + x + ',' + y + ') '
         + `rotate(${getAngle(dir)})`;
-    const handleActivate = () => {
-        on_click();
+    const isSelected = isHandlerSelected(on_click);
+    const interactiveStyle = isSelected
+        ? {
+            cursor: 'pointer',
+            filter: 'drop-shadow(0 0 4px rgba(255,32,32,0.95)) drop-shadow(0 0 10px rgba(255,0,0,0.90))',
+        }
+        : { cursor: 'pointer' };
+    const handleActivate = (event) => {
+        on_click(event);
     };
     let PO = percentOpen / 100;
     PO = PO >= 1 ? 0.99999 : PO;
@@ -40,7 +47,7 @@ export function VariableValveIndicator({
                 }}
                 tabIndex={0}
                 role="button"
-                style={{ cursor: 'pointer' }}
+                style={interactiveStyle}
             >
                 {/* the bowtie shape made up of two horizontal triangles pointing towards each other */}
                 <polygon points="-30,20 -30,-20 30,20 30,-20" fill={LIGHTGREYCOLOR} stroke="#000" strokeWidth="2" />

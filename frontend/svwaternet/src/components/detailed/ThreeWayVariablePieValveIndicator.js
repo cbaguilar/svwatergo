@@ -1,5 +1,5 @@
 import React from 'react';
-import { LIGHTGREYCOLOR, PURPLECOLOR, REDCOLOR, YELLOWCOLOR } from './shared';
+import { LIGHTGREYCOLOR, PURPLECOLOR, REDCOLOR, YELLOWCOLOR, isHandlerSelected } from './shared';
 import { RelativeText } from './RelativeText';
 import { StaticRelativeText } from './StaticRelativeText';
 import { getAngle } from './getAngle';
@@ -62,6 +62,13 @@ export function ThreeWayVariablePieValveIndicator({
     // the text orientation should always be normal
     const transstr = 'translate(' + x + ',' + y + ') '
         + `rotate(${getAngle(dir)})`;
+    const isSelected = isHandlerSelected(on_click);
+    const interactiveStyle = isSelected
+        ? {
+            cursor: 'pointer',
+            filter: 'drop-shadow(0 0 4px rgba(255,32,32,0.95)) drop-shadow(0 0 10px rgba(255,0,0,0.90))',
+        }
+        : { cursor: 'pointer' };
     const handleActivate = (event) => {
         on_click(event);
     };
@@ -95,7 +102,7 @@ export function ThreeWayVariablePieValveIndicator({
                 }}
                 tabIndex={0}
                 role="button"
-                style={{ cursor: 'pointer' }}
+                style={interactiveStyle}
             >
                 <polygon
                     points="-30,20 -30,-20 0,0"

@@ -1,5 +1,5 @@
 import React from 'react';
-import { getFlowColor } from './shared';
+import { getFlowColor, isHandlerSelected, isModelKeySelected } from './shared';
 import { RelativeText } from './RelativeText';
 
 export function PumpSymbol({ 
@@ -35,6 +35,13 @@ export function PumpSymbol({
     const handleActivate = (event) => {
         resolvedOnClick(event);
     };
+    const isSelected = isModelKeySelected(md, pumpKey) || isHandlerSelected(resolvedOnClick);
+    const interactiveStyle = isSelected
+        ? {
+            cursor: 'pointer',
+            filter: 'drop-shadow(0 0 4px rgba(255,32,32,0.95)) drop-shadow(0 0 10px rgba(255,0,0,0.90))',
+        }
+        : { cursor: 'pointer' };
     return (
         <g
             transform={transstr}
@@ -47,7 +54,7 @@ export function PumpSymbol({
             }}
             tabIndex={0}
             role="button"
-            style={{ cursor: 'pointer' }}
+            style={interactiveStyle}
         >
             <polygon points="-20,20 0,-19 20,20" fill={flowColor} stroke="#000" strokeWidth="2" />
             {/* the pump has a small 2 character label in the middle of the circle */}

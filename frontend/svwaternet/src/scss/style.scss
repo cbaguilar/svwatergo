@@ -18,13 +18,14 @@ body {
 
 .header > .container-fluid,
 .sidebar-header {
-  min-height: calc(4rem + 1px); // stylelint-disable-line function-disallowed-list
+  min-height: calc(3.25rem + 1px); // stylelint-disable-line function-disallowed-list
 }
 
 .app-header-bar {
-  min-height: 3.25rem;
-  padding-top: 0.25rem;
-  padding-bottom: 0.25rem;
+  min-height: 2.75rem;
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+  flex-wrap: nowrap;
 }
 
 .app-header-title {
@@ -36,12 +37,33 @@ body {
   flex-wrap: nowrap;
 }
 
+.app-header-slot {
+  min-width: 0;
+}
+
 .app-header-label {
   white-space: nowrap;
 }
 
 .app-header-select {
-  min-width: 160px;
+  min-width: 148px;
+}
+
+.app-header-user-dropdown .dropdown-toggle::after {
+  display: none;
+}
+
+.app-header-user-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+  min-height: 2rem;
+}
+
+.app-header-user-name {
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .sidebar-brand-full {
@@ -73,7 +95,7 @@ body {
 }
 
 .header > .container-fluid + .container-fluid {
-  min-height: 3rem;
+  min-height: 2.4rem;
 }
 
 .footer {

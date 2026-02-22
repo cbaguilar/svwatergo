@@ -1,6 +1,6 @@
 import React from 'react';
 import spinnerUrl from "./spinner.svg";
-import { BLUECOLOR, LIGHTGREYCOLOR } from './shared';
+import { BLUECOLOR, LIGHTGREYCOLOR, isHandlerSelected, isModelKeySelected } from './shared';
 import { RelativeText } from './RelativeText';
 
 export function SensorIndicator({
@@ -33,6 +33,13 @@ export function SensorIndicator({
     const handleActivate = (event) => {
         resolvedOnClick(event);
     };
+    const isSelected = isModelKeySelected(md, sensorKey) || isHandlerSelected(resolvedOnClick);
+    const interactiveStyle = isSelected
+        ? {
+            cursor: 'pointer',
+            filter: 'drop-shadow(0 0 4px rgba(255,32,32,0.95)) drop-shadow(0 0 10px rgba(255,0,0,0.90))',
+        }
+        : { cursor: 'pointer' };
 
     const LINELENGTH = 35;
     let sensorLine;
@@ -93,7 +100,7 @@ export function SensorIndicator({
                 }}
                 tabIndex={0}
                 role="button"
-                style={{ cursor: 'pointer' }}
+                style={interactiveStyle}
             >
                 {sensorLine}
                 <circle cx="0" cy="0" r="23" fill={color} stroke="#000" strokeWidth="2" />

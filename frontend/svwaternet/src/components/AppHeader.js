@@ -10,6 +10,7 @@ import {
 import CIcon from '@coreui/icons-react'
 import { cilMenu } from '@coreui/icons'
 import { BACKEND_OPTIONS, setBackendKey } from '../api/backend'
+import { useHeaderContent } from './header/HeaderContentContext'
 
 import { AppBreadcrumb } from './index'
 import { AppHeaderDropdown } from './header/index'
@@ -21,6 +22,7 @@ const AppHeader = () => {
   const sidebarShow = useSelector((state) => state.sidebarShow)
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const apiBackend = useSelector((state) => state.apiBackend)
+  const { headerContent } = useHeaderContent()
 
   useEffect(() => {
     const handleScroll = () => {
@@ -41,10 +43,13 @@ const AppHeader = () => {
         >
           <CIcon icon={cilMenu} size="lg" />
         </CHeaderToggler>
-        <CHeaderNav className="me-auto app-header-title">
+        <CHeaderNav className="app-header-title">
           <div className="fw-semibold">WaTeR System</div>
         </CHeaderNav>
-        <CHeaderNav className="align-items-center app-header-controls">
+        {headerContent && (
+          <div className="d-none d-xl-flex align-items-center flex-grow-1 mx-3 app-header-slot">{headerContent}</div>
+        )}
+        <CHeaderNav className="align-items-center ms-auto app-header-controls">
           <span className="me-2 small text-body-secondary app-header-label">WaTeR System ID:</span>
           <CFormSelect
             size="sm"
