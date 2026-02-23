@@ -20,6 +20,7 @@ type SiteAPI struct {
 const powerMeterTickKWh = 1.25 / 1000.0
 const pgeResidentialDefaultPlan = "pge_e_tou_d_est"
 const defaultForecastTargetPct = 75.0
+const stPryorForecastTargetPct = 80.0
 const defaultForecastProductTankCapacityGal = 1000.0
 
 func NewSiteAPI(reg systemservice.Registry, meta *metadata.Store) *SiteAPI {
@@ -232,7 +233,7 @@ func (a *SiteAPI) GetNextStateForecast(c *gin.Context) {
 		return
 	}
 
-	targetPct := qfloat(c.Query("target_pct"), defaultForecastTargetPct)
+	targetPct := qfloat(c.Query("target_pct"), forecastTargetPct(site))
 	if targetPct < 0 {
 		targetPct = 0
 	}
@@ -548,6 +549,15 @@ func forecastProductTankCapacityGallons(site string) float64 {
 		return 3653.6
 	default:
 		return defaultForecastProductTankCapacityGal
+	}
+}
+
+func forecastTargetPct(site string) float64 {
+	switch strings.ToLower(strings.TrimSpace(site)) {
+	case "santateresa", "pryorfarm":
+		return stPryorForecastTargetPct
+	default:
+		return defaultForecastTargetPct
 	}
 }
 
