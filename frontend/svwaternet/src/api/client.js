@@ -62,3 +62,26 @@ export async function apiPost(path, body, options = {}) {
   })
   return handleJsonResponse(response)
 }
+
+export async function apiPut(path, body, options = {}) {
+  const url = `${getApiBaseUrl()}${path}`
+  const headers = buildHeaders(options, true)
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(body),
+    signal: options.signal,
+  })
+  return handleJsonResponse(response)
+}
+
+export async function apiDelete(path, options = {}) {
+  const url = `${getApiBaseUrl()}${path}`
+  const headers = buildHeaders(options, false)
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers,
+    signal: options.signal,
+  })
+  return handleJsonResponse(response)
+}

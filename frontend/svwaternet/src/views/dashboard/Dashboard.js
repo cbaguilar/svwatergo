@@ -334,7 +334,7 @@ const Dashboard = () => {
           </CCard>
         </CCol>
         <CCol lg={5}>
-          <CCard>
+          <CCard className="mb-4">
             <CCardHeader>Current State</CCardHeader>
             <CCardBody style={{ minHeight: 560 }}>
               {loadingState && <div className="text-body-secondary">Loading latest state...</div>}
