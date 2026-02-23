@@ -46,6 +46,11 @@ func (m *PryorFarmManager) SaveData(rawData []byte) error {
 	return m.DB.SaveState(state)
 }
 
+func (m *PryorFarmManager) ParseData(rawData []byte) error {
+	_, err := FromRawData(rawData)
+	return err
+}
+
 func (m *PryorFarmManager) GetRange(start, end time.Time) ([]map[string]interface{}, error) {
 	rows, err := m.DB.GetRange(start, end)
 	if err != nil {

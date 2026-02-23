@@ -112,17 +112,21 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 
 	/// This is the v0 route, which we will re-implement for backwards compatibility
 	// with the old Javascript server.
-	if ingestDisabled || readOnly {
+	if ingestDisabled {
 		disabled := func(c *gin.Context) {
-			msg := "ingestion is disabled"
-			if readOnly {
-				msg = "server is in read-only mode"
-			}
-			c.JSON(http.StatusServiceUnavailable, errJSON("Unavailable", msg, nil))
+			c.JSON(http.StatusServiceUnavailable, errJSON("Unavailable", "ingestion is disabled", nil))
 		}
 		r.POST("/UploadDataNew", disabled)
 		r.POST("/uploadDataNew", disabled)       // alias for legacy mirror path
 		r.POST("/uploadSensorDataNew", disabled) // alias
+	} else if readOnly {
+		shadowIngestion := *ingestion
+		shadowIngestion.DryRun = true
+		shadowIngestion.OnIngest = nil
+		shadow := SaveSensorDataHandler(&shadowIngestion)
+		r.POST("/UploadDataNew", shadow)
+		r.POST("/uploadDataNew", shadow)       // alias for legacy mirror path
+		r.POST("/uploadSensorDataNew", shadow) // alias
 	} else {
 		r.POST("/UploadDataNew", SaveSensorDataHandler(ingestion))
 		r.POST("/uploadDataNew", SaveSensorDataHandler(ingestion))       // alias for legacy mirror path

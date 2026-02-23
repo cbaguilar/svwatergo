@@ -54,6 +54,11 @@ func (b *BluerockManager) SaveData(rawData []byte) error { //unmarshal rawData i
 	return b.DB.SaveState(state)
 }
 
+func (b *BluerockManager) ParseData(rawData []byte) error {
+	_, err := FromRawData(rawData)
+	return err
+}
+
 func (b *BluerockManager) GetRange(start time.Time, end time.Time) ([]map[string]interface{}, error) {
 	rows, err := b.DB.GetRange(start, end)
 	if err != nil {

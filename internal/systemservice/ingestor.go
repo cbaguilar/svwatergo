@@ -11,6 +11,7 @@ import (
 type DataIngestionService struct {
 	Reg      Registry
 	OnIngest func(site string)
+	DryRun   bool
 }
 
 func (s *DataIngestionService) Consume(rawData []byte) error {
@@ -31,6 +32,13 @@ func (s *DataIngestionService) Consume(rawData []byte) error {
 	mgr, exists := s.Reg.Get(key)
 	if !exists {
 		return fmt.Errorf("no manager found for location: %s", key)
+	}
+	if s.DryRun {
+		dryMgr, ok := mgr.(DryRunIngestionManager)
+		if !ok {
+			return fmt.Errorf("manager does not support dry-run ingestion for location: %s", key)
+		}
+		return dryMgr.ParseData(rawData)
 	}
 	if err := mgr.SaveData(rawData); err != nil {
 		return err

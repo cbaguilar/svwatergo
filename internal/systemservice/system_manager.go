@@ -13,6 +13,11 @@ type SystemManager interface {
 	Coverage() (Coverage, error)
 }
 
+// Optional capability for validating/parsing an incoming record without writing it.
+type DryRunIngestionManager interface {
+	ParseData(rawData []byte) error
+}
+
 // Optional capability: range queries with backend-side sampling/downsampling.
 type SampledRangeManager interface {
 	GetRangeSampled(start, end time.Time, sample string, maxPoints int) ([]map[string]interface{}, error)

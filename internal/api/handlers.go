@@ -65,7 +65,36 @@ func SaveSensorDataHandler(ingestion *systemservice.DataIngestionService) gin.Ha
 				break
 			}
 		}
-		c.JSON(code, gin.H{"results": results})
+		c.JSON(code, gin.H{"results": results, "dry_run": ingestion.DryRun})
+	}
+}
+
+// SaveSensorDataCaptureOnlyHandler accepts and parses ingestion payloads but does not
+// persist them. This is useful for shadow traffic in read-only mode.
+func SaveSensorDataCaptureOnlyHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		records, err := parseUploadRecords(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		type recResult struct {
+			Index  int    `json:"index"`
+			Status string `json:"status"`
+		}
+		results := make([]recResult, 0, len(records))
+		for i := range records {
+			results = append(results, recResult{
+				Index:  i,
+				Status: "captured",
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"results":    results,
+			"read_only":  true,
+			"db_written": false,
+		})
 	}
 }
 
