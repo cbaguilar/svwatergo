@@ -121,9 +121,11 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 			c.JSON(http.StatusServiceUnavailable, errJSON("Unavailable", msg, nil))
 		}
 		r.POST("/UploadDataNew", disabled)
+		r.POST("/uploadDataNew", disabled)       // alias for legacy mirror path
 		r.POST("/uploadSensorDataNew", disabled) // alias
 	} else {
 		r.POST("/UploadDataNew", SaveSensorDataHandler(ingestion))
+		r.POST("/uploadDataNew", SaveSensorDataHandler(ingestion))       // alias for legacy mirror path
 		r.POST("/uploadSensorDataNew", SaveSensorDataHandler(ingestion)) // alias
 	}
 
