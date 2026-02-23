@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cbaguilar/svwatergo/internal/analytics"
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
@@ -59,6 +60,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	liveState := NewLiveStateAPI(reg, meta)
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
+	analyticsAPI := NewAnalyticsAPI(analytics.NewStore())
 	eventsAPI := NewEventsAPI()
 	authAPI := NewAuthAPI(authn)
 	ingestion.OnIngest = liveState.NotifySiteUpdated
@@ -79,6 +81,12 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		v1.Use(authn.GinMiddleware())
 	}
 	{
+		analyticsGroup := v1.Group("/analytics")
+		analyticsGroup.POST("/feature-runs", analyticsAPI.CreateFeatureRun)
+		analyticsGroup.POST("/pca-runs", analyticsAPI.CreatePCARun)
+		analyticsGroup.GET("/jobs", analyticsAPI.ListJobs)
+		analyticsGroup.GET("/jobs/:id", analyticsAPI.GetJob)
+
 		sites := v1.Group("/sites/:site")
 		sites.GET("/state/latest", state.GetLatest)
 		sites.GET("/state/stream", liveState.StreamLatest)
