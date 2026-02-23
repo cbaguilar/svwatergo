@@ -232,9 +232,9 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="762" y="270"
                 innerText="FTF"
-                outerText="999 GPM"
+                sensorKey="feedflow_soft" md={md}
                 textDir="up"
-                on_click={md.get("feedflow", "on_click")} />
+                on_click={md.get("feedflow_soft", "on_click")} />
             <CheckValve dir="up" x="522.5" y="438" />
             <ArrowPolyLine stroke="black" points="983,277 983,367 1013,367" />
             <ChemicalFeed
@@ -244,7 +244,7 @@ function ROSystem({ md, pipe_info }) {
             <SensorIndicator
                 x="522" y="500"
                 innerText="FTR"
-                outerText="999 GPM"
+                sensorKey="recycleflow" md={md}
                 textDir="right"
                 on_click={md.get("recycleflow", "on_click")} />
             <ROVessel

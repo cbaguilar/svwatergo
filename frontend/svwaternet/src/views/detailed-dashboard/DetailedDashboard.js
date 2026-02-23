@@ -43,6 +43,7 @@ const ABBR = {
   permeatepressure: 'PT5',
   deliverypressure: 'PT6',
   recycleflow: 'FT2',
+  feedflow_soft: 'FTF',
   feedflow: 'FT1',
   inletflow: 'FT0',
   permeateflow: 'FT3',
@@ -57,6 +58,7 @@ const ABBR = {
 const SENSOR_META = {
   permeateflow: { label: 'Permeate Flow', unit: 'GPM', type: 'number' },
   feedflow: { label: 'Feed Flow', unit: 'GPM', type: 'number' },
+  feedflow_soft: { label: 'Feed Flow (Estimated)', unit: 'GPM', type: 'number' },
   deliveryflow: { label: 'Delivery Flow', unit: 'GPM', type: 'number' },
   recycleflow: { label: 'Recycle Flow', unit: 'GPM', type: 'number' },
   inletflow: { label: 'Inlet Flow', unit: 'GPM', type: 'number' },
@@ -286,7 +288,7 @@ const buildLiveMd = (data = {}, onSelectSensor = () => {}, selectedKeys = []) =>
     const value = data?.[key]
     if (field === 'abbreviated_name') return ABBR[key] || key?.slice(0, 3)?.toUpperCase() || ''
     if (field === 'units') return SENSOR_META[key]?.unit || ''
-    if (field === 'current_value') return value ?? 0
+    if (field === 'current_value') return value
     if (field === 'is_selected') return selectedSet.has(key)
     if (field === 'on_click') {
       if (!key || key === '???') return () => {}

@@ -11,3 +11,9 @@ sensors:
   - key: deliveryflow
     name: Delivery Flow
     units: gpm
+
+soft_sensors:
+  - key: feedflow_soft
+    name: Feed Flow (Estimated)
+    units: gpm
+    note: "Estimated FTF = inletflow - recycleflow"
