@@ -91,20 +91,21 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		sites.POST("/events/query", eventsAPI.QueryInterestingTimestamps)
 
 		operatorReports := sites.Group("/operator-reports")
+		operatorReportsAdmin := sites.Group("/operator-reports")
 		if authn != nil {
-			operatorReports.Use(authn.GinRequireAdmin())
+			operatorReportsAdmin.Use(authn.GinRequireAdmin())
 		}
 		if readOnly {
 			disabled := func(c *gin.Context) {
 				c.JSON(http.StatusServiceUnavailable, errJSON("ReadOnly", "server is in read-only mode", nil))
 			}
-			operatorReports.POST("", disabled)
-			operatorReports.PUT("/:id", disabled)
-			operatorReports.DELETE("/:id", disabled)
+			operatorReportsAdmin.POST("", disabled)
+			operatorReportsAdmin.PUT("/:id", disabled)
+			operatorReportsAdmin.DELETE("/:id", disabled)
 		} else {
-			operatorReports.POST("", reportsAPI.CreateOperatorReport)
-			operatorReports.PUT("/:id", reportsAPI.UpdateOperatorReport)
-			operatorReports.DELETE("/:id", reportsAPI.DeleteOperatorReport)
+			operatorReportsAdmin.POST("", reportsAPI.CreateOperatorReport)
+			operatorReportsAdmin.PUT("/:id", reportsAPI.UpdateOperatorReport)
+			operatorReportsAdmin.DELETE("/:id", reportsAPI.DeleteOperatorReport)
 		}
 		operatorReports.GET("", reportsAPI.ListOperatorReports)
 		operatorReports.GET("/:id", reportsAPI.GetOperatorReport)
