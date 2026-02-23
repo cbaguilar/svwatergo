@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from 'react'
-import { CCard, CCardBody, CCardHeader } from '@coreui/react'
+import {
+  CBadge,
+  CCard,
+  CCardBody,
+  CCardHeader,
+  CTable,
+  CTableBody,
+  CTableDataCell,
+  CTableHead,
+  CTableHeaderCell,
+  CTableRow,
+} from '@coreui/react'
 import { getMe } from '../api/auth'
 import {
   createOperatorReport,
@@ -21,6 +32,11 @@ const OperatorReportsPanel = ({ siteKey }) => {
   const [editingReportId, setEditingReportId] = useState(null)
   const [editingForm, setEditingForm] = useState(EMPTY_FORM)
   const [reportDeletingId, setReportDeletingId] = useState(null)
+  const [pageSize, setPageSize] = useState(10)
+  const [pageOffset, setPageOffset] = useState(0)
+  const [searchInput, setSearchInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [totalReports, setTotalReports] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -31,18 +47,24 @@ const OperatorReportsPanel = ({ siteKey }) => {
   }, [])
 
   useEffect(() => {
+    setPageOffset(0)
+  }, [siteKey, pageSize, searchQuery])
+
+  useEffect(() => {
     let active = true
     const controller = new AbortController()
     setLoadingReports(true)
     setReportsError('')
-    listOperatorReports(siteKey, { limit: 20, signal: controller.signal })
+    listOperatorReports(siteKey, { limit: pageSize, offset: pageOffset, q: searchQuery, signal: controller.signal })
       .then((payload) => {
         if (!active) return
         setReports(Array.isArray(payload?.reports) ? payload.reports : [])
+        setTotalReports(Number(payload?.paging?.total) || 0)
       })
       .catch((err) => {
         if (!active || err?.name === 'AbortError') return
         setReports([])
+        setTotalReports(0)
         setReportsError(err?.message || 'Failed to load reports')
       })
       .finally(() => {
@@ -53,7 +75,7 @@ const OperatorReportsPanel = ({ siteKey }) => {
       active = false
       controller.abort()
     }
-  }, [siteKey])
+  }, [siteKey, pageSize, pageOffset, searchQuery])
 
   const formatReportDate = (raw) => {
     if (!raw) return 'Unknown'
@@ -69,8 +91,9 @@ const OperatorReportsPanel = ({ siteKey }) => {
       .filter(Boolean)
 
   const reloadReports = async () => {
-    const payload = await listOperatorReports(siteKey, { limit: 20 })
+    const payload = await listOperatorReports(siteKey, { limit: pageSize, offset: pageOffset, q: searchQuery })
     setReports(Array.isArray(payload?.reports) ? payload.reports : [])
+    setTotalReports(Number(payload?.paging?.total) || 0)
   }
 
   const startEditReport = (report) => {
@@ -140,6 +163,13 @@ const OperatorReportsPanel = ({ siteKey }) => {
       setReportDeletingId(null)
     }
   }
+
+  const pageStart = totalReports === 0 ? 0 : pageOffset + 1
+  const pageEnd = Math.min(pageOffset + reports.length, totalReports)
+  const canPrev = pageOffset > 0
+  const canNext = pageOffset + pageSize < totalReports
+  const currentPage = Math.floor(pageOffset / pageSize) + 1
+  const totalPages = Math.max(1, Math.ceil(totalReports / pageSize))
 
   return (
     <CCard>
@@ -211,132 +241,224 @@ const OperatorReportsPanel = ({ siteKey }) => {
           </form>
         )}
 
+        <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+          <div className="d-flex align-items-center gap-2">
+            <span className="text-body-secondary" style={{ fontSize: '0.9rem' }}>
+              Show
+            </span>
+            <select
+              className="form-select form-select-sm"
+              style={{ width: 90 }}
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value) || 10)}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+            <span className="text-body-secondary" style={{ fontSize: '0.9rem' }}>
+              entries
+            </span>
+          </div>
+          <form
+            className="d-flex align-items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setSearchQuery(searchInput.trim())
+            }}
+          >
+            <label htmlFor="operator-reports-search" className="text-body-secondary" style={{ fontSize: '0.9rem' }}>
+              Search:
+            </label>
+            <input
+              id="operator-reports-search"
+              className="form-control form-control-sm"
+              style={{ width: 220 }}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="title, comment, author"
+            />
+            <button type="submit" className="btn btn-sm btn-outline-secondary">
+              Apply
+            </button>
+          </form>
+        </div>
+
         {loadingReports ? (
           <div className="text-body-secondary">Loading reports...</div>
         ) : reports.length === 0 ? (
           <div className="text-body-secondary">No reports yet for this site.</div>
         ) : (
-          <div style={{ maxHeight: 680, overflowY: 'auto' }}>
-            {reports.map((report) => {
-              const isEditing = editingReportId === report.id
-              return (
-                <div key={report.id} className="border rounded p-2 mb-2">
-                  {isEditing ? (
-                    <>
-                      <div className="mb-2">
-                        <input
-                          className="form-control form-control-sm"
-                          value={editingForm.title}
-                          onChange={(e) => setEditingForm((s) => ({ ...s, title: e.target.value }))}
-                        />
-                      </div>
-                      <div className="mb-2">
-                        <textarea
-                          className="form-control form-control-sm"
-                          rows={3}
-                          value={editingForm.body}
-                          onChange={(e) => setEditingForm((s) => ({ ...s, body: e.target.value }))}
-                        />
-                      </div>
-                      <div className="row g-2 mb-2">
-                        <div className="col-4">
-                          <select
-                            className="form-select form-select-sm"
-                            value={editingForm.status}
-                            onChange={(e) => setEditingForm((s) => ({ ...s, status: e.target.value }))}
-                          >
-                            <option value="open">Open</option>
-                            <option value="closed">Closed</option>
-                            <option value="monitoring">Monitoring</option>
-                          </select>
-                        </div>
-                        <div className="col-4">
-                          <input
-                            className="form-control form-control-sm"
-                            value={editingForm.severity}
-                            onChange={(e) => setEditingForm((s) => ({ ...s, severity: e.target.value }))}
-                            placeholder="Severity"
-                          />
-                        </div>
-                        <div className="col-4">
-                          <input
-                            className="form-control form-control-sm"
-                            value={editingForm.tags}
-                            onChange={(e) => setEditingForm((s) => ({ ...s, tags: e.target.value }))}
-                            placeholder="Tags"
-                          />
-                        </div>
-                      </div>
-                      <div className="d-flex gap-2">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-primary"
-                          disabled={reportSaving}
-                          onClick={() => handleUpdateReport(report.id)}
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-secondary"
-                          disabled={reportSaving}
-                          onClick={() => setEditingReportId(null)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="d-flex justify-content-between align-items-start gap-2">
-                        <div>
+          <div className="table-responsive" style={{ maxHeight: 680, overflowY: 'auto' }}>
+            <CTable hover small align="middle">
+              <CTableHead>
+                <CTableRow>
+                  <CTableHeaderCell style={{ minWidth: 170 }}>Time</CTableHeaderCell>
+                  <CTableHeaderCell style={{ minWidth: 180 }}>Name</CTableHeaderCell>
+                  <CTableHeaderCell style={{ minWidth: 180 }}>Title</CTableHeaderCell>
+                  <CTableHeaderCell style={{ minWidth: 420 }}>Comment</CTableHeaderCell>
+                  <CTableHeaderCell style={{ minWidth: 160 }}>Status</CTableHeaderCell>
+                  {isAdmin && <CTableHeaderCell style={{ minWidth: 140 }}>Actions</CTableHeaderCell>}
+                </CTableRow>
+              </CTableHead>
+              <CTableBody>
+                {reports.map((report) => {
+                  const isEditing = editingReportId === report.id
+                  return (
+                    <React.Fragment key={report.id}>
+                      <CTableRow>
+                        <CTableDataCell className="text-body-secondary" style={{ verticalAlign: 'top' }}>
+                          {formatReportDate(report.created_at)}
+                        </CTableDataCell>
+                        <CTableDataCell style={{ verticalAlign: 'top' }}>
+                          {report.created_by?.name || report.created_by?.email || 'Unknown'}
+                        </CTableDataCell>
+                        <CTableDataCell style={{ verticalAlign: 'top' }}>
                           <div className="fw-semibold">{report.title}</div>
-                          <div className="text-body-secondary" style={{ fontSize: '0.8rem' }}>
-                            {formatReportDate(report.created_at)}
-                            {report.created_by?.email ? ` • ${report.created_by.email}` : ''}
-                          </div>
-                        </div>
-                        <div className="text-end">
-                          <span className="badge text-bg-light me-1">{report.status || 'open'}</span>
-                          {report.severity ? <span className="badge text-bg-warning">{report.severity}</span> : null}
-                        </div>
-                      </div>
-                      <div className="mt-2" style={{ whiteSpace: 'pre-wrap', fontSize: '0.92rem' }}>
-                        {report.body}
-                      </div>
-                      {Array.isArray(report.tags) && report.tags.length > 0 && (
-                        <div className="mt-2">
-                          {report.tags.map((tag) => (
-                            <span key={`${report.id}:${tag}`} className="badge text-bg-secondary me-1">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
+                          {report.tags?.length ? (
+                            <div className="mt-1">
+                              {report.tags.map((tag) => (
+                                <CBadge key={`${report.id}:${tag}`} color="secondary" className="me-1">
+                                  {tag}
+                                </CBadge>
+                              ))}
+                            </div>
+                          ) : null}
+                        </CTableDataCell>
+                        <CTableDataCell style={{ whiteSpace: 'pre-wrap', verticalAlign: 'top' }}>
+                          {report.body}
+                        </CTableDataCell>
+                        <CTableDataCell style={{ verticalAlign: 'top' }}>
+                          <CBadge color="light" textColor="dark" className="me-1">
+                            {report.status || 'open'}
+                          </CBadge>
+                          {report.severity ? <CBadge color="warning">{report.severity}</CBadge> : null}
+                        </CTableDataCell>
+                        {isAdmin && (
+                          <CTableDataCell style={{ verticalAlign: 'top' }}>
+                            <div className="d-flex gap-2">
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-primary"
+                                onClick={() => startEditReport(report)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-danger"
+                                disabled={reportDeletingId === report.id}
+                                onClick={() => handleDeleteReport(report.id)}
+                              >
+                                {reportDeletingId === report.id ? 'Deleting...' : 'Delete'}
+                              </button>
+                            </div>
+                          </CTableDataCell>
+                        )}
+                      </CTableRow>
+                      {isEditing && (
+                        <CTableRow color="light">
+                          <CTableDataCell colSpan={isAdmin ? 6 : 5}>
+                            <div className="row g-2 mb-2">
+                              <div className="col-md-4">
+                                <input
+                                  className="form-control form-control-sm"
+                                  value={editingForm.title}
+                                  onChange={(e) => setEditingForm((s) => ({ ...s, title: e.target.value }))}
+                                  placeholder="Title"
+                                />
+                              </div>
+                              <div className="col-md-3">
+                                <select
+                                  className="form-select form-select-sm"
+                                  value={editingForm.status}
+                                  onChange={(e) => setEditingForm((s) => ({ ...s, status: e.target.value }))}
+                                >
+                                  <option value="open">Open</option>
+                                  <option value="closed">Closed</option>
+                                  <option value="monitoring">Monitoring</option>
+                                </select>
+                              </div>
+                              <div className="col-md-2">
+                                <input
+                                  className="form-control form-control-sm"
+                                  value={editingForm.severity}
+                                  onChange={(e) => setEditingForm((s) => ({ ...s, severity: e.target.value }))}
+                                  placeholder="Severity"
+                                />
+                              </div>
+                              <div className="col-md-3">
+                                <input
+                                  className="form-control form-control-sm"
+                                  value={editingForm.tags}
+                                  onChange={(e) => setEditingForm((s) => ({ ...s, tags: e.target.value }))}
+                                  placeholder="Tags"
+                                />
+                              </div>
+                            </div>
+                            <div className="mb-2">
+                              <textarea
+                                className="form-control form-control-sm"
+                                rows={4}
+                                value={editingForm.body}
+                                onChange={(e) => setEditingForm((s) => ({ ...s, body: e.target.value }))}
+                              />
+                            </div>
+                            <div className="d-flex gap-2">
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary"
+                                disabled={reportSaving}
+                                onClick={() => handleUpdateReport(report.id)}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-secondary"
+                                disabled={reportSaving}
+                                onClick={() => setEditingReportId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </CTableDataCell>
+                        </CTableRow>
                       )}
-                      {isAdmin && (
-                        <div className="mt-2 d-flex gap-2">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-primary"
-                            onClick={() => startEditReport(report)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-danger"
-                            disabled={reportDeletingId === report.id}
-                            onClick={() => handleDeleteReport(report.id)}
-                          >
-                            {reportDeletingId === report.id ? 'Deleting...' : 'Delete'}
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )
-            })}
+                    </React.Fragment>
+                  )
+                })}
+              </CTableBody>
+            </CTable>
+          </div>
+        )}
+
+        {!loadingReports && (
+          <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2">
+            <div className="text-body-secondary" style={{ fontSize: '0.85rem' }}>
+              Showing {pageStart} to {pageEnd} of {totalReports} entries
+            </div>
+            <div className="d-flex align-items-center gap-2">
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-secondary"
+                disabled={!canPrev}
+                onClick={() => setPageOffset((v) => Math.max(0, v - pageSize))}
+              >
+                Previous
+              </button>
+              <span className="text-body-secondary" style={{ fontSize: '0.85rem' }}>
+                Page {currentPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-secondary"
+                disabled={!canNext}
+                onClick={() => setPageOffset((v) => v + pageSize)}
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </CCardBody>
@@ -345,4 +467,3 @@ const OperatorReportsPanel = ({ siteKey }) => {
 }
 
 export default OperatorReportsPanel
-

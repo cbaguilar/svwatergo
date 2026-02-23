@@ -92,18 +92,45 @@ func (a *ReportsAPI) ListOperatorReports(c *gin.Context) {
 	limit := parseInt(c.DefaultQuery("limit", ""), 0)
 	offset := parseInt(c.DefaultQuery("offset", ""), 0)
 	status := strings.TrimSpace(c.Query("status"))
+	q := strings.TrimSpace(c.Query("q"))
 
-	reportsList, err := a.Store.ListOperatorReports(c.Request.Context(), reports.ListOperatorReports{
+	opts := reports.ListOperatorReports{
 		Site:   site,
 		Status: status,
+		Query:  q,
 		Limit:  limit,
 		Offset: offset,
-	})
+	}
+	reportsList, err := a.Store.ListOperatorReports(c.Request.Context(), opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errJSON("Internal", "list reports failed", gin.H{"err": err.Error()}))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"site": site, "reports": reportsList})
+	total, err := a.Store.CountOperatorReports(c.Request.Context(), opts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "count reports failed", gin.H{"err": err.Error()}))
+		return
+	}
+	effectiveLimit := limit
+	if effectiveLimit <= 0 || effectiveLimit > 200 {
+		effectiveLimit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"site":    site,
+		"reports": reportsList,
+		"paging": gin.H{
+			"total":  total,
+			"limit":  effectiveLimit,
+			"offset": offset,
+		},
+		"filters": gin.H{
+			"status": status,
+			"q":      q,
+		},
+	})
 }
 
 func (a *ReportsAPI) GetOperatorReport(c *gin.Context) {

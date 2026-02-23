@@ -59,6 +59,7 @@ type UpdateOperatorReport struct {
 type ListOperatorReports struct {
 	Site   string
 	Status string
+	Query  string
 	Limit  int
 	Offset int
 }
@@ -241,6 +242,15 @@ func (s *Store) ListOperatorReports(ctx context.Context, opts ListOperatorReport
 		query += " AND status = :status"
 		args["status"] = strings.TrimSpace(opts.Status)
 	}
+	if q := strings.TrimSpace(opts.Query); q != "" {
+		args["q"] = "%" + strings.ToLower(q) + "%"
+		query += ` AND (
+			LOWER(title) LIKE :q OR
+			LOWER(body) LIKE :q OR
+			LOWER(COALESCE(created_by_name, '')) LIKE :q OR
+			LOWER(COALESCE(created_by_email, '')) LIKE :q
+		)`
+	}
 	query += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
 
 	query, params, err := sqlx.Named(query, args)
@@ -258,6 +268,39 @@ func (s *Store) ListOperatorReports(ctx context.Context, opts ListOperatorReport
 		out = append(out, row.toReport())
 	}
 	return out, nil
+}
+
+func (s *Store) CountOperatorReports(ctx context.Context, opts ListOperatorReports) (int, error) {
+	if s == nil {
+		return 0, fmt.Errorf("store not configured")
+	}
+	args := map[string]any{
+		"site": strings.ToLower(strings.TrimSpace(opts.Site)),
+	}
+	query := `SELECT COUNT(*) FROM operator_reports WHERE site = :site`
+	if strings.TrimSpace(opts.Status) != "" {
+		query += " AND status = :status"
+		args["status"] = strings.TrimSpace(opts.Status)
+	}
+	if q := strings.TrimSpace(opts.Query); q != "" {
+		args["q"] = "%" + strings.ToLower(q) + "%"
+		query += ` AND (
+			LOWER(title) LIKE :q OR
+			LOWER(body) LIKE :q OR
+			LOWER(COALESCE(created_by_name, '')) LIKE :q OR
+			LOWER(COALESCE(created_by_email, '')) LIKE :q
+		)`
+	}
+	query, params, err := sqlx.Named(query, args)
+	if err != nil {
+		return 0, fmt.Errorf("count operator_reports: %w", err)
+	}
+	query = s.DB.Rebind(query)
+	var total int
+	if err := s.DB.GetContext(ctx, &total, query, params...); err != nil {
+		return 0, fmt.Errorf("count operator_reports: %w", err)
+	}
+	return total, nil
 }
 
 func (s *Store) UpdateOperatorReport(ctx context.Context, site string, id int64, update UpdateOperatorReport) (OperatorReport, error) {
