@@ -28,11 +28,13 @@ type QueryRequest struct {
 	Conditions    []Condition `json:"conditions"`
 	MaxResults    int         `json:"max_results"`
 	MinGapSeconds int         `json:"min_gap_seconds"`
+	IncludeRows   bool        `json:"include_rows"`
 }
 
 type QueryResult struct {
-	Timestamps []string `json:"timestamps"`
-	SQL        string   `json:"sql,omitempty"`
+	Timestamps []string         `json:"timestamps"`
+	Rows       []map[string]any `json:"rows,omitempty"`
+	SQL        string           `json:"sql,omitempty"`
 }
 
 type QueryService struct {
@@ -99,7 +101,11 @@ func (s *QueryService) QuerySiteEvents(site string, req QueryRequest) (QueryResu
 	if err != nil {
 		return QueryResult{}, err
 	}
-	sqlText, args, err := buildSQL(s.driver, table, req, start, end, allowed)
+	selectClause := "SELECT plctime"
+	if req.IncludeRows {
+		selectClause = "SELECT *"
+	}
+	sqlText, args, err := buildSQLWithSelect(s.driver, table, selectClause, req, start, end, allowed)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -107,19 +113,40 @@ func (s *QueryService) QuerySiteEvents(site string, req QueryRequest) (QueryResu
 		sqlText = s.db.Rebind(sqlText)
 	}
 
-	type row struct {
-		PLCTime any `db:"plctime"`
-	}
-	out := []row{}
-	if err := s.db.Select(&out, sqlText, args...); err != nil {
-		return QueryResult{}, err
+	minGap := time.Duration(req.MinGapSeconds) * time.Second
+	if !req.IncludeRows {
+		type row struct {
+			PLCTime any `db:"plctime"`
+		}
+		out := []row{}
+		if err := s.db.Select(&out, sqlText, args...); err != nil {
+			return QueryResult{}, err
+		}
+		timestamps := make([]string, 0, len(out))
+		var last time.Time
+		for _, r := range out {
+			ts, ok := normalizeTime(r.PLCTime)
+			if !ok {
+				continue
+			}
+			if !last.IsZero() && minGap > 0 && ts.Sub(last) < minGap {
+				continue
+			}
+			last = ts
+			timestamps = append(timestamps, ts.UTC().Format(time.RFC3339))
+		}
+		return QueryResult{Timestamps: timestamps, SQL: sqlText}, nil
 	}
 
-	minGap := time.Duration(req.MinGapSeconds) * time.Second
-	timestamps := make([]string, 0, len(out))
+	rows, err := s.queryRows(sqlText, args...)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	timestamps := make([]string, 0, len(rows))
+	matchedRows := make([]map[string]any, 0, len(rows))
 	var last time.Time
-	for _, r := range out {
-		ts, ok := normalizeTime(r.PLCTime)
+	for _, r := range rows {
+		ts, ok := normalizeTime(firstNonNil(r["plctime"], r["recordtime"]))
 		if !ok {
 			continue
 		}
@@ -128,12 +155,17 @@ func (s *QueryService) QuerySiteEvents(site string, req QueryRequest) (QueryResu
 		}
 		last = ts
 		timestamps = append(timestamps, ts.UTC().Format(time.RFC3339))
+		matchedRows = append(matchedRows, r)
 	}
 
-	return QueryResult{Timestamps: timestamps, SQL: sqlText}, nil
+	return QueryResult{Timestamps: timestamps, Rows: matchedRows, SQL: sqlText}, nil
 }
 
 func buildSQL(driver, table string, req QueryRequest, start, end time.Time, allowed map[string]struct{}) (string, []any, error) {
+	return buildSQLWithSelect(driver, table, "SELECT plctime", req, start, end, allowed)
+}
+
+func buildSQLWithSelect(driver, table, selectClause string, req QueryRequest, start, end time.Time, allowed map[string]struct{}) (string, []any, error) {
 	args := make([]any, 0, len(req.Conditions)+3)
 	whereParts := []string{}
 
@@ -163,14 +195,56 @@ func buildSQL(driver, table string, req QueryRequest, start, end time.Time, allo
 	}
 	whereParts = append(whereParts, "("+strings.Join(condParts, glue)+")")
 
-	q := fmt.Sprintf(
-		"SELECT plctime FROM %s WHERE %s ORDER BY %s ASC LIMIT ?",
-		table,
-		strings.Join(whereParts, " AND "),
-		orderByTime(driver),
-	)
+	q := fmt.Sprintf("%s FROM %s WHERE %s ORDER BY %s ASC LIMIT ?",
+		selectClause, table, strings.Join(whereParts, " AND "), orderByTime(driver))
 	args = append(args, req.MaxResults)
 	return q, args, nil
+}
+
+func (s *QueryService) queryRows(sqlText string, args ...any) ([]map[string]any, error) {
+	iter, err := s.db.Queryx(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	out := make([]map[string]any, 0)
+	for iter.Next() {
+		row := map[string]any{}
+		if err := iter.MapScan(row); err != nil {
+			return nil, err
+		}
+		out = append(out, sanitizeRow(row))
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func sanitizeRow(row map[string]any) map[string]any {
+	out := make(map[string]any, len(row))
+	for k, v := range row {
+		switch t := v.(type) {
+		case []byte:
+			// sqlite often returns TEXT as []byte via MapScan.
+			out[k] = string(t)
+		case time.Time:
+			out[k] = t.UTC().Format(time.RFC3339Nano)
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func firstNonNil(values ...any) any {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
 }
 
 func sqlOp(op string) (string, error) {

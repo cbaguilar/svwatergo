@@ -45,5 +45,6 @@ func (a *EventsAPI) QueryInterestingTimestamps(c *gin.Context) {
 			"returned": len(res.Timestamps),
 		},
 		"timestamps": res.Timestamps,
+		"rows":       res.Rows,
 	})
 }
