@@ -334,6 +334,7 @@ const DetailedDashboard = () => {
   const suppressNextChartClickRef = useRef(false)
   const chartPointsRef = useRef([])
   const timelineRowsRef = useRef([])
+  const pendingURLFocusTsRef = useRef(null)
 
   const siteKey =
     selectedSystem === 'Bluerock'
@@ -376,7 +377,12 @@ const DetailedDashboard = () => {
         setSelectedMetricKeys([parsed.metric])
       }
 
-      setIsLivePlaying(parsed.live)
+      pendingURLFocusTsRef.current = parsed.focusTs
+      if (parsed.focusTs) {
+        setIsLivePlaying(false)
+      } else {
+        setIsLivePlaying(parsed.live)
+      }
       setFocusedTs(null)
     }
 
@@ -460,12 +466,18 @@ const DetailedDashboard = () => {
     })
       .then((payload) => {
         const rows = Array.isArray(payload?.data) ? payload.data : []
+        const pendingFocusTs = pendingURLFocusTsRef.current
+        const focusRow = Number.isFinite(pendingFocusTs) ? nearestRow(rows, pendingFocusTs) : null
+        const resolvedFocusTs = focusRow ? toTs(focusRow) : null
         setTimelineRows(rows)
-        setFocusedTs(null)
+        setFocusedTs(resolvedFocusTs)
         setHoverTs(null)
         setHoverRow(null)
         setHoverPointIndex(-1)
-        setFrozenTs(rows.length ? toTs(rows[rows.length - 1]) : null)
+        setFrozenTs(
+          resolvedFocusTs || (rows.length ? toTs(rows[rows.length - 1]) : null),
+        )
+        pendingURLFocusTsRef.current = null
         setStateError('')
       })
       .catch((err) => {
