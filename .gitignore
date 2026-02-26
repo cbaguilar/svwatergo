@@ -44,7 +44,12 @@ frontend/**/yarn-error.log*
 *.pyo
 *.pyd
 .~lock*
+python/cluster_out/
+python/derived/
+python/derived_test/
+python/pca_out/
 python/analytics/cluster_out/
 python/analytics/derived/
 python/analytics/derived_test/
 python/analytics/pca_out/
+.ipynb_checkpoints/
