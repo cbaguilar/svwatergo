@@ -11,7 +11,7 @@ from .s3 import (
     s3_client,
     split_s3_uri,
 )
-from .audio import read_audio_uri, read_audio_path
+from .audio import read_audio_uri, read_audio_path, read_audio_path_ffmpeg
 from .wyze_sync import SyncItem, SyncResult, sync_wyze_dump
 
 __all__ = [
@@ -28,6 +28,7 @@ __all__ = [
     "split_s3_uri",
     "read_audio_uri",
     "read_audio_path",
+    "read_audio_path_ffmpeg",
     "SyncItem",
     "SyncResult",
     "sync_wyze_dump",

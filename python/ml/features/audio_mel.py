@@ -42,6 +42,7 @@ class MelSegmentsConfig:
     pad_short: bool = True
     truncate_long: bool = True
     dtype: str = "float32"
+    decoder: str = "soundfile"
     n_fft: int = 1024
     win_length: int = 1024
     hop_length: int = 256
@@ -72,6 +73,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--pad-short", action="store_true", default=True, help="Pad segments shorter than target-seconds")
     p.add_argument("--truncate-long", action="store_true", default=True, help="Truncate segments longer than target-seconds")
     p.add_argument("--dtype", default="float32", choices=["float32", "float16"], help="Stored mel dtype inside shards")
+    p.add_argument(
+        "--decoder",
+        default="soundfile",
+        choices=["soundfile", "ffmpeg"],
+        help="Audio decoder (ffmpeg recommended for webm/opus)",
+    )
 
     p.add_argument("--n-fft", type=int, default=1024)
     p.add_argument("--win-length", type=int, default=1024)
@@ -107,6 +114,7 @@ def config_from_args(args: argparse.Namespace) -> MelSegmentsConfig:
         pad_short=bool(args.pad_short),
         truncate_long=bool(args.truncate_long),
         dtype=str(args.dtype),
+        decoder=str(args.decoder),
         n_fft=int(args.n_fft),
         win_length=int(args.win_length),
         hop_length=int(args.hop_length),
@@ -160,7 +168,7 @@ def generate_mel_segments(cfg: MelSegmentsConfig) -> Path:
             print(f"[skip] missing segment file: {seg_path}", flush=True)
             continue
         try:
-            y, sr, subtype = read_wav_with_meta(seg_path)
+            y, sr, subtype = read_wav_with_meta(seg_path, decoder=cfg.decoder, sample_rate=int(cfg.sample_rate), mono=bool(cfg.mono))
             y = ensure_mono(y) if cfg.mono else np.asarray(y, dtype="float32")
             y_res = resample_if_needed(y, int(sr), int(cfg.sample_rate))
             y_fix, fix_meta = fix_length(
@@ -275,6 +283,7 @@ def generate_mel_segments(cfg: MelSegmentsConfig) -> Path:
         "pad_short": bool(cfg.pad_short),
         "truncate_long": bool(cfg.truncate_long),
         "dtype": str(cfg.dtype),
+        "decoder": str(cfg.decoder),
         "n_fft": int(cfg.n_fft),
         "win_length": int(cfg.win_length),
         "hop_length": int(cfg.hop_length),
@@ -333,7 +342,18 @@ def iter_segments(df: pd.DataFrame) -> Iterable[Dict[str, Any]]:
         yield row.to_dict()
 
 
-def read_wav_with_meta(path: Path) -> Tuple[np.ndarray, int, str]:
+def read_wav_with_meta(
+    path: Path,
+    *,
+    decoder: str,
+    sample_rate: int,
+    mono: bool,
+) -> Tuple[np.ndarray, int, str]:
+    if decoder == "ffmpeg":
+        from ..storage.audio import read_audio_path_ffmpeg
+
+        data, sr, subtype = read_audio_path_ffmpeg(path, sample_rate=sample_rate, mono=mono)
+        return np.asarray(data, dtype="float32"), int(sr), str(subtype)
     if sf is not None:
         data, sr = sf.read(path, always_2d=False)
         subtype = sf.info(path).subtype
