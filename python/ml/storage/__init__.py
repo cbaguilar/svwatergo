@@ -12,6 +12,7 @@ from .s3 import (
     split_s3_uri,
 )
 from .audio import read_audio_uri, read_audio_path
+from .wyze_sync import SyncItem, SyncResult, sync_wyze_dump
 
 __all__ = [
     "S3Object",
@@ -27,4 +28,7 @@ __all__ = [
     "split_s3_uri",
     "read_audio_uri",
     "read_audio_path",
+    "SyncItem",
+    "SyncResult",
+    "sync_wyze_dump",
 ]
