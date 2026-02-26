@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Wyze Camera Capture",
+  "version": "0.1.0",
+  "description": "Select Wyze cameras and record WebRTC streams from the Wyze web app.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://my.wyze.com/*", "https://*.wyze.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Wyze Capture"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://my.wyze.com/*", "https://*.wyze.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": ["https://my.wyze.com/*", "https://*.wyze.com/*"]
+    }
+  ],
+  "options_page": "options.html"
+}

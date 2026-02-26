@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Wyze Capture</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Wyze Capture</h1>
+        <div class="sub">Alt/Ctrl-click camera cards to select</div>
+      </header>
+
+      <section>
+        <div class="row">
+          <button id="scan">Scan Cameras</button>
+          <button id="getSelection">Get Selection</button>
+        </div>
+        <div class="row">
+          <label>Selected</label>
+          <div id="selectedList" class="list"></div>
+        </div>
+        <div class="row">
+          <label>Streams</label>
+          <div id="streamsList" class="streams"></div>
+        </div>
+        <div class="row">
+          <textarea id="names" rows="6" placeholder="Camera names (one per line)"></textarea>
+        </div>
+      </section>
+
+      <section>
+        <div class="row">
+          <label>Duration (ms)</label>
+          <input id="duration" type="number" min="1000" step="1000" />
+        </div>
+        <div class="row">
+          <label>Run hours</label>
+          <input id="runHours" type="number" min="0" step="0.5" />
+        </div>
+        <div class="row">
+          <label>Tag</label>
+          <input id="tag" type="text" placeholder="10s" />
+        </div>
+        <div class="row">
+          <label>Min bytes</label>
+          <input id="minBytes" type="number" min="0" step="1024" />
+        </div>
+        <div class="row">
+          <label>Max retries</label>
+          <input id="maxRetries" type="number" min="0" step="1" />
+        </div>
+      </section>
+
+      <section>
+        <div class="row">
+          <label class="inline">
+            <input id="uploadEnabled" type="checkbox" />
+            Upload instead of download
+          </label>
+        </div>
+        <div class="row">
+          <input id="uploadUrl" type="text" placeholder="https://your-server/upload" />
+        </div>
+        <div class="row">
+          <label class="inline">
+            <input id="useRecorder" type="checkbox" />
+            Save to picked folder
+          </label>
+          <button id="openRecorder">Open Recorder</button>
+        </div>
+      </section>
+
+      <section>
+        <div class="row">
+          <button id="recordSequential" class="primary">Record Sequential</button>
+          <button id="recordOne">Record First</button>
+        </div>
+        <div class="row">
+          <button id="stopAll">Stop</button>
+          <button id="saveDefaults">Save Defaults</button>
+        </div>
+      </section>
+
+      <section>
+        <div id="status" class="status"></div>
+      </section>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

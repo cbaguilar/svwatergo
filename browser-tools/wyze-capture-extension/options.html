@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Wyze Capture Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Wyze Capture Defaults</h1>
+      <div class="grid">
+        <label>Duration (ms)</label>
+        <input id="duration" type="number" min="1000" step="1000" />
+
+        <label>Run hours</label>
+        <input id="runHours" type="number" min="0" step="0.5" />
+
+        <label>Tag</label>
+        <input id="tag" type="text" placeholder="10s" />
+
+        <label>Min bytes</label>
+        <input id="minBytes" type="number" min="0" step="1024" />
+
+        <label>Max retries</label>
+        <input id="maxRetries" type="number" min="0" step="1" />
+
+        <label class="inline">Upload enabled</label>
+        <input id="uploadEnabled" type="checkbox" />
+
+        <label>Upload URL</label>
+        <input id="uploadUrl" type="text" placeholder="https://your-server/upload" />
+
+        <label class="inline">Save to picked folder</label>
+        <input id="useRecorder" type="checkbox" />
+      </div>
+      <div class="row">
+        <button id="save">Save</button>
+        <span id="status"></span>
+      </div>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>
