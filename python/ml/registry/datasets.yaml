@@ -1,0 +1,9 @@
+# Dataset registry (YAML)
+# Add datasets here; manifests are JSONL or Parquet paths relative to repo root.
+
+datasets:
+  example-audio-raw:
+    manifest: data/manifests/example_audio_raw.jsonl
+    version: v1
+    feature_set: null
+    notes: "Example placeholder"
