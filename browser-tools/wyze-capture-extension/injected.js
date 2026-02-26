@@ -286,9 +286,23 @@
 
   async function recordSequential({ names, durationMs, tag, minBytes, maxRetries }) {
     const out = [];
+    const startedAt = Date.now();
     for (const name of names) {
       const res = await recordStream({ name, durationMs, tag, minBytes, maxRetries });
       out.push(res);
+      if (window.__wyzeRecordProgressCb) {
+        let totalBytes = 0;
+        for (const r of out) totalBytes += Number(r && r.bytes ? r.bytes : 0);
+        window.__wyzeRecordProgressCb({
+          mode: "sequential",
+          completed: out.length,
+          totalPlanned: names.length,
+          currentName: name,
+          lastBytes: Number(res && res.bytes ? res.bytes : 0),
+          totalBytes,
+          elapsedMs: Date.now() - startedAt
+        });
+      }
     }
     return out;
   }
@@ -302,6 +316,20 @@
       const name = names[idx % names.length];
       const res = await recordStream({ name, durationMs, tag, minBytes, maxRetries });
       out.push(res);
+      if (window.__wyzeRecordProgressCb) {
+        let totalBytes = 0;
+        for (const r of out) totalBytes += Number(r && r.bytes ? r.bytes : 0);
+        window.__wyzeRecordProgressCb({
+          mode: "loop",
+          completed: out.length,
+          totalPlanned: null,
+          currentName: name,
+          lastBytes: Number(res && res.bytes ? res.bytes : 0),
+          totalBytes,
+          elapsedMs: Date.now() - start,
+          totalMs
+        });
+      }
       idx += 1;
     }
     return out;
@@ -424,6 +452,16 @@
     }, "*");
   }
 
+  function respondProgress(requestId, progress) {
+    window.postMessage({
+      source: "wyze-ext",
+      type: "WYZE_EXT_PROGRESS",
+      requestId,
+      ok: true,
+      progress
+    }, "*");
+  }
+
   window.addEventListener("message", (event) => {
     const data = event.data || {};
     if (data.source !== "wyze-ext" || data.type !== "WYZE_EXT_CMD") return;
@@ -435,7 +473,9 @@
         const tag = payload.tag || `${durationMs}ms`;
         const minBytes = Number(payload.minBytes || 0);
         const maxRetries = Number(payload.maxRetries || 0);
+        window.__wyzeRecordProgressCb = (progress) => respondProgress(requestId, progress);
         const result = await recordSequential({ names, durationMs, tag, minBytes, maxRetries });
+        window.__wyzeRecordProgressCb = null;
         respond(requestId, true, result, null);
         return;
       }
@@ -447,7 +487,9 @@
         const minBytes = Number(payload.minBytes || 0);
         const maxRetries = Number(payload.maxRetries || 0);
         if (!totalMs || totalMs <= 0) throw new Error("totalMs must be > 0");
+        window.__wyzeRecordProgressCb = (progress) => respondProgress(requestId, progress);
         const result = await recordLoop({ names, durationMs, totalMs, tag, minBytes, maxRetries });
+        window.__wyzeRecordProgressCb = null;
         respond(requestId, true, result, null);
         return;
       }

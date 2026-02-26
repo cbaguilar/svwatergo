@@ -3,6 +3,7 @@
 
   const injectedId = "wyze-rtc-injected";
   const pending = new Map();
+  const progressWatchers = new Map();
 
   function log(...args) {
     try {
@@ -23,15 +24,20 @@
     (document.head || document.documentElement).appendChild(s);
   }
 
-  function sendToPage(cmd, payload) {
+  function sendToPage(cmd, payload, opts = {}) {
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const msg = { source: "wyze-ext", type: "WYZE_EXT_CMD", cmd, payload, requestId };
+    const timeoutMs = Number(opts.timeoutMs || 15000);
     const p = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(requestId);
+        progressWatchers.delete(requestId);
         reject(new Error(`Timeout waiting for ${cmd}`));
-      }, 15000);
+      }, timeoutMs);
       pending.set(requestId, { resolve, reject, timer });
+      if (typeof opts.onProgress === "function") {
+        progressWatchers.set(requestId, opts.onProgress);
+      }
     });
     window.postMessage(msg, "*");
     return p;
@@ -39,8 +45,12 @@
 
   const OVERLAY_ID = "wyze-overlay-root";
 
+  function getOverlayHost() {
+    return document.getElementById(OVERLAY_ID);
+  }
+
   function buildOverlay() {
-    if (document.getElementById(OVERLAY_ID)) return;
+    if (getOverlayHost()) return;
     const host = document.createElement("div");
     host.id = OVERLAY_ID;
     host.style.position = "fixed";
@@ -114,6 +124,17 @@
     wireOverlay(shadow);
   }
 
+  function showOverlay() {
+    buildOverlay();
+    const host = getOverlayHost();
+    if (host) host.style.display = "block";
+  }
+
+  function hideOverlay() {
+    const host = getOverlayHost();
+    if (host) host.style.display = "none";
+  }
+
   function wireOverlay(shadow) {
     const $ = (id) => shadow.getElementById(id);
     const streamsEl = $("streams");
@@ -144,6 +165,24 @@
       uploadUrl: $("uploadUrl").value || "",
       useRecorder: $("useRecorder").checked
     });
+
+    const estimateTimeoutMs = (cmd, names, cfg) => {
+      const durationMs = Number(cfg.durationMs || 10000);
+      const retries = Math.max(0, Number(cfg.maxRetries || 0));
+      const perRecordingMs = Math.max(1000, durationMs) * (retries + 1) + 5000;
+      if (cmd === "recordLoop") {
+        const totalMs = Math.max(0, Math.round(Number(cfg.runHours || 0) * 60 * 60 * 1000));
+        return Math.max(30000, totalMs + 120000);
+      }
+      if (cmd === "recordSequential") {
+        const n = Math.max(1, (names || []).length || 1);
+        return Math.max(30000, (n * perRecordingMs) + 30000);
+      }
+      if (cmd === "recordOne") {
+        return Math.max(30000, perRecordingMs + 15000);
+      }
+      return 15000;
+    };
 
     const persistUI = async () => {
       const cfg = readConfig();
@@ -255,6 +294,9 @@
             tag: cfg.tag || `${cfg.durationMs}ms`,
             minBytes: cfg.minBytes,
             maxRetries: cfg.maxRetries
+          }, {
+            timeoutMs: estimateTimeoutMs("recordLoop", names, cfg),
+            onProgress: (p) => setStatus(formatProgressStatus(p))
           });
           setStatus(`Done: ${(res || []).length} recording(s)`);
         } else {
@@ -265,6 +307,9 @@
             tag: cfg.tag || `${cfg.durationMs}ms`,
             minBytes: cfg.minBytes,
             maxRetries: cfg.maxRetries
+          }, {
+            timeoutMs: estimateTimeoutMs("recordSequential", names, cfg),
+            onProgress: (p) => setStatus(formatProgressStatus(p))
           });
           setStatus(`Done: ${(res || []).length} recording(s)`);
         }
@@ -286,7 +331,7 @@
           tag: cfg.tag || `${cfg.durationMs}ms`,
           minBytes: cfg.minBytes,
           maxRetries: cfg.maxRetries
-        });
+        }, { timeoutMs: estimateTimeoutMs("recordOne", names, cfg) });
         setStatus(`Saved: ${res && res.filename ? res.filename : ""}`);
       } catch (e) {
         setStatus(String(e.message || e));
@@ -356,8 +401,19 @@
     const entry = pending.get(requestId);
     clearTimeout(entry.timer);
     pending.delete(requestId);
+    progressWatchers.delete(requestId);
     if (ok) entry.resolve(result);
     else entry.reject(new Error(error || "Unknown error"));
+  });
+
+  window.addEventListener("message", (event) => {
+    const data = event.data || {};
+    if (data.source !== "wyze-ext" || data.type !== "WYZE_EXT_PROGRESS") return;
+    const requestId = data.requestId;
+    if (!requestId || !progressWatchers.has(requestId)) return;
+    try {
+      progressWatchers.get(requestId)(data.progress || {});
+    } catch (_) {}
   });
 
 
@@ -519,8 +575,36 @@
         sendResponse({ ok: true, items });
         return;
       }
+      if (msg.type === "WYZE_SHOW_OVERLAY") {
+        showOverlay();
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === "WYZE_HIDE_OVERLAY") {
+        hideOverlay();
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === "WYZE_PING") {
+        sendResponse({ ok: true });
+        return;
+      }
       if (msg.type === "WYZE_CMD") {
-        const result = await sendToPage(msg.cmd, msg.payload || {});
+        let timeoutMs = 15000;
+        const payload = msg.payload || {};
+        if (msg.cmd === "recordLoop") {
+          timeoutMs = Math.max(30000, Number(payload.totalMs || 0) + 120000);
+        } else if (msg.cmd === "recordSequential") {
+          const names = Array.isArray(payload.names) ? payload.names : [];
+          const durationMs = Number(payload.durationMs || 10000);
+          const retries = Math.max(0, Number(payload.maxRetries || 0));
+          timeoutMs = Math.max(30000, names.length * ((retries + 1) * durationMs + 5000) + 30000);
+        } else if (msg.cmd === "recordOne") {
+          const durationMs = Number(payload.durationMs || 10000);
+          const retries = Math.max(0, Number(payload.maxRetries || 0));
+          timeoutMs = Math.max(30000, ((retries + 1) * durationMs + 5000) + 15000);
+        }
+        const result = await sendToPage(msg.cmd, payload, { timeoutMs });
         sendResponse({ ok: true, result });
         return;
       }
@@ -535,3 +619,25 @@
   buildOverlay();
   document.addEventListener("contextmenu", handleContextRecord, true);
 })();
+    const fmtBytes = (n) => {
+      const x = Number(n || 0);
+      if (x >= 1024 * 1024 * 1024) return `${(x / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+      if (x >= 1024 * 1024) return `${(x / (1024 * 1024)).toFixed(1)} MB`;
+      if (x >= 1024) return `${(x / 1024).toFixed(1)} KB`;
+      return `${x} B`;
+    };
+    const fmtDur = (ms) => {
+      const s = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+      const hh = Math.floor(s / 3600);
+      const mm = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      if (hh > 0) return `${hh}h ${String(mm).padStart(2, "0")}m ${String(ss).padStart(2, "0")}s`;
+      return `${mm}m ${String(ss).padStart(2, "0")}s`;
+    };
+    const formatProgressStatus = (p) => {
+      const done = Number(p.completed || 0);
+      const total = p.totalPlanned == null ? "?" : Number(p.totalPlanned);
+      const cur = p.currentName ? ` current=${p.currentName}` : "";
+      const loop = p.mode === "loop" && p.totalMs ? ` / ${fmtDur(p.totalMs)}` : "";
+      return `Progress: ${done}/${total} recordings, bytes=${fmtBytes(p.totalBytes)}, elapsed=${fmtDur(p.elapsedMs)}${loop}, last=${fmtBytes(p.lastBytes)}${cur}`;
+    };
