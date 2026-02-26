@@ -5,7 +5,12 @@ const DEFAULT_HEADERS = {
   Accept: 'application/json',
 }
 
-async function handleJsonResponse(response) {
+function notifyAuthExpired() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('svwaternet:auth-expired'))
+}
+
+async function handleJsonResponse(response, options = {}) {
   const contentType = response.headers.get('content-type') || ''
   const isJson = contentType.includes('application/json')
   const payload = isJson ? await response.json() : null
@@ -22,6 +27,9 @@ async function handleJsonResponse(response) {
   const err = new Error(message)
   err.status = response.status
   err.payload = payload
+  if (response.status === 401 && !options.skipAuth) {
+    notifyAuthExpired()
+  }
   throw err
 }
 
@@ -48,7 +56,7 @@ export async function apiGet(path, options = {}) {
     headers,
     signal: options.signal,
   })
-  return handleJsonResponse(response)
+  return handleJsonResponse(response, options)
 }
 
 export async function apiPost(path, body, options = {}) {
@@ -60,7 +68,7 @@ export async function apiPost(path, body, options = {}) {
     body: JSON.stringify(body),
     signal: options.signal,
   })
-  return handleJsonResponse(response)
+  return handleJsonResponse(response, options)
 }
 
 export async function apiPut(path, body, options = {}) {
@@ -72,7 +80,7 @@ export async function apiPut(path, body, options = {}) {
     body: JSON.stringify(body),
     signal: options.signal,
   })
-  return handleJsonResponse(response)
+  return handleJsonResponse(response, options)
 }
 
 export async function apiDelete(path, options = {}) {
@@ -83,5 +91,5 @@ export async function apiDelete(path, options = {}) {
     headers,
     signal: options.signal,
   })
-  return handleJsonResponse(response)
+  return handleJsonResponse(response, options)
 }

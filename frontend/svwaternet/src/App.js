@@ -104,6 +104,25 @@ const App = () => {
     }
   }, [])
 
+  useEffect(() => {
+    const onAuthExpired = () => {
+      clearAuthSession()
+      setAuthState((prev) => ({
+        ...prev,
+        authenticated: false,
+        user: null,
+        error: 'Session expired. Please sign in again.',
+      }))
+
+      if (typeof window !== 'undefined' && window.location.hash !== '#/login') {
+        window.location.hash = '#/login'
+      }
+    }
+
+    window.addEventListener('svwaternet:auth-expired', onAuthExpired)
+    return () => window.removeEventListener('svwaternet:auth-expired', onAuthExpired)
+  }, [])
+
   const handleLoginSuccess = ({ token, user }) => {
     setAuthSession(token, user || null)
     setAuthState((prev) => ({
@@ -130,9 +149,7 @@ const App = () => {
 
   return (
     <HashRouter>
-      <Suspense
-        fallback={<LoadingScreen />}
-      >
+      <Suspense fallback={<LoadingScreen />}>
         <Routes>
           <Route
             exact
