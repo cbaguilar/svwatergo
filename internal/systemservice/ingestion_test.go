@@ -29,6 +29,10 @@ func (f *fakeMgr) GetLatest() (map[string]interface{}, error) {
 	return map[string]interface{}{"recordtime": "2025-11-05T03:12:41Z"}, nil
 }
 
+func (f *fakeMgr) Coverage() (systemservice.Coverage, error) {
+	return systemservice.Coverage{}, nil
+}
+
 /* Tests the common situation where the system sends an array
 * of records, some of which may fail. The response should be
 * a Multi-Status (207) with details on which records failed.
@@ -38,7 +42,7 @@ func TestSaveSensorDataHandler_207(t *testing.T) {
 	reg := systemservice.NewRegistry(map[string]systemservice.SystemManager{"fakesite": f})
 	ing := systemservice.DataIngestionService{Reg: reg}
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&ing, reg, meta, nil, nil, nil, nil, false, false)
+	r := api.SetupRouter(&ing, reg, meta, nil, nil, nil, nil, nil, false, false)
 
 	// Two records, second has unknown site, expect fail
 
@@ -70,7 +74,7 @@ func TestSaveSensorDataHandler_InvalidJSON(t *testing.T) {
 	)
 	ing := systemservice.DataIngestionService{Reg: reg}
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&ing, reg, meta, nil, nil, nil, nil, false, false)
+	r := api.SetupRouter(&ing, reg, meta, nil, nil, nil, nil, nil, false, false)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/uploadSensorDataNew", bytes.NewReader([]byte(`invalid json`)))

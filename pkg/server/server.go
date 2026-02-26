@@ -11,6 +11,7 @@ import (
 
 	"github.com/cbaguilar/svwatergo/config"
 	"github.com/cbaguilar/svwatergo/internal/api"
+	"github.com/cbaguilar/svwatergo/internal/audio"
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/database"
 	"github.com/cbaguilar/svwatergo/internal/mail"
@@ -73,6 +74,10 @@ func (s *Server) Start() error {
 	if err := reportsStore.EnsureSchema(context.Background()); err != nil {
 		log.Fatalf("Failed to ensure reports schema: %v", err)
 	}
+	audioStore := audio.NewStore(dbClient)
+	if err := audioStore.EnsureSchema(context.Background()); err != nil {
+		log.Fatalf("Failed to ensure audio schema: %v", err)
+	}
 
 	var authn *auth.Auth
 	adminEmails := auth.AdminEmailsFromEnv()
@@ -102,7 +107,7 @@ func (s *Server) Start() error {
 		log.Printf("INGEST_DISABLED enabled: upload ingestion endpoints are disabled")
 	}
 
-	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, mailSender, adminEmails, ingestDisabled, readOnly)
+	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, audioStore, mailSender, adminEmails, ingestDisabled, readOnly)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }
@@ -263,6 +268,9 @@ func checkPeriodicStaleData(reg systemservice.Registry, mailSender mail.Sender, 
 
 func sendStaleSiteAlert(mailSender mail.Sender, recipients []string, site string, ts time.Time, age, maxAge time.Duration, checkedAt time.Time, repeatEvery time.Duration, isRepeat bool) {
 	subjectPrefix := "SVWaterGo stale data alert"
+	if isRepeat {
+		subjectPrefix = "SVWaterGo stale data reminder"
+	}
 	siteLabel := formatSiteAlertName(site)
 	ageMinutes := int(age.Round(time.Minute) / time.Minute)
 	if ageMinutes < 1 {

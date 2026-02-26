@@ -27,6 +27,10 @@ func (m mgrLatest) GetLatest() (map[string]interface{}, error) {
 	return m.data, nil
 }
 
+func (m mgrLatest) Coverage() (systemservice.Coverage, error) {
+	return systemservice.Coverage{}, nil
+}
+
 // Tests that we properly fail for an unknown location
 func TestLatest_NotFound(t *testing.T) {
 	m := mgrLatest{
@@ -36,7 +40,7 @@ func TestLatest_NotFound(t *testing.T) {
 	})
 
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil, nil, nil, false, false)
+	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil, nil, nil, nil, false, false)
 
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/sites/unknownloc/state/latest", nil)
@@ -56,7 +60,7 @@ func TestLatest_Success(t *testing.T) {
 	})
 
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil, nil, nil, false, false)
+	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil, nil, nil, nil, false, false)
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/sites/testlocation/state/latest", nil)
 	r.ServeHTTP(rr, req)

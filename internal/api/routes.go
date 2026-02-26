@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cbaguilar/svwatergo/internal/analytics"
+	"github.com/cbaguilar/svwatergo/internal/audio"
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
@@ -15,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, audioStore *audio.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -60,7 +61,10 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	liveState := NewLiveStateAPI(reg, meta)
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
-	analyticsAPI := NewAnalyticsAPI(analytics.NewStore())
+	audioAPI := NewAudioAPI(audioStore)
+	analyticsStore := analytics.NewStore()
+	analyticsRunner := analytics.NewRunner(analyticsStore)
+	analyticsAPI := NewAnalyticsAPI(analyticsStore, analyticsRunner)
 	eventsAPI := NewEventsAPI()
 	authAPI := NewAuthAPI(authn)
 	ingestion.OnIngest = liveState.NotifySiteUpdated
@@ -84,8 +88,24 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		analyticsGroup := v1.Group("/analytics")
 		analyticsGroup.POST("/feature-runs", analyticsAPI.CreateFeatureRun)
 		analyticsGroup.POST("/pca-runs", analyticsAPI.CreatePCARun)
+		analyticsGroup.POST("/audio-align-runs", analyticsAPI.CreateAudioAlignPLCRun)
 		analyticsGroup.GET("/jobs", analyticsAPI.ListJobs)
 		analyticsGroup.GET("/jobs/:id", analyticsAPI.GetJob)
+
+		audioGroup := v1.Group("/audio")
+		audioGroup.GET("/sources", audioAPI.ListSources)
+		audioGroup.GET("/artifacts", audioAPI.ListArtifacts)
+		audioGroup.GET("/artifacts/:id", audioAPI.GetArtifact)
+		if readOnly {
+			disabled := func(c *gin.Context) {
+				c.JSON(http.StatusServiceUnavailable, errJSON("ReadOnly", "server is in read-only mode", nil))
+			}
+			audioGroup.POST("/sources", disabled)
+			audioGroup.POST("/artifacts", disabled)
+		} else {
+			audioGroup.POST("/sources", audioAPI.UpsertSource)
+			audioGroup.POST("/artifacts", audioAPI.UpsertArtifact)
+		}
 
 		sites := v1.Group("/sites/:site")
 		sites.GET("/state/latest", state.GetLatest)
