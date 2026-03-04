@@ -70,6 +70,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sensor-pca-components", type=int, default=32)
     p.add_argument("--cca-components", type=int, default=8)
     p.add_argument(
+        "--no-audio-pca",
+        action="store_true",
+        help="Use standardized raw mel vectors directly for CCA (no PCA reduction)",
+    )
+    p.add_argument(
+        "--no-sensor-pca",
+        action="store_true",
+        help="Use standardized raw sensor vectors directly for CCA (no PCA reduction)",
+    )
+    p.add_argument(
         "--sensor-col-regex",
         default="",
         help="Optional regex to keep only matching numeric sensor columns",
@@ -241,17 +251,30 @@ def main() -> None:
     X_sensor_train_s = sensor_scaler.fit_transform(X_sensor_train)
     X_sensor_test_s = sensor_scaler.transform(X_sensor_test)
 
-    a_dim = min(int(args.audio_pca_components), X_audio_train_s.shape[0], X_audio_train_s.shape[1])
-    s_dim = min(int(args.sensor_pca_components), X_sensor_train_s.shape[0], X_sensor_train_s.shape[1])
-    if a_dim < 2 or s_dim < 2:
-        raise SystemExit("Not enough dimensions for PCA reduction.")
+    audio_pca = None
+    sensor_pca = None
 
-    audio_pca = PCA(n_components=a_dim, random_state=int(args.random_state))
-    sensor_pca = PCA(n_components=s_dim, random_state=int(args.random_state))
-    A_train = audio_pca.fit_transform(X_audio_train_s)
-    A_test = audio_pca.transform(X_audio_test_s)
-    S_train = sensor_pca.fit_transform(X_sensor_train_s)
-    S_test = sensor_pca.transform(X_sensor_test_s)
+    if args.no_audio_pca:
+        A_train = X_audio_train_s
+        A_test = X_audio_test_s
+    else:
+        a_dim = min(int(args.audio_pca_components), X_audio_train_s.shape[0], X_audio_train_s.shape[1])
+        if a_dim < 2:
+            raise SystemExit("Not enough dimensions for audio PCA reduction.")
+        audio_pca = PCA(n_components=a_dim, random_state=int(args.random_state))
+        A_train = audio_pca.fit_transform(X_audio_train_s)
+        A_test = audio_pca.transform(X_audio_test_s)
+
+    if args.no_sensor_pca:
+        S_train = X_sensor_train_s
+        S_test = X_sensor_test_s
+    else:
+        s_dim = min(int(args.sensor_pca_components), X_sensor_train_s.shape[0], X_sensor_train_s.shape[1])
+        if s_dim < 2:
+            raise SystemExit("Not enough dimensions for sensor PCA reduction.")
+        sensor_pca = PCA(n_components=s_dim, random_state=int(args.random_state))
+        S_train = sensor_pca.fit_transform(X_sensor_train_s)
+        S_test = sensor_pca.transform(X_sensor_test_s)
 
     cca_k = min(int(args.cca_components), A_train.shape[1], S_train.shape[1])
     if cca_k < 1:
@@ -298,6 +321,8 @@ def main() -> None:
             "cca_components": int(args.cca_components),
             "test_size": float(args.test_size),
             "random_state": int(args.random_state),
+            "no_audio_pca": bool(args.no_audio_pca),
+            "no_sensor_pca": bool(args.no_sensor_pca),
         },
     }
     model_path = out_dir / "cca_model.joblib"
