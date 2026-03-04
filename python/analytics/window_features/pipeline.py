@@ -50,15 +50,36 @@ def generate_window_features_for_day(
     stride_seconds: Optional[int] = None,
     max_gap_stale_s: float = 300.0,
 ) -> Tuple[pd.DataFrame, Dict[str, object], Dict[str, object]]:
+    data_key = default_s3_data_key(s3_prefix, site, day)
+    df = read_parquet_bytes_to_df(s3_get_bytes(s3_bucket, data_key))
+    return generate_window_features_for_df(
+        site=site,
+        day=day,
+        df=df,
+        source=f"s3://{s3_bucket}/{data_key}",
+        timestamp_col=timestamp_col,
+        window_seconds=window_seconds,
+        stride_seconds=stride_seconds,
+        max_gap_stale_s=max_gap_stale_s,
+    )
+
+
+def generate_window_features_for_df(
+    *,
+    site: str,
+    day: str,
+    df: pd.DataFrame,
+    source: str = "local",
+    timestamp_col: Optional[str] = None,
+    window_seconds: int = 60,
+    stride_seconds: Optional[int] = None,
+    max_gap_stale_s: float = 300.0,
+) -> Tuple[pd.DataFrame, Dict[str, object], Dict[str, object]]:
     spec = PIPELINES.get(site)
     if spec is None:
         raise ValueError(f"Unknown site: {site} (known: {sorted(PIPELINES)})")
 
     ts_col = timestamp_col or spec.ts_col
-
-    data_key = default_s3_data_key(s3_prefix, site, day)
-    df = read_parquet_bytes_to_df(s3_get_bytes(s3_bucket, data_key))
-
     df, groups, report = apply_site_spec(df, spec)
     _, stats = analyze_interarrival(df, ts_col)
 
@@ -101,7 +122,7 @@ def generate_window_features_for_day(
         "day": day,
         "window_seconds": int(window_seconds),
         "stride_seconds": int(window_seconds if stride_seconds is None else stride_seconds),
-        "source": f"s3://{s3_bucket}/{data_key}",
+        "source": str(source),
         "timestamp_col": ts_col,
         "n_windows": int(len(feat)),
         "n_nonempty_windows": int((feat["n_rows"] > 0).sum()),
@@ -115,7 +136,6 @@ def generate_window_features_for_day(
         "interarrival_stats": stats,
         "site_spec": spec.site,
     }
-
     return feat, meta, report
 
 
