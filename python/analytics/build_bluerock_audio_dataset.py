@@ -28,15 +28,15 @@ def _import_ml_audio_mel():
 
 def _import_window_features_pipeline():
     try:
-        from python.analytics.window_features.pipeline import generate_window_features_for_df  # type: ignore
-        return generate_window_features_for_df
+        from python.analytics.window_features.pipeline import generate_window_features_for_intervals_df  # type: ignore
+        return generate_window_features_for_intervals_df
     except Exception:
         repo_root = Path(__file__).resolve().parents[2]
         repo_root_str = str(repo_root)
         if repo_root_str not in sys.path:
             sys.path.insert(0, repo_root_str)
-        from python.analytics.window_features.pipeline import generate_window_features_for_df  # type: ignore
-        return generate_window_features_for_df
+        from python.analytics.window_features.pipeline import generate_window_features_for_intervals_df  # type: ignore
+        return generate_window_features_for_intervals_df
 
 
 EPOCH_WAV_RE = re.compile(r"^bluerock_(?P<epoch>\d+(?:\.\d+)?)\.wav$", re.IGNORECASE)
@@ -284,64 +284,42 @@ def _read_plc_day(plc_roots: Sequence[Path], *, site: str, day: str) -> Optional
     return None
 
 
-def _window_features_for_day(
+def _window_features_for_segments(
     *,
-    generate_window_features_for_df,
+    generate_window_features_for_intervals_df,
     plc_roots: Sequence[Path],
     site: str,
     day: str,
-    window_seconds: int,
-    stride_seconds: int,
+    mel_df: pd.DataFrame,
     max_gap_stale_s: float,
 ) -> Optional[pd.DataFrame]:
     plc_df = _read_plc_day(plc_roots, site=site, day=day)
     if plc_df is None:
         print(f"[skip] plc day parquet not found for site={site} day={day}", flush=True)
         return None
-    feat, _meta, _report = generate_window_features_for_df(
+    feat, _meta, _report = generate_window_features_for_intervals_df(
         site=site,
         day=day,
         df=plc_df,
+        interval_start=mel_df["segment_start_ts_utc"],
+        interval_end=mel_df["segment_end_ts_utc"],
         source="local",
         timestamp_col=None,
-        window_seconds=int(window_seconds),
-        stride_seconds=int(stride_seconds),
         max_gap_stale_s=float(max_gap_stale_s),
     )
-    feat = feat.sort_values("window_start_ts").reset_index(drop=True)
-    feat["window_start_ts"] = pd.to_datetime(feat["window_start_ts"], utc=True, errors="coerce")
-    feat["window_end_ts"] = pd.to_datetime(feat["window_end_ts"], utc=True, errors="coerce")
     return feat
 
 
-def _join_mel_with_window_features(mel_df: pd.DataFrame, win_df: pd.DataFrame) -> pd.DataFrame:
-    df = mel_df.copy()
-    df["segment_start_ts_utc"] = pd.to_datetime(df["segment_start_ts_utc"], utc=True, errors="coerce")
-    df["segment_end_ts_utc"] = pd.to_datetime(df["segment_end_ts_utc"], utc=True, errors="coerce")
-    df = df[df["segment_start_ts_utc"].notna() & df["segment_end_ts_utc"].notna()].copy()
-    df["segment_mid_ts_utc"] = df["segment_start_ts_utc"] + ((df["segment_end_ts_utc"] - df["segment_start_ts_utc"]) / 2)
-    df["__rowid"] = range(len(df))
-
-    right = win_df.sort_values("window_start_ts").copy()
-    left = df.sort_values("segment_mid_ts_utc").copy()
-
-    merged = pd.merge_asof(
-        left,
-        right,
-        left_on="segment_mid_ts_utc",
-        right_on="window_start_ts",
-        direction="backward",
-    )
-
-    ok = merged["window_start_ts"].notna() & merged["window_end_ts"].notna() & (merged["segment_mid_ts_utc"] < merged["window_end_ts"])
-    merged["window_match_found"] = ok.astype("int8")
-
-    win_cols = [c for c in right.columns if c not in ("site", "day")]
-    for c in win_cols:
-        merged.loc[~ok, c] = pd.NA
-
-    merged = merged.sort_values("__rowid").drop(columns=["__rowid"]).reset_index(drop=True)
-    return merged
+def _join_mel_with_interval_features(mel_df: pd.DataFrame, feat_df: pd.DataFrame) -> pd.DataFrame:
+    left = mel_df.reset_index(drop=True).copy()
+    right = feat_df.reset_index(drop=True).copy()
+    if len(left) != len(right):
+        raise ValueError(f"row mismatch in interval join: mel={len(left)} feat={len(right)}")
+    overlap = set(left.columns).intersection(set(right.columns))
+    if overlap:
+        right = right.rename(columns={c: f"plc_{c}" for c in overlap})
+    out = pd.concat([left, right], axis=1)
+    return out
 
 
 def _attach_target_aliases(df: pd.DataFrame, target_states: Sequence[str]) -> pd.DataFrame:
@@ -391,7 +369,7 @@ def main() -> None:
     date_filter = set(args.date) if args.date else None
 
     MelSegmentsConfig, generate_mel_segments = _import_ml_audio_mel()
-    generate_window_features_for_df = _import_window_features_pipeline()
+    generate_window_features_for_intervals_df = _import_window_features_pipeline()
 
     repo_root = Path(__file__).resolve().parents[2]
     out_root = paths["out_root"]
@@ -431,29 +409,12 @@ def main() -> None:
         raise SystemExit("No source/day manifests found to process.")
 
     target_states = list(args.target_state) if args.target_state else _default_target_states()
-    win_cache: Dict[str, pd.DataFrame] = {}
     out_index_rows: List[Dict[str, object]] = []
 
     for sd in sorted(source_days, key=lambda x: (x.day, x.source)):
         if not sd.segments_manifest.exists():
             print(f"[skip] missing segment manifest: {sd.segments_manifest}", flush=True)
             continue
-
-        if sd.day not in win_cache:
-            win_df = _window_features_for_day(
-                generate_window_features_for_df=generate_window_features_for_df,
-                plc_roots=plc_roots,
-                site=args.site,
-                day=sd.day,
-                window_seconds=int(args.window_seconds),
-                stride_seconds=int(args.stride_seconds),
-                max_gap_stale_s=float(args.max_gap_stale_s),
-            )
-            if win_df is None:
-                continue
-            win_cache[sd.day] = win_df
-        else:
-            win_df = win_cache[sd.day]
 
         mel_out = out_root / "intermediate" / "mels" / f"source={sd.source}" / f"date={sd.day}"
         mel_manifest = mel_out / "dataset=audio_mel_segments" / f"site={args.site}" / "audio_mel_segments.parquet"
@@ -478,7 +439,17 @@ def main() -> None:
             mel_df["audio_source"] = sd.source
             mel_df["audio_day"] = sd.day
 
-            joined = _join_mel_with_window_features(mel_df, win_df)
+            feat_df = _window_features_for_segments(
+                generate_window_features_for_intervals_df=generate_window_features_for_intervals_df,
+                plc_roots=plc_roots,
+                site=args.site,
+                day=sd.day,
+                mel_df=mel_df,
+                max_gap_stale_s=float(args.max_gap_stale_s),
+            )
+            if feat_df is None:
+                continue
+            joined = _join_mel_with_interval_features(mel_df, feat_df)
             joined = _attach_target_aliases(joined, target_states)
 
             out_parquet = (

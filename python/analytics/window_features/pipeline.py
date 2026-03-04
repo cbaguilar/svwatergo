@@ -16,7 +16,11 @@ from .io import (
 )
 from .postprocess import apply_flow_gates_to_features, add_continuous_window_derivatives
 from .specs import PIPELINES, SitePipelineSpec, apply_site_spec
-from .window import analyze_interarrival, compute_window_features_for_day
+from .window import (
+    analyze_interarrival,
+    compute_window_features_for_day,
+    compute_window_features_for_intervals,
+)
 
 
 def build_output_paths(
@@ -135,6 +139,80 @@ def generate_window_features_for_df(
         "flow_gates": [asdict(g) for g in (spec.flow_gates or [])],
         "interarrival_stats": stats,
         "site_spec": spec.site,
+    }
+    return feat, meta, report
+
+
+def generate_window_features_for_intervals_df(
+    *,
+    site: str,
+    day: str,
+    df: pd.DataFrame,
+    interval_start: pd.Series,
+    interval_end: pd.Series,
+    source: str = "local",
+    timestamp_col: Optional[str] = None,
+    max_gap_stale_s: float = 300.0,
+) -> Tuple[pd.DataFrame, Dict[str, object], Dict[str, object]]:
+    spec = PIPELINES.get(site)
+    if spec is None:
+        raise ValueError(f"Unknown site: {site} (known: {sorted(PIPELINES)})")
+
+    ts_col = timestamp_col or spec.ts_col
+    df, groups, report = apply_site_spec(df, spec)
+    _, stats = analyze_interarrival(df, ts_col)
+
+    feat = compute_window_features_for_intervals(
+        df,
+        site=site,
+        day=day,
+        ts_col=ts_col,
+        groups=groups,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        max_gap_for_stale_s=max_gap_stale_s,
+    )
+
+    if spec.flow_gates:
+        feat = apply_flow_gates_to_features(
+            feat,
+            gates=spec.flow_gates,
+            feature_suffixes=["__last", "__mean_tw"],
+        )
+
+    feat = add_continuous_window_derivatives(
+        feat,
+        groups,
+        base_suffix="__mean_tw",
+        out_suffix="__d1",
+        fill_value=0.0,
+        sort_col="window_start_ts",
+    )
+
+    if spec.flow_gates:
+        feat = apply_flow_gates_to_features(
+            feat,
+            gates=spec.flow_gates,
+            feature_suffixes=["__d1"],
+        )
+
+    meta = {
+        "site": site,
+        "day": day,
+        "source": str(source),
+        "timestamp_col": ts_col,
+        "n_windows": int(len(feat)),
+        "n_nonempty_windows": int((feat["n_rows"] > 0).sum()),
+        "column_groups": {
+            "continuous": groups.continuous,
+            "boolean": groups.boolean,
+            "discrete": groups.discrete,
+        },
+        "stale_gap_sec": max_gap_stale_s,
+        "flow_gates": [asdict(g) for g in (spec.flow_gates or [])],
+        "interarrival_stats": stats,
+        "site_spec": spec.site,
+        "interval_mode": True,
     }
     return feat, meta, report
 

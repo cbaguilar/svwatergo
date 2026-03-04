@@ -254,6 +254,140 @@ def compute_window_features_for_day(
     return pd.DataFrame(out_rows)
 
 
+def compute_window_features_for_intervals(
+    df: pd.DataFrame,
+    *,
+    site: str,
+    day: str,
+    ts_col: str,
+    groups: ColumnGroups,
+    interval_start: pd.Series,
+    interval_end: pd.Series,
+    max_gap_for_stale_s: float = 300.0,
+) -> pd.DataFrame:
+    """
+    Compute feature rows for explicit intervals [start, end) rather than an exhaustive
+    fixed grid. This is useful for attaching PLC features to audio segments directly.
+    """
+    df = df.copy()
+    df[ts_col] = pd.to_datetime(df[ts_col], errors="coerce", utc=True)
+    df = df[df[ts_col].notna()].sort_values(ts_col)
+
+    day_start, day_end = day_to_range_utc(day)
+    df = df[(df[ts_col] >= day_start) & (df[ts_col] < day_end)].copy()
+
+    starts = pd.to_datetime(interval_start, utc=True, errors="coerce")
+    ends = pd.to_datetime(interval_end, utc=True, errors="coerce")
+
+    ts = pd.to_datetime(df[ts_col], utc=True)
+    ts_ns = ts.view("int64").to_numpy()
+    ts_sec_all = ts_ns.astype("float64") / 1e9
+
+    col_arrays: Dict[str, np.ndarray] = {}
+    for c in groups.continuous + groups.boolean + groups.discrete:
+        col_arrays[c] = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype="float64", copy=False)
+
+    out_rows: List[Dict[str, object]] = []
+    for w0, w1 in zip(starts, ends):
+        valid = pd.notna(w0) and pd.notna(w1) and (w1 > w0)
+        row: Dict[str, object] = {
+            "site": site,
+            "day": day,
+            "window_seconds": float((w1 - w0).total_seconds()) if valid else np.nan,
+            "stride_seconds": np.nan,
+            "window_start_ts": w0,
+            "window_end_ts": w1,
+            "window_match_found": int(bool(valid)),
+        }
+        if not valid:
+            row["n_rows"] = 0
+            row["consecutive_empty_windows"] = 0
+            row["time_since_last_event_sec"] = np.inf
+            row["state_unknown"] = 1
+            for c in groups.continuous:
+                row[f"{c}__last"] = np.nan
+                row[f"{c}__mean_tw"] = np.nan
+            for b in groups.boolean:
+                row[f"{b}__last"] = np.nan
+                row[f"{b}__duty"] = np.nan
+                row[f"{b}__transitions"] = 0
+            for d in groups.discrete:
+                row[f"{d}__last"] = np.nan
+                row[f"{d}__mode_tw"] = np.nan
+                row[f"{d}__transitions"] = 0
+            out_rows.append(row)
+            continue
+
+        w0_ns = int(w0.value)
+        w1_ns = int(w1.value)
+        i0 = int(np.searchsorted(ts_ns, w0_ns, side="left"))
+        i1 = int(np.searchsorted(ts_ns, w1_ns, side="left"))
+
+        row["n_rows"] = int(max(0, i1 - i0))
+        row["consecutive_empty_windows"] = 0
+
+        if i1 > 0:
+            last_event_ns = int(ts_ns[i1 - 1])
+            row["time_since_last_event_sec"] = float((w1_ns - last_event_ns) / 1e9)
+        else:
+            row["time_since_last_event_sec"] = np.inf
+        row["state_unknown"] = int(float(row["time_since_last_event_sec"]) > max_gap_for_stale_s)
+
+        if i0 == i1:
+            for c in groups.continuous:
+                row[f"{c}__last"] = np.nan
+                row[f"{c}__mean_tw"] = np.nan
+            for b in groups.boolean:
+                row[f"{b}__last"] = np.nan
+                row[f"{b}__duty"] = np.nan
+                row[f"{b}__transitions"] = 0
+            for d in groups.discrete:
+                row[f"{d}__last"] = np.nan
+                row[f"{d}__mode_tw"] = np.nan
+                row[f"{d}__transitions"] = 0
+            out_rows.append(row)
+            continue
+
+        ts_sec = ts_sec_all[i0:i1]
+        w1_sec = w1.value / 1e9
+
+        for c in groups.continuous:
+            x = col_arrays[c][i0:i1]
+            row[f"{c}__last"] = float(x[-1]) if (len(x) and np.isfinite(x[-1])) else np.nan
+            good = np.isfinite(x)
+            row[f"{c}__mean_tw"] = (
+                _time_weighted_mean_step_hold(ts_sec[good], x[good], w1_sec) if np.any(good) else np.nan
+            )
+
+        for b in groups.boolean:
+            s = col_arrays[b][i0:i1]
+            row[f"{b}__last"] = float(s[-1]) if (len(s) and np.isfinite(s[-1])) else np.nan
+            good = np.isfinite(s)
+            if np.any(good):
+                duty, trans = _duty_and_transitions_step_hold(ts_sec[good], s[good], w1_sec)
+                row[f"{b}__duty"] = duty
+                row[f"{b}__transitions"] = trans
+            else:
+                row[f"{b}__duty"] = np.nan
+                row[f"{b}__transitions"] = 0
+
+        for d in groups.discrete:
+            s = col_arrays[d][i0:i1]
+            row[f"{d}__last"] = float(s[-1]) if (len(s) and np.isfinite(s[-1])) else np.nan
+            good = np.isfinite(s)
+            if np.any(good):
+                mode, trans = _tw_mode_step_hold(ts_sec[good], s[good], w1_sec)
+                row[f"{d}__mode_tw"] = mode
+                row[f"{d}__transitions"] = trans
+            else:
+                row[f"{d}__mode_tw"] = np.nan
+                row[f"{d}__transitions"] = 0
+
+        out_rows.append(row)
+
+    return pd.DataFrame(out_rows)
+
+
 def analyze_interarrival(df: pd.DataFrame, ts_col: str):
     ts = pd.to_datetime(df[ts_col], utc=True, errors="coerce").dropna()
     ts = ts.sort_values()
