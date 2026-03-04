@@ -94,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         default="ropumprun__duty",
         help="Optional context column to carry into scores output if present",
     )
+    p.add_argument(
+        "--topk-sensors",
+        type=int,
+        default=25,
+        help="Print/save top-K sensors ranked by CCA loading magnitude",
+    )
     return p.parse_args()
 
 
@@ -196,6 +202,17 @@ def _plot_top_pair(U: np.ndarray, V: np.ndarray, split: str, out_path: Path) -> 
     fig.tight_layout()
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
+
+
+def _sensor_loading_matrix(sensor_pca, cca) -> np.ndarray:
+    """
+    Return sensor->canonical loading matrix.
+    Rows: sensors, Cols: canonical components.
+    """
+    y_w = np.asarray(cca.y_weights_, dtype=np.float64)
+    if sensor_pca is None:
+        return y_w
+    return np.asarray(sensor_pca.components_.T, dtype=np.float64) @ y_w
 
 
 def main() -> None:
@@ -344,6 +361,31 @@ def main() -> None:
     sensor_pc_corr_path = out_dir / "cca_sensor_component_corr.parquet"
     sensor_pc_corr_df.to_parquet(sensor_pc_corr_path)
 
+    # Sensor ranking from canonical loadings.
+    # For PCA->CCA, this maps raw standardized sensor space into canonical space.
+    W = _sensor_loading_matrix(sensor_pca, cca)  # [n_sensors, n_cca]
+    sensor_weight_df = pd.DataFrame({"sensor": sensor_cols})
+    for i in range(W.shape[1]):
+        sensor_weight_df[f"weight_c{i+1}"] = W[:, i]
+        sensor_weight_df[f"abs_weight_c{i+1}"] = np.abs(W[:, i])
+
+    test_corr_abs = np.asarray([abs(float(x)) if np.isfinite(x) else 0.0 for x in test_corr], dtype=np.float64)
+    if test_corr_abs.sum() <= 0:
+        test_corr_abs = np.ones_like(test_corr_abs)
+    test_corr_abs = test_corr_abs / test_corr_abs.sum()
+    sensor_weight_df["overall_score"] = np.abs(W) @ test_corr_abs
+    sensor_weight_df = sensor_weight_df.sort_values("overall_score", ascending=False).reset_index(drop=True)
+
+    sensor_weights_path = out_dir / "cca_sensor_weights.parquet"
+    sensor_weight_df.to_parquet(sensor_weights_path, index=False)
+    sensor_weights_csv = out_dir / "cca_sensor_weights.csv"
+    sensor_weight_df.to_csv(sensor_weights_csv, index=False)
+
+    topk = max(1, int(args.topk_sensors))
+    topk_df = sensor_weight_df.head(topk).copy()
+    topk_path = out_dir / f"cca_sensor_topk_{topk}.csv"
+    topk_df.to_csv(topk_path, index=False)
+
     meta = {
         "n_rows": int(len(df)),
         "n_train": int(len(idx_train)),
@@ -361,6 +403,9 @@ def main() -> None:
             "pair_train_plot": str(pair_train_plot),
             "pair_test_plot": str(pair_test_plot),
             "sensor_component_corr": str(sensor_pc_corr_path),
+            "sensor_weights": str(sensor_weights_path),
+            "sensor_weights_csv": str(sensor_weights_csv),
+            "sensor_topk_csv": str(topk_path),
         },
     }
     meta_path = out_dir / "cca_meta.json"
@@ -372,8 +417,12 @@ def main() -> None:
     print(f"Corr Plot  -> {corr_plot}")
     print(f"Pair Train -> {pair_train_plot}")
     print(f"Pair Test  -> {pair_test_plot}")
+    print(f"Weights    -> {sensor_weights_path}")
+    print(f"TopK CSV   -> {topk_path}")
     print(f"Train Corr -> {train_corr}")
     print(f"Test Corr  -> {test_corr}")
+    print("\nTop sensors by overall CCA score:")
+    print(topk_df[["sensor", "overall_score"]].to_string(index=False))
 
 
 if __name__ == "__main__":
