@@ -65,8 +65,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	audioAPI := NewAudioAPI(audioStore)
 	usersAPI := NewUsersAPI(usersStore)
 	analyticsStore := analytics.NewStore()
-	analyticsRunner := analytics.NewRunner(analyticsStore)
-	analyticsAPI := NewAnalyticsAPI(analyticsStore, analyticsRunner)
+	analyticsAPI := NewAnalyticsAPI(analyticsStore)
 	eventsAPI := NewEventsAPI()
 	authAPI := NewAuthAPI(authn)
 	ingestion.OnIngest = liveState.NotifySiteUpdated
@@ -90,7 +89,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		analyticsGroup := v1.Group("/analytics")
 		analyticsGroup.POST("/feature-runs", analyticsAPI.CreateFeatureRun)
 		analyticsGroup.POST("/pca-runs", analyticsAPI.CreatePCARun)
-		analyticsGroup.POST("/audio-align-runs", analyticsAPI.CreateAudioAlignPLCRun)
+		registerAudioAlignRoute(analyticsGroup, analyticsAPI)
 		analyticsGroup.GET("/jobs", analyticsAPI.ListJobs)
 		analyticsGroup.GET("/jobs/:id", analyticsAPI.GetJob)
 
@@ -185,4 +184,13 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	}
 
 	return r
+}
+
+func registerAudioAlignRoute(group *gin.RouterGroup, analyticsAPI *AnalyticsAPI) {
+	type audioAlignCreator interface {
+		CreateAudioAlignPLCRun(*gin.Context)
+	}
+	if h, ok := any(analyticsAPI).(audioAlignCreator); ok {
+		group.POST("/audio-align-runs", h.CreateAudioAlignPLCRun)
+	}
 }
