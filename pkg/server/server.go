@@ -21,6 +21,7 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/systemservice/bluerock"
 	"github.com/cbaguilar/svwatergo/internal/systemservice/pryorfarm"
 	"github.com/cbaguilar/svwatergo/internal/systemservice/santateresa"
+	"github.com/cbaguilar/svwatergo/internal/users"
 )
 
 type Server struct {
@@ -78,11 +79,17 @@ func (s *Server) Start() error {
 	if err := audioStore.EnsureSchema(context.Background()); err != nil {
 		log.Fatalf("Failed to ensure audio schema: %v", err)
 	}
+	usersStore := users.NewStore(dbClient)
+	if err := usersStore.EnsureSchema(context.Background()); err != nil {
+		log.Fatalf("Failed to ensure users schema: %v", err)
+	}
 
 	var authn *auth.Auth
 	adminEmails := auth.AdminEmailsFromEnv()
 	if strings.TrimSpace(os.Getenv("AUTH_DISABLED")) == "" {
 		authn = auth.MustNewFromEnv(context.Background())
+		authn.SetUserStore(usersStore)
+		bootstrapUsers(context.Background(), usersStore, authn.AdminEmails(), authn.AllowedEmails())
 		if len(authn.AdminEmails()) > 0 {
 			adminEmails = authn.AdminEmails()
 		}
@@ -107,9 +114,25 @@ func (s *Server) Start() error {
 		log.Printf("INGEST_DISABLED enabled: upload ingestion endpoints are disabled")
 	}
 
-	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, audioStore, mailSender, adminEmails, ingestDisabled, readOnly)
+	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, audioStore, usersStore, mailSender, adminEmails, ingestDisabled, readOnly)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
+}
+
+func bootstrapUsers(ctx context.Context, usersStore *users.Store, admins []string, allowed []string) {
+	if usersStore == nil {
+		return
+	}
+	for _, email := range allowed {
+		if err := usersStore.UpsertUserByEmail(ctx, email, users.RoleLabMember); err != nil {
+			log.Printf("users bootstrap failed for allowed email %q: %v", email, err)
+		}
+	}
+	for _, email := range admins {
+		if err := usersStore.UpsertUserByEmail(ctx, email, users.RoleAdmin); err != nil {
+			log.Printf("users bootstrap failed for admin email %q: %v", email, err)
+		}
+	}
 }
 
 type staleMonitorState struct {

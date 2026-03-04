@@ -89,7 +89,13 @@ func (a *AuthAPI) Me(c *gin.Context) {
 		return
 	}
 
-	isAdmin := isAdminEmail(a.authn, id.Email)
+	isAdmin := false
+	if a != nil && a.authn != nil {
+		v, err := a.authn.IsAdmin(c.Request.Context(), id.Email)
+		if err == nil {
+			isAdmin = v
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{
 			"email":   id.Email,
@@ -102,16 +108,3 @@ func (a *AuthAPI) Me(c *gin.Context) {
 }
 
 const timeRFC3339 = "2006-01-02T15:04:05Z07:00"
-
-func isAdminEmail(a *auth.Auth, email string) bool {
-	if a == nil {
-		return false
-	}
-	needle := strings.ToLower(strings.TrimSpace(email))
-	for _, v := range a.AdminEmails() {
-		if strings.ToLower(strings.TrimSpace(v)) == needle {
-			return true
-		}
-	}
-	return false
-}

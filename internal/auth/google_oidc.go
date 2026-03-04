@@ -26,6 +26,7 @@ type Auth struct {
 	cfg      AuthConfig
 	verifier *oidc.IDTokenVerifier
 	session  *SessionJWT
+	users    UserStore
 }
 
 type Identity struct {
@@ -33,6 +34,12 @@ type Identity struct {
 	Sub     string
 	Name    string
 	Picture string
+}
+
+type UserStore interface {
+	IsAllowedEmail(ctx context.Context, email string) (bool, error)
+	IsAdminEmail(ctx context.Context, email string) (bool, error)
+	HasUsers(ctx context.Context) (bool, error)
 }
 
 type ctxKey int
@@ -135,7 +142,8 @@ func (a *Auth) GinRequireAdmin() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
-		if _, ok := a.cfg.AdminEmails[strings.ToLower(id.Email)]; !ok {
+		isAdmin, err := a.IsAdmin(c.Request.Context(), id.Email)
+		if err != nil || !isAdmin {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
 		}
@@ -150,7 +158,8 @@ func (a *Auth) RequireAdmin(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if _, ok := a.cfg.AdminEmails[strings.ToLower(id.Email)]; !ok {
+		isAdmin, err := a.IsAdmin(r.Context(), id.Email)
+		if err != nil || !isAdmin {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -196,7 +205,7 @@ func (a *Auth) ExchangeGoogleToken(ctx context.Context, raw string) (Identity, s
 	if err != nil {
 		return Identity{}, "", time.Time{}, err
 	}
-	if err := a.ensureAllowed(id); err != nil {
+	if err := a.ensureAllowed(ctx, id); err != nil {
 		return Identity{}, "", time.Time{}, err
 	}
 	if !a.SessionEnabled() {
@@ -207,6 +216,30 @@ func (a *Auth) ExchangeGoogleToken(ctx context.Context, raw string) (Identity, s
 		return Identity{}, "", time.Time{}, err
 	}
 	return id, jwt, exp, nil
+}
+
+func (a *Auth) SetUserStore(store UserStore) {
+	if a == nil {
+		return
+	}
+	a.users = store
+}
+
+func (a *Auth) IsAdmin(ctx context.Context, email string) (bool, error) {
+	if a == nil {
+		return false, nil
+	}
+	needle := strings.ToLower(strings.TrimSpace(email))
+	if needle == "" {
+		return false, nil
+	}
+	if _, ok := a.cfg.AdminEmails[needle]; ok {
+		return true, nil
+	}
+	if a.users == nil {
+		return false, nil
+	}
+	return a.users.IsAdminEmail(ctx, needle)
 }
 
 func IdentityFromContext(ctx context.Context) (Identity, bool) {
@@ -237,7 +270,7 @@ func (a *Auth) verifyRequest(r *http.Request) (Identity, error) {
 	if v, ok := tokenCache.Load(token); ok {
 		ct := v.(cachedToken)
 		if time.Now().Before(ct.until) {
-			if err := a.ensureAllowed(ct.id); err != nil {
+			if err := a.ensureAllowed(r.Context(), ct.id); err != nil {
 				return Identity{}, err
 			}
 			return ct.id, nil
@@ -247,7 +280,7 @@ func (a *Auth) verifyRequest(r *http.Request) (Identity, error) {
 
 	if a.SessionEnabled() {
 		if id, exp, err := a.session.Verify(r.Context(), token); err == nil {
-			if err := a.ensureAllowed(id); err != nil {
+			if err := a.ensureAllowed(r.Context(), id); err != nil {
 				return Identity{}, err
 			}
 			tokenCache.Store(token, cachedToken{id: id, until: exp})
@@ -259,7 +292,7 @@ func (a *Auth) verifyRequest(r *http.Request) (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
-	if err := a.ensureAllowed(id); err != nil {
+	if err := a.ensureAllowed(r.Context(), id); err != nil {
 		return Identity{}, err
 	}
 	tokenCache.Store(token, cachedToken{id: id, until: exp})
@@ -286,17 +319,45 @@ func bearerTokenFromRequest(r *http.Request) (string, error) {
 	return "", fmt.Errorf("missing Authorization header")
 }
 
-func (a *Auth) ensureAllowed(id Identity) error {
+func (a *Auth) ensureAllowed(ctx context.Context, id Identity) error {
 	if a == nil {
 		return nil
 	}
-	if len(a.cfg.AllowedEmails) == 0 {
-		return nil
-	}
-	if _, ok := a.cfg.AllowedEmails[strings.ToLower(strings.TrimSpace(id.Email))]; !ok {
+	needle := strings.ToLower(strings.TrimSpace(id.Email))
+	if needle == "" {
 		return fmt.Errorf("forbidden")
 	}
-	return nil
+	if _, ok := a.cfg.AdminEmails[needle]; ok {
+		return nil
+	}
+	if _, ok := a.cfg.AllowedEmails[needle]; ok {
+		return nil
+	}
+	if a.users != nil {
+		allowed, err := a.users.IsAllowedEmail(ctx, needle)
+		if err != nil {
+			return fmt.Errorf("forbidden")
+		}
+		if allowed {
+			return nil
+		}
+		hasUsers, err := a.users.HasUsers(ctx)
+		if err != nil {
+			return fmt.Errorf("forbidden")
+		}
+		// Preserve existing behavior: with no configured allowlist, auth is open.
+		if hasUsers {
+			return fmt.Errorf("forbidden")
+		}
+		if len(a.cfg.AllowedEmails) == 0 && len(a.cfg.AdminEmails) == 0 {
+			return nil
+		}
+		return fmt.Errorf("forbidden")
+	}
+	if len(a.cfg.AllowedEmails) == 0 && len(a.cfg.AdminEmails) == 0 {
+		return nil
+	}
+	return fmt.Errorf("forbidden")
 }
 
 func isForbiddenErr(err error) bool {

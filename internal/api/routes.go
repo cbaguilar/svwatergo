@@ -12,11 +12,12 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/reports"
 	"github.com/cbaguilar/svwatergo/internal/systemservice"
+	"github.com/cbaguilar/svwatergo/internal/users"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, audioStore *audio.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, audioStore *audio.Store, usersStore *users.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -62,6 +63,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
 	audioAPI := NewAudioAPI(audioStore)
+	usersAPI := NewUsersAPI(usersStore)
 	analyticsStore := analytics.NewStore()
 	analyticsRunner := analytics.NewRunner(analyticsStore)
 	analyticsAPI := NewAnalyticsAPI(analyticsStore, analyticsRunner)
@@ -105,6 +107,26 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		} else {
 			audioGroup.POST("/sources", audioAPI.UpsertSource)
 			audioGroup.POST("/artifacts", audioAPI.UpsertArtifact)
+		}
+
+		usersGroup := v1.Group("/users")
+		usersGroupAdmin := v1.Group("/users")
+		if authn != nil {
+			usersGroup.Use(authn.GinRequireAdmin())
+			usersGroupAdmin.Use(authn.GinRequireAdmin())
+		}
+		usersGroup.GET("", usersAPI.ListUsers)
+		if readOnly {
+			disabled := func(c *gin.Context) {
+				c.JSON(http.StatusServiceUnavailable, errJSON("ReadOnly", "server is in read-only mode", nil))
+			}
+			usersGroupAdmin.POST("", disabled)
+			usersGroupAdmin.PUT("/:id", disabled)
+			usersGroupAdmin.DELETE("/:id", disabled)
+		} else {
+			usersGroupAdmin.POST("", usersAPI.CreateUser)
+			usersGroupAdmin.PUT("/:id", usersAPI.UpdateUser)
+			usersGroupAdmin.DELETE("/:id", usersAPI.DeleteUser)
 		}
 
 		sites := v1.Group("/sites/:site")
