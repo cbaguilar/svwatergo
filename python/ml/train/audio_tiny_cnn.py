@@ -197,6 +197,92 @@ def _metrics_multilabel(
     return out
 
 
+def _apply_binary_threshold(scores: np.ndarray, threshold: float) -> np.ndarray:
+    s = np.asarray(scores, dtype=np.float64).reshape(-1)
+    return (s >= float(threshold)).astype(np.int64)
+
+
+def _binary_prf(yt: np.ndarray, yp: np.ndarray) -> Dict[str, float]:
+    y_true = np.asarray(yt, dtype=np.int64).reshape(-1)
+    y_pred = np.asarray(yp, dtype=np.int64).reshape(-1)
+    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+    prec = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+    rec = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    f1 = float((2.0 * prec * rec) / (prec + rec)) if (prec + rec) > 0 else 0.0
+    return {"precision": prec, "recall": rec, "f1": f1}
+
+
+def _tune_binary_threshold(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    *,
+    default_threshold: float = 0.5,
+    n_steps: int = 201,
+) -> Dict[str, Any]:
+    yt = np.asarray(y_true, dtype=np.int64).reshape(-1)
+    ys = np.asarray(y_score, dtype=np.float64).reshape(-1)
+    if len(yt) == 0 or len(ys) == 0 or len(yt) != len(ys):
+        return {
+            "threshold": float(default_threshold),
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "n_rows": int(len(yt)),
+            "status": "default_no_data",
+        }
+
+    best: Dict[str, Any] = {
+        "threshold": float(default_threshold),
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": -1.0,
+    }
+    for t in np.linspace(0.0, 1.0, int(max(2, n_steps))):
+        yp = _apply_binary_threshold(ys, float(t))
+        m = _binary_prf(yt, yp)
+        cand = {
+            "threshold": float(t),
+            "precision": float(m["precision"]),
+            "recall": float(m["recall"]),
+            "f1": float(m["f1"]),
+        }
+        # Max F1, then precision, then recall, then threshold (higher = fewer FPs).
+        key_cand = (cand["f1"], cand["precision"], cand["recall"], cand["threshold"])
+        key_best = (best["f1"], best["precision"], best["recall"], best["threshold"])
+        if key_cand > key_best:
+            best = cand
+
+    best["n_rows"] = int(len(yt))
+    best["status"] = "tuned"
+    return best
+
+
+def _predict_from_scores(
+    *,
+    task: str,
+    y_score: Optional[np.ndarray],
+    thresholds: Optional[List[float]] = None,
+    default_threshold: float = 0.5,
+) -> Optional[np.ndarray]:
+    if y_score is None:
+        return None
+    if task == "binary":
+        thr = float(thresholds[0]) if thresholds else float(default_threshold)
+        return _apply_binary_threshold(y_score, thr)
+    if task == "multilabel":
+        ys = np.asarray(y_score, dtype=np.float64)
+        if ys.ndim != 2:
+            raise ValueError(f"Expected 2D multilabel scores, got {ys.shape}")
+        if thresholds and len(thresholds) == ys.shape[1]:
+            thr = np.asarray(thresholds, dtype=np.float64).reshape(1, -1)
+        else:
+            thr = np.full((1, ys.shape[1]), float(default_threshold), dtype=np.float64)
+        return (ys >= thr).astype(np.int64)
+    return None
+
+
 def fit_audio_tiny_cnn(
     df: pd.DataFrame,
     out_dir: Path,
@@ -417,27 +503,95 @@ def fit_audio_tiny_cnn(
                 flush=True,
             )
 
-    y_train_true, y_train_pred, y_train_score = _predict(train_dl)
-    y_test_true, y_test_pred, y_test_score = _predict(test_dl)
-    y_val_true, y_val_pred, y_val_score = _predict(val_dl)
+    y_train_true, y_train_pred_raw, y_train_score = _predict(train_dl)
+    y_test_true, y_test_pred_raw, y_test_score = _predict(test_dl)
+    y_val_true, y_val_pred_raw, y_val_score = _predict(val_dl)
+
+    threshold_default = 0.5
+    threshold_source = "default"
+    tuned_thresholds: List[float] = [float(threshold_default)]
+    threshold_report: Dict[str, Any] = {
+        "default_threshold": float(threshold_default),
+        "source_split": "default",
+    }
+    if task in ("binary", "multilabel"):
+        if len(y_val_true) > 0 and y_val_score is not None:
+            y_ref_true = y_val_true
+            y_ref_score = y_val_score
+            threshold_source = "val"
+        elif len(y_test_true) > 0 and y_test_score is not None:
+            y_ref_true = y_test_true
+            y_ref_score = y_test_score
+            threshold_source = "test_fallback"
+        else:
+            y_ref_true = None
+            y_ref_score = None
+
+        if y_ref_true is not None and y_ref_score is not None:
+            if task == "binary":
+                best = _tune_binary_threshold(
+                    y_ref_true,
+                    y_ref_score,
+                    default_threshold=float(threshold_default),
+                )
+                tuned_thresholds = [float(best["threshold"])]
+                threshold_report = {
+                    "default_threshold": float(threshold_default),
+                    "source_split": str(threshold_source),
+                    "mode": "binary",
+                    "selected": best,
+                }
+            else:
+                class_names = list(y_meta.get("classes") or [f"class_{i}" for i in range(int(y_ref_score.shape[1]))])
+                tuned_thresholds = []
+                per_label: Dict[str, Any] = {}
+                for j, name in enumerate(class_names):
+                    best = _tune_binary_threshold(
+                        y_ref_true[:, j],
+                        y_ref_score[:, j],
+                        default_threshold=float(threshold_default),
+                    )
+                    tuned_thresholds.append(float(best["threshold"]))
+                    per_label[str(name)] = best
+                threshold_report = {
+                    "default_threshold": float(threshold_default),
+                    "source_split": str(threshold_source),
+                    "mode": "multilabel",
+                    "per_label": per_label,
+                }
+        else:
+            if task == "multilabel":
+                tuned_thresholds = [float(threshold_default)] * int(y.shape[1])
+            threshold_report["source_split"] = "default_no_scores"
+
+    if task in ("binary", "multilabel"):
+        y_train_pred = _predict_from_scores(task=task, y_score=y_train_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
+        y_test_pred = _predict_from_scores(task=task, y_score=y_test_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
+        y_val_pred = _predict_from_scores(task=task, y_score=y_val_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
+    else:
+        y_train_pred = y_train_pred_raw
+        y_test_pred = y_test_pred_raw
+        y_val_pred = y_val_pred_raw
 
     # Store a small "projection" parquet analogous to pca_svm train_projection.parquet.
     # Run full-dataset inference in minibatches to avoid OOM on larger runs.
     model.eval()
     if task == "binary":
         score_parts: List[np.ndarray] = []
-        pred_parts: List[np.ndarray] = []
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
                 xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
                 logits = model(xb).view(-1)
                 score = torch.sigmoid(logits).cpu().numpy()
-                pred = (score >= 0.5).astype("int64")
                 score_parts.append(score)
-                pred_parts.append(pred)
         score_all = np.concatenate(score_parts, axis=0)
-        pred_all = np.concatenate(pred_parts, axis=0)
+        pred_all = _predict_from_scores(
+            task=task,
+            y_score=score_all,
+            thresholds=tuned_thresholds,
+            default_threshold=threshold_default,
+        )
     elif task == "multiclass":
         prob_parts: List[np.ndarray] = []
         pred_parts: List[np.ndarray] = []
@@ -454,18 +608,20 @@ def fit_audio_tiny_cnn(
         pred_all = np.concatenate(pred_parts, axis=0)
     else:
         score_parts: List[np.ndarray] = []
-        pred_parts = []
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
                 xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
-                pred = (score >= 0.5).astype("int64")
                 score_parts.append(score)
-                pred_parts.append(pred)
         score_all = np.concatenate(score_parts, axis=0)
-        pred_all = np.concatenate(pred_parts, axis=0)
+        pred_all = _predict_from_scores(
+            task=task,
+            y_score=score_all,
+            thresholds=tuned_thresholds,
+            default_threshold=threshold_default,
+        )
 
     # Add PCA coordinates (from flattened mel tensors) so the existing 4-panel
     # renderer can plot tiny-CNN runs with the same schema.
@@ -510,6 +666,9 @@ def fit_audio_tiny_cnn(
             "target_col": target_col,
             "target_cols": (list(target_cols) if target_cols else None),
             "positive_threshold": float(positive_threshold),
+            "inference_threshold_default": float(threshold_default),
+            "inference_thresholds": [float(v) for v in tuned_thresholds],
+            "threshold_tuning": threshold_report,
             "y_meta": y_meta,
             "state_dict": model.state_dict(),
             "n_classes": int(n_classes),
@@ -564,6 +723,9 @@ def fit_audio_tiny_cnn(
         "target_col": target_col,
         "target_cols": (list(target_cols) if target_cols else None),
         "positive_threshold": float(positive_threshold),
+        "inference_threshold_default": float(threshold_default),
+        "inference_thresholds": [float(v) for v in tuned_thresholds] if task in ("binary", "multilabel") else None,
+        "threshold_tuning": threshold_report if task in ("binary", "multilabel") else {},
         "y_meta": y_meta,
         "n_rows": int(len(df)),
         "n_train": int(len(idx_train)),
@@ -677,9 +839,15 @@ def predict_audio_tiny_cnn(
     with torch.no_grad():
         logits = model(x)
         task = str(bundle.get("task", "binary"))
+        default_thr = float(bundle.get("inference_threshold_default", 0.5))
+        bundle_thresholds = bundle.get("inference_thresholds")
+        thr_list: List[float] = []
+        if isinstance(bundle_thresholds, (list, tuple)):
+            thr_list = [float(v) for v in bundle_thresholds]
         if task == "binary":
             prob = torch.sigmoid(logits.view(-1))[0].item()
-            pred = 1 if prob >= 0.5 else 0
+            thr = float(thr_list[0]) if thr_list else float(default_thr)
+            pred = 1 if prob >= thr else 0
             out = {
                 "bundle_type": "audio_tiny_cnn",
                 "task": "binary",
@@ -687,14 +855,17 @@ def predict_audio_tiny_cnn(
                 "predicted_label": "positive" if pred == 1 else "negative",
                 "score_positive": float(prob),
                 "probabilities": [float(1.0 - prob), float(prob)],
+                "threshold_used": float(thr),
                 "mel_shape_used": [int(mel.shape[0]), int(mel.shape[1])],
             }
         elif task == "multilabel":
             prob = torch.sigmoid(logits)[0].cpu().numpy()
-            pred = (prob >= 0.5).astype("int64")
             classes = list((bundle.get("y_meta") or {}).get("classes") or [])
             if not classes:
                 classes = [f"class_{i}" for i in range(int(prob.shape[0]))]
+            if len(thr_list) != len(classes):
+                thr_list = [float(default_thr)] * len(classes)
+            pred = (prob >= np.asarray(thr_list, dtype=np.float64)).astype("int64")
             out = {
                 "bundle_type": "audio_tiny_cnn",
                 "task": "multilabel",
@@ -702,6 +873,7 @@ def predict_audio_tiny_cnn(
                 "probabilities": [float(v) for v in prob.tolist()],
                 "classes": [str(c) for c in classes],
                 "scores_by_class": {str(classes[i]): float(prob[i]) for i in range(len(classes))},
+                "thresholds_by_class": {str(classes[i]): float(thr_list[i]) for i in range(len(classes))},
                 "predicted_labels": [str(classes[i]) for i in range(len(classes)) if int(pred[i]) == 1],
                 "mel_shape_used": [int(mel.shape[0]), int(mel.shape[1])],
             }
