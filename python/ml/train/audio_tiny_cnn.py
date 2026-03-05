@@ -60,6 +60,10 @@ def _seed_torch(torch, seed: int) -> None:
         pass
 
 
+def _select_device(torch):
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def _balanced_loss_kwargs(
     *,
     torch,
@@ -211,6 +215,7 @@ def fit_audio_tiny_cnn(
 ) -> AudioTinyCNNResult:
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
+    device = _select_device(torch)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if class_weight not in (None, "balanced"):
@@ -304,7 +309,7 @@ def fit_audio_tiny_cnn(
         n_classes = int(y.shape[1])
         out_dim = n_classes
     tiny = _TinyCNN(nn, out_dim=out_dim)
-    model = tiny.model
+    model = tiny.model.to(device)
 
     loss_kwargs = _balanced_loss_kwargs(
         torch=torch,
@@ -335,6 +340,7 @@ def fit_audio_tiny_cnn(
         y_score: List[float] = []
         with torch.no_grad():
             for xb, yb in dl:
+                xb = xb.to(device)
                 logits = model(xb)
                 if task == "binary":
                     score = torch.sigmoid(logits.view(-1))
@@ -366,6 +372,8 @@ def fit_audio_tiny_cnn(
         loss_sum = 0.0
         n_samples = 0
         for xb, yb in train_dl:
+            xb = xb.to(device)
+            yb = yb.to(device)
             optim.zero_grad(set_to_none=True)
             logits = model(xb)
             if task == "binary":
@@ -408,7 +416,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.tensor(X[i0:i1], dtype=torch.float32)
+                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
                 logits = model(xb).view(-1)
                 score = torch.sigmoid(logits).cpu().numpy()
                 pred = (score >= 0.5).astype("int64")
@@ -422,7 +430,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.tensor(X[i0:i1], dtype=torch.float32)
+                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
                 logits = model(xb)
                 prob = torch.softmax(logits, dim=1).cpu().numpy()
                 pred = np.argmax(prob, axis=1).astype("int64")
@@ -436,7 +444,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.tensor(X[i0:i1], dtype=torch.float32)
+                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
                 pred = (score >= 0.5).astype("int64")
@@ -639,6 +647,7 @@ def predict_audio_tiny_cnn(
     mel_npz_index: int = 0,
 ) -> Dict[str, Any]:
     torch, _, _, _ = _require_torch()
+    device = _select_device(torch)
     bundle = load_audio_tiny_cnn_bundle(model_path)
     mel = _load_mel_input_for_cnn(
         bundle=bundle,
@@ -648,8 +657,9 @@ def predict_audio_tiny_cnn(
         mel_npz_key=mel_npz_key,
         mel_npz_index=int(mel_npz_index),
     )
-    x = torch.tensor(mel[None, None, :, :], dtype=torch.float32)
-    model = bundle["_model"]
+    x = torch.tensor(mel[None, None, :, :], dtype=torch.float32, device=device)
+    model = bundle["_model"].to(device)
+    model.eval()
     with torch.no_grad():
         logits = model(x)
         task = str(bundle.get("task", "binary"))
