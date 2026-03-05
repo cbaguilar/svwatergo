@@ -10,7 +10,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import matplotlib
 import pandas as pd
@@ -49,6 +49,8 @@ UI_HTML = """<!doctype html>
   <div id="summary" class="mono"></div>
   <div style="margin:6px 0;">
     <a href="#" onclick="loadDir(''); return false;">Browse Raw Dataset</a>
+    |
+    <a href="/raw/" target="_blank" rel="noopener">Open Static /raw/ Browser</a>
   </div>
 
   <div class="panel">
@@ -485,6 +487,42 @@ def _q1(params: Dict[str, List[str]], key: str, default: str = "") -> str:
     return str(vals[0])
 
 
+def _safe_under_root(root: Path, rel_path: str) -> Path:
+    target = (root / rel_path.lstrip("/")).resolve()
+    target.relative_to(root)
+    return target
+
+
+def _render_dir_listing_html(*, root: Path, req_rel: str, target: Path) -> str:
+    title = f"Index of /raw/{req_rel.lstrip('/')}"
+    rows: List[str] = []
+    if req_rel.strip("/"):
+        parent_rel = str(Path(req_rel).parent)
+        if parent_rel == ".":
+            parent_rel = ""
+        rows.append(
+            f"<tr><td><a href=\"/raw/{quote(parent_rel)}\">..</a></td><td>dir</td><td></td></tr>"
+        )
+    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        child_rel = str((Path(req_rel) / child.name).as_posix()).lstrip("./")
+        href = f"/raw/{quote(child_rel)}"
+        ctype = "dir" if child.is_dir() else "file"
+        size = "" if child.is_dir() else str(child.stat().st_size)
+        rows.append(f"<tr><td><a href=\"{href}\">{child.name}</a></td><td>{ctype}</td><td>{size}</td></tr>")
+    return (
+        "<!doctype html><html><head><meta charset='utf-8' />"
+        "<title>Raw Browser</title>"
+        "<style>body{font-family:sans-serif;margin:12px}table{border-collapse:collapse;width:100%}"
+        "th,td{border:1px solid #ddd;padding:6px;font-size:12px;text-align:left}"
+        "th{background:#f3f3f3}</style></head><body>"
+        f"<h3>{title}</h3>"
+        f"<div>root: {root}</div>"
+        "<table><thead><tr><th>name</th><th>type</th><th>size</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></body></html>"
+    )
+
+
 def _plot_matrix_png(m: np.ndarray, *, title: str) -> bytes:
     fig = plt.figure(figsize=(8, 3))
     ax = fig.add_subplot(1, 1, 1)
@@ -545,6 +583,19 @@ def make_handler(state: AppState):
                 q = parse_qs(parsed.query, keep_blank_values=False)
                 if path == "/":
                     self._write_html(UI_HTML)
+                    return
+                if path.startswith("/raw"):
+                    root = state.allowed_roots[0]
+                    req_rel = unquote(path[len("/raw") :]).lstrip("/")
+                    target = _safe_under_root(root, req_rel)
+                    if not target.exists():
+                        self._write_json({"error": f"not found: {target}"}, code=404)
+                        return
+                    if target.is_dir():
+                        self._write_html(_render_dir_listing_html(root=root, req_rel=req_rel, target=target))
+                        return
+                    mime, _enc = mimetypes.guess_type(str(target))
+                    self._write_bytes(target.read_bytes(), content_type=(mime or "application/octet-stream"))
                     return
                 if path == "/api/summary":
                     self._write_json(state.summary())
