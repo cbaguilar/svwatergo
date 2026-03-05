@@ -306,7 +306,7 @@ def main() -> None:
             )
 
     manifest_df = pd.DataFrame(rows)
-    manifest_base = out_root / "dataset=wyze_webm_wav" / f"site={site}"
+    manifest_base = out_root
     manifest_base.mkdir(parents=True, exist_ok=True)
     manifest_parquet = manifest_base / "wyze_webm_wav_manifest.parquet"
     manifest_csv = manifest_base / "wyze_webm_wav_manifest.csv"
@@ -576,7 +576,7 @@ def build_output_relpath(
     fname = f"{camera}_{end_label}_chunk={int(chunk_idx):06d}.wav"
     if partition_by == "utc_day":
         day = pd.Timestamp(clip_start).tz_convert("UTC").strftime("%Y-%m-%d")
-        return Path(f"camera={camera}") / f"date={day}" / fname
+        return Path(f"date={day}") / fname
     return Path(fname)
 
 

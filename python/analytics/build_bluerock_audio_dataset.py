@@ -265,6 +265,8 @@ def _convert_wyze_day(
         str(int(sample_rate)),
         "--channels",
         "1",
+        "--partition-by",
+        "none",
         "--min-size-bytes",
         str(int(min_size_bytes)),
     ]
@@ -312,7 +314,7 @@ def _build_wyze_stage(
             if date_filter and day not in date_filter:
                 continue
             wav_out = out_root / "intermediate" / "wyze_wav" / f"site={site}" / f"source={src_name}" / f"date={day}"
-            manifest = wav_out / "dataset=wyze_webm_wav" / f"site={site}" / "wyze_webm_wav_manifest.parquet"
+            manifest = wav_out / "wyze_webm_wav_manifest.parquet"
             if skip_conversion:
                 if not manifest.exists():
                     print(f"[skip] expected wyze manifest missing with --skip-wyze-conversion: {manifest}", flush=True)
@@ -386,13 +388,15 @@ def _segment_source_day(
         str(float(window_seconds)),
         "--stride-seconds",
         str(float(stride_seconds)),
+        "--partition-by",
+        "none",
         "--min-tail-seconds",
         "0.01",
     ]
     if skip_existing:
         cmd.append("--skip-existing")
     _run(cmd, dry_run=dry_run)
-    return seg_out / "dataset=audio_segments" / f"site={site}" / "audio_segments.parquet"
+    return seg_out / "audio_segments.parquet"
 
 
 def _read_plc_day(plc_roots: Sequence[Path], *, site: str, day: str) -> Optional[pd.DataFrame]:
@@ -1098,7 +1102,7 @@ def main() -> None:
     segments_df.to_parquet(mel_input_manifest, index=False)
 
     mel_out = out_root / "intermediate" / "mels" / f"site={site}" / f"window_s={int(args.window_seconds)}"
-    mel_manifest = mel_out / "dataset=audio_mel_segments" / f"site={site}" / "audio_mel_segments.parquet"
+    mel_manifest = mel_out / "audio_mel_segments.parquet"
     if not (args.skip_existing and mel_manifest.exists()):
         cfg = MelSegmentsConfig(
             segments_root=out_root,

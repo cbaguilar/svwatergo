@@ -195,7 +195,7 @@ def main() -> None:
             )
 
     manifest_df = pd.DataFrame(rows)
-    manifest_base = manifest_root / f"dataset=audio_segments" / f"site={str(args.site).strip().lower()}"
+    manifest_base = manifest_root
     manifest_base.mkdir(parents=True, exist_ok=True)
     manifest_parquet = manifest_base / "audio_segments.parquet"
     manifest_csv = manifest_base / "audio_segments.csv"
@@ -332,7 +332,7 @@ def build_segment_relpath(
     fname = f"{site}_start={start_label}_end={end_label}_seg={seg_idx:02d}.wav"
     if partition_by == "utc_day":
         day = seg_start_ts.strftime("%Y-%m-%d")
-        return Path(f"site={site}") / f"date={day}" / fname
+        return Path(f"date={day}") / fname
     return Path(fname)
 
 

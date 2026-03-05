@@ -156,7 +156,7 @@ def generate_mel_segments(cfg: MelSegmentsConfig) -> Path:
     )
 
     site = str(cfg.site).strip().lower()
-    out_base = out_root / "dataset=audio_mel_segments" / f"site={site}"
+    out_base = out_root
     out_base.mkdir(parents=True, exist_ok=True)
 
     rows: List[Dict[str, Any]] = []
