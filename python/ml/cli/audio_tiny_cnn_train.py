@@ -17,8 +17,14 @@ def main() -> int:
     p.add_argument("--dataset-id-col", default="sample_id", help="ID column in --dataset used to join split manifest")
     p.add_argument("--split-id-col", default="sample_id", help="ID column in --split-manifest used to join dataset")
     p.add_argument("--out-dir", required=True)
-    p.add_argument("--target-col", default="ropumprun_label", help="Target column (default ropumprun_label)")
-    p.add_argument("--task", choices=["binary", "multiclass"], default="binary")
+    p.add_argument("--target-col", default="ropumprun_label", help="Target column for binary/multiclass tasks")
+    p.add_argument(
+        "--target-cols",
+        default="",
+        help="Comma-separated target columns for multilabel task (default: overlap_s_producing,overlap_s_delivering)",
+    )
+    p.add_argument("--task", choices=["binary", "multiclass", "multilabel"], default="binary")
+    p.add_argument("--positive-threshold", type=float, default=0.0, help="Positive threshold for numeric multilabel targets")
     p.add_argument("--positive-label", default="on", help="Binary positive class when target is string labels")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--sample", choices=["head", "random"], default="random")
@@ -69,6 +75,12 @@ def main() -> int:
         Path(args.out_dir),
         target_col=str(args.target_col),
         task=str(args.task),
+        target_cols=(
+            [c.strip() for c in str(args.target_cols).split(",") if c.strip()]
+            if str(args.target_cols).strip()
+            else None
+        ),
+        positive_threshold=float(args.positive_threshold),
         positive_label=str(args.positive_label),
         limit=int(args.limit),
         sample_mode=str(args.sample),

@@ -622,6 +622,55 @@ def _label_segments_with_plc_overlap(
         out["transition_count"] = pd.to_numeric(out[plc_state_trans_col], errors="coerce").fillna(out["transition_count"]).astype(int)
         out["is_transition_segment"] = out["transition_count"] > 0
 
+    # Canonical duty columns for downstream training labels.
+    ro_duty_src = "ropumprun__duty" if "ropumprun__duty" in out.columns else ("plc_ropumprun__duty" if "plc_ropumprun__duty" in out.columns else "")
+    de_duty_src = "deliveryrun__duty" if "deliveryrun__duty" in out.columns else ("plc_deliveryrun__duty" if "plc_deliveryrun__duty" in out.columns else "")
+    if ro_duty_src:
+        out["ropumprun_duty"] = pd.to_numeric(out[ro_duty_src], errors="coerce")
+    if de_duty_src:
+        out["deliveryrun_duty"] = pd.to_numeric(out[de_duty_src], errors="coerce")
+
+    # Stable supervision aliases:
+    # - all binary duty columns
+    # - all flow time-weighted means
+    # - all flow derivatives
+    # - powermeter derivative
+    for c in list(out.columns):
+        if not isinstance(c, str):
+            continue
+        raw = c
+        if raw.startswith("plc_"):
+            raw = raw[4:]
+
+        if raw.endswith("__duty"):
+            base = raw[: -len("__duty")]
+            alias = f"sup_{base}_duty"
+            if alias not in out.columns:
+                out[alias] = pd.to_numeric(out[c], errors="coerce")
+            continue
+
+        if raw.endswith("__mean_tw"):
+            base = raw[: -len("__mean_tw")]
+            base_l = base.lower()
+            if ("flow" in base_l) or ("pressure" in base_l):
+                alias = f"sup_{base}_mean_tw"
+                if alias not in out.columns:
+                    out[alias] = pd.to_numeric(out[c], errors="coerce")
+            continue
+
+        if raw.endswith("__d1"):
+            base = raw[: -len("__d1")]
+            base_l = base.lower()
+            if ("flow" in base_l) or ("pressure" in base_l):
+                alias = f"sup_{base}_d1"
+                if alias not in out.columns:
+                    out[alias] = pd.to_numeric(out[c], errors="coerce")
+                continue
+            if base_l == "powermeter":
+                alias = "sup_powermeter_d1"
+                if alias not in out.columns:
+                    out[alias] = pd.to_numeric(out[c], errors="coerce")
+
     return out
 
 

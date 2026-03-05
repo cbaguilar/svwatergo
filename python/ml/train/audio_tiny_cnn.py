@@ -107,7 +107,7 @@ def _load_mels_from_manifest_rows(df: pd.DataFrame) -> np.ndarray:
 
 
 class _TinyCNN:
-    def __init__(self, nn, n_classes: int):
+    def __init__(self, nn, out_dim: int):
         self.model = nn.Sequential(
             nn.Conv2d(1, 8, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -119,8 +119,68 @@ class _TinyCNN:
             nn.Linear(16 * 4 * 8, 32),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(32, 1 if n_classes == 2 else n_classes),
+            nn.Linear(32, int(out_dim)),
         )
+
+
+def _coerce_multilabel_target(
+    df: pd.DataFrame,
+    *,
+    target_cols: List[str],
+    positive_threshold: float,
+) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
+    out = df.copy()
+    if not target_cols:
+        raise ValueError("multilabel target_cols cannot be empty")
+    missing = [c for c in target_cols if c not in out.columns]
+    if missing:
+        raise ValueError(f"Missing multilabel target columns: {', '.join(missing)}")
+    y_cols: List[np.ndarray] = []
+    keep_mask = np.ones(len(out), dtype=bool)
+    for c in target_cols:
+        s = pd.to_numeric(out[c], errors="coerce")
+        keep_mask &= s.notna().to_numpy()
+        y_cols.append((s.to_numpy(dtype=np.float32) > float(positive_threshold)).astype(np.float32))
+    if int(keep_mask.sum()) <= 0:
+        raise ValueError("No valid rows for multilabel target after coercion")
+    out = out.loc[keep_mask].reset_index(drop=True)
+    Y = np.stack([col[keep_mask] for col in y_cols], axis=1).astype(np.float32)
+    y_meta: Dict[str, Any] = {
+        "task": "multilabel",
+        "target_cols": [str(c) for c in target_cols],
+        "positive_rule": f"value > {float(positive_threshold)}",
+        "classes": [str(c) for c in target_cols],
+    }
+    return out, Y, y_meta
+
+
+def _metrics_multilabel(
+    *,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_score: Optional[np.ndarray],
+    class_names: List[str],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    per_label: Dict[str, Any] = {}
+    f1_vals: List[float] = []
+    prec_vals: List[float] = []
+    rec_vals: List[float] = []
+    for j, name in enumerate(class_names):
+        yt = y_true[:, j].astype(np.int64)
+        yp = y_pred[:, j].astype(np.int64)
+        ys = y_score[:, j] if y_score is not None else None
+        m = _metrics_dict(yt, yp, ys, task="binary")
+        per_label[str(name)] = m
+        f1_vals.append(float(m.get("f1", 0.0)))
+        prec_vals.append(float(m.get("precision", 0.0)))
+        rec_vals.append(float(m.get("recall", 0.0)))
+    out["per_label"] = per_label
+    out["macro_f1"] = float(np.mean(f1_vals)) if f1_vals else 0.0
+    out["macro_precision"] = float(np.mean(prec_vals)) if prec_vals else 0.0
+    out["macro_recall"] = float(np.mean(rec_vals)) if rec_vals else 0.0
+    out["exact_match_accuracy"] = float(np.mean(np.all(y_true == y_pred, axis=1))) if len(y_true) else 0.0
+    return out
 
 
 def fit_audio_tiny_cnn(
@@ -129,6 +189,8 @@ def fit_audio_tiny_cnn(
     *,
     target_col: str = "ropumprun_label",
     task: str = "binary",
+    target_cols: Optional[List[str]] = None,
+    positive_threshold: float = 0.0,
     positive_label: str = "on",
     limit: int = 0,
     sample_mode: str = "random",
@@ -154,7 +216,13 @@ def fit_audio_tiny_cnn(
     if class_weight not in (None, "balanced"):
         raise ValueError("class_weight must be None or 'balanced'")
     df = _sample_rows(df, int(limit), str(sample_mode))
-    df, y, y_meta = _coerce_target(df, target_col=target_col, task=task, positive_label=positive_label)
+    task = str(task)
+    if task == "multilabel":
+        cols = list(target_cols) if target_cols else ["overlap_s_producing", "overlap_s_delivering"]
+        df, y_ml, y_meta = _coerce_multilabel_target(df, target_cols=cols, positive_threshold=float(positive_threshold))
+        y = y_ml
+    else:
+        df, y, y_meta = _coerce_target(df, target_col=target_col, task=task, positive_label=positive_label)
     df, split_ser, split_source = _attach_split_labels(
         df,
         split_manifest_df=split_manifest_df,
@@ -193,7 +261,7 @@ def fit_audio_tiny_cnn(
         if len(idx_train) < 2:
             raise ValueError("Need at least 2 train rows from provided splits.")
     else:
-        stratify = y if len(np.unique(y)) > 1 else None
+        stratify = (y if (task != "multilabel" and len(np.unique(y)) > 1) else None)
         idx_train, idx_test = train_test_split(
             idx,
             test_size=float(test_size),
@@ -203,22 +271,39 @@ def fit_audio_tiny_cnn(
         split_for_projection = pd.Series(["train"] * len(df), index=df.index, dtype="string")
         split_for_projection.iloc[idx_test] = "test"
 
-    if len(np.unique(y[idx_train])) < 2:
-        raise ValueError("Train split has only one class after filtering; cannot train classifier.")
+    if task != "multilabel":
+        if len(np.unique(y[idx_train])) < 2:
+            raise ValueError("Train split has only one class after filtering; cannot train classifier.")
+    else:
+        if int(np.sum(y[idx_train], axis=0).max()) <= 0:
+            raise ValueError("Train split has no positive multilabel targets.")
 
     X_train = torch.tensor(X[idx_train], dtype=torch.float32)
     X_test = torch.tensor(X[idx_test], dtype=torch.float32)
     X_val = torch.tensor(X[idx_val], dtype=torch.float32)
-    y_train = torch.tensor(y[idx_train], dtype=torch.long)
-    y_test = torch.tensor(y[idx_test], dtype=torch.long)
-    y_val = torch.tensor(y[idx_val], dtype=torch.long)
+    if task == "multilabel":
+        y_train = torch.tensor(y[idx_train], dtype=torch.float32)
+        y_test = torch.tensor(y[idx_test], dtype=torch.float32)
+        y_val = torch.tensor(y[idx_val], dtype=torch.float32)
+    else:
+        y_train = torch.tensor(y[idx_train], dtype=torch.long)
+        y_test = torch.tensor(y[idx_test], dtype=torch.long)
+        y_val = torch.tensor(y[idx_val], dtype=torch.long)
 
     train_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=True)
     test_dl = DataLoader(TensorDataset(X_test, y_test), batch_size=int(batch_size), shuffle=False)
     val_dl = DataLoader(TensorDataset(X_val, y_val), batch_size=int(batch_size), shuffle=False)
 
-    n_classes = 2 if task == "binary" else int(len(np.unique(y)))
-    tiny = _TinyCNN(nn, n_classes=n_classes)
+    if task == "binary":
+        n_classes = 2
+        out_dim = 1
+    elif task == "multiclass":
+        n_classes = int(len(np.unique(y)))
+        out_dim = n_classes
+    else:
+        n_classes = int(y.shape[1])
+        out_dim = n_classes
+    tiny = _TinyCNN(nn, out_dim=out_dim)
     model = tiny.model
 
     loss_kwargs = _balanced_loss_kwargs(
@@ -229,6 +314,15 @@ def fit_audio_tiny_cnn(
     )
     if task == "binary":
         criterion = nn.BCEWithLogitsLoss(**loss_kwargs)
+    elif task == "multilabel":
+        if class_weight == "balanced":
+            y_tr = y[idx_train].astype(np.float32)
+            pos = np.sum(y_tr, axis=0)
+            neg = y_tr.shape[0] - pos
+            pos_w = np.where(pos > 0, neg / np.maximum(pos, 1.0), 1.0).astype(np.float32)
+            criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_w, dtype=torch.float32))
+        else:
+            criterion = nn.BCEWithLogitsLoss()
     else:
         criterion = nn.CrossEntropyLoss(**loss_kwargs)
 
@@ -247,12 +341,23 @@ def fit_audio_tiny_cnn(
                     pred = (score >= 0.5).long()
                     y_score.extend(score.cpu().numpy().tolist())
                     y_pred.extend(pred.cpu().numpy().tolist())
+                elif task == "multilabel":
+                    score = torch.sigmoid(logits)
+                    pred = (score >= 0.5).float()
+                    y_score.extend(score.cpu().numpy().tolist())
+                    y_pred.extend(pred.cpu().numpy().tolist())
                 else:
                     prob = torch.softmax(logits, dim=1)
                     pred = torch.argmax(prob, dim=1)
                     y_pred.extend(pred.cpu().numpy().tolist())
                 y_true.extend(yb.cpu().numpy().tolist())
-        return np.asarray(y_true), np.asarray(y_pred), (np.asarray(y_score) if task == "binary" else None)
+        y_true_np = np.asarray(y_true)
+        y_pred_np = np.asarray(y_pred)
+        if task in ("binary", "multilabel"):
+            y_score_np = np.asarray(y_score)
+        else:
+            y_score_np = None
+        return y_true_np, y_pred_np, y_score_np
 
     n_epochs = int(epochs)
     log_every = max(1, int(log_every))
@@ -265,6 +370,8 @@ def fit_audio_tiny_cnn(
             logits = model(xb)
             if task == "binary":
                 loss = criterion(logits.view(-1), yb.float())
+            elif task == "multilabel":
+                loss = criterion(logits, yb)
             else:
                 loss = criterion(logits, yb)
             loss.backward()
@@ -277,8 +384,12 @@ def fit_audio_tiny_cnn(
             avg_loss = (loss_sum / max(1, n_samples))
             y_train_true_ep, y_train_pred_ep, _ = _predict(train_dl)
             y_test_true_ep, y_test_pred_ep, _ = _predict(test_dl)
-            train_acc = float((y_train_true_ep == y_train_pred_ep).mean()) if len(y_train_true_ep) else 0.0
-            test_acc = float((y_test_true_ep == y_test_pred_ep).mean()) if len(y_test_true_ep) else 0.0
+            if task == "multilabel":
+                train_acc = float(np.mean(np.all(y_train_true_ep == y_train_pred_ep, axis=1))) if len(y_train_true_ep) else 0.0
+                test_acc = float(np.mean(np.all(y_test_true_ep == y_test_pred_ep, axis=1))) if len(y_test_true_ep) else 0.0
+            else:
+                train_acc = float((y_train_true_ep == y_train_pred_ep).mean()) if len(y_train_true_ep) else 0.0
+                test_acc = float((y_test_true_ep == y_test_pred_ep).mean()) if len(y_test_true_ep) else 0.0
             print(
                 f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} train_acc={train_acc:.4f} test_acc={test_acc:.4f}",
                 flush=True,
@@ -305,7 +416,7 @@ def fit_audio_tiny_cnn(
                 pred_parts.append(pred)
         score_all = np.concatenate(score_parts, axis=0)
         pred_all = np.concatenate(pred_parts, axis=0)
-    else:
+    elif task == "multiclass":
         prob_parts: List[np.ndarray] = []
         pred_parts: List[np.ndarray] = []
         with torch.no_grad():
@@ -318,6 +429,20 @@ def fit_audio_tiny_cnn(
                 prob_parts.append(prob)
                 pred_parts.append(pred)
         prob_all = np.concatenate(prob_parts, axis=0)
+        pred_all = np.concatenate(pred_parts, axis=0)
+    else:
+        score_parts: List[np.ndarray] = []
+        pred_parts = []
+        with torch.no_grad():
+            for i0 in range(0, X.shape[0], int(batch_size)):
+                i1 = min(X.shape[0], i0 + int(batch_size))
+                xb = torch.tensor(X[i0:i1], dtype=torch.float32)
+                logits = model(xb)
+                score = torch.sigmoid(logits).cpu().numpy()
+                pred = (score >= 0.5).astype("int64")
+                score_parts.append(score)
+                pred_parts.append(pred)
+        score_all = np.concatenate(score_parts, axis=0)
         pred_all = np.concatenate(pred_parts, axis=0)
 
     # Add PCA coordinates (from flattened mel tensors) so the existing 4-panel
@@ -335,11 +460,20 @@ def fit_audio_tiny_cnn(
     proj_df["pca2"] = Z[:, 1] if Z.shape[1] >= 2 else 0.0
     proj_df["pca3"] = Z[:, 2] if Z.shape[1] >= 3 else 0.0
     proj_df["split"] = split_for_projection.reset_index(drop=True)
-    proj_df["y_true"] = y.astype("int64")
-    proj_df["y_pred"] = pred_all.astype("int64")
+    if task == "multilabel":
+        # Keep compatibility columns while exposing full multilabel outputs.
+        proj_df["y_true"] = y[:, 0].astype("int64")
+        proj_df["y_pred"] = pred_all[:, 0].astype("int64")
+        for j, name in enumerate(list(y_meta.get("classes") or [])):
+            proj_df[f"y_true_{name}"] = y[:, j].astype("int64")
+            proj_df[f"y_pred_{name}"] = pred_all[:, j].astype("int64")
+            proj_df[f"score_{name}"] = score_all[:, j].astype("float64")
+    else:
+        proj_df["y_true"] = y.astype("int64")
+        proj_df["y_pred"] = pred_all.astype("int64")
     if task == "binary":
         proj_df["score_positive"] = score_all.astype("float64")
-    else:
+    elif task == "multiclass":
         for j in range(prob_all.shape[1]):
             proj_df[f"score_class_{j}"] = prob_all[:, j].astype("float64")
     projection_path = out_dir / "train_projection.parquet"
@@ -352,9 +486,12 @@ def fit_audio_tiny_cnn(
             "bundle_version": 1,
             "task": task,
             "target_col": target_col,
+            "target_cols": (list(target_cols) if target_cols else None),
+            "positive_threshold": float(positive_threshold),
             "y_meta": y_meta,
             "state_dict": model.state_dict(),
             "n_classes": int(n_classes),
+            "output_dim": int(out_dim),
             "mel_shape": {"n_mels": int(n_mels), "n_frames": int(n_frames)},
             "mel_config": mel_config or {},
             "n_rows": int(len(df)),
@@ -367,19 +504,54 @@ def fit_audio_tiny_cnn(
         model_path,
     )
 
+    if task == "multilabel":
+        class_counts = {
+            str(name): int(np.sum(y[:, i]))
+            for i, name in enumerate(list(y_meta.get("classes") or []))
+        }
+        train_metrics = _metrics_multilabel(
+            y_true=y_train_true.astype(np.int64),
+            y_pred=y_train_pred.astype(np.int64),
+            y_score=y_train_score.astype(np.float64) if y_train_score is not None else None,
+            class_names=list(y_meta.get("classes") or []),
+        )
+        test_metrics = _metrics_multilabel(
+            y_true=y_test_true.astype(np.int64),
+            y_pred=y_test_pred.astype(np.int64),
+            y_score=y_test_score.astype(np.float64) if y_test_score is not None else None,
+            class_names=list(y_meta.get("classes") or []),
+        )
+        val_metrics = (
+            _metrics_multilabel(
+                y_true=y_val_true.astype(np.int64),
+                y_pred=y_val_pred.astype(np.int64),
+                y_score=y_val_score.astype(np.float64) if y_val_score is not None else None,
+                class_names=list(y_meta.get("classes") or []),
+            )
+            if len(y_val_true)
+            else {}
+        )
+    else:
+        class_counts = {str(int(k)): int(v) for k, v in pd.Series(y).value_counts().sort_index().items()}
+        train_metrics = _metrics_dict(y_train_true, y_train_pred, y_train_score, task=task)
+        test_metrics = _metrics_dict(y_test_true, y_test_pred, y_test_score, task=task)
+        val_metrics = _metrics_dict(y_val_true, y_val_pred, y_val_score, task=task) if len(y_val_true) else {}
+
     metrics = {
         "task": task,
         "target_col": target_col,
+        "target_cols": (list(target_cols) if target_cols else None),
+        "positive_threshold": float(positive_threshold),
         "y_meta": y_meta,
         "n_rows": int(len(df)),
         "n_train": int(len(idx_train)),
         "n_test": int(len(idx_test)),
         "n_val": int(len(idx_val)),
         "split_source": str(split_source),
-        "class_counts": {str(int(k)): int(v) for k, v in pd.Series(y).value_counts().sort_index().items()},
-        "train_metrics": _metrics_dict(y_train_true, y_train_pred, y_train_score, task=task),
-        "test_metrics": _metrics_dict(y_test_true, y_test_pred, y_test_score, task=task),
-        "val_metrics": _metrics_dict(y_val_true, y_val_pred, y_val_score, task=task) if len(y_val_true) else {},
+        "class_counts": class_counts,
+        "train_metrics": train_metrics,
+        "test_metrics": test_metrics,
+        "val_metrics": val_metrics,
         "train_params": {
             "epochs": int(epochs),
             "batch_size": int(batch_size),
@@ -409,7 +581,8 @@ def load_audio_tiny_cnn_bundle(model_path: Path) -> Dict[str, Any]:
         if key not in obj:
             raise ValueError(f"Tiny CNN bundle missing key: {key}")
     n_classes = int(obj["n_classes"])
-    tiny = _TinyCNN(nn, n_classes=n_classes)
+    out_dim = int(obj.get("output_dim", 1 if str(obj.get("task", "binary")) == "binary" else n_classes))
+    tiny = _TinyCNN(nn, out_dim=out_dim)
     tiny.model.load_state_dict(obj["state_dict"])
     tiny.model.eval()
     obj["_model"] = tiny.model
@@ -479,7 +652,8 @@ def predict_audio_tiny_cnn(
     model = bundle["_model"]
     with torch.no_grad():
         logits = model(x)
-        if str(bundle.get("task", "binary")) == "binary":
+        task = str(bundle.get("task", "binary"))
+        if task == "binary":
             prob = torch.sigmoid(logits.view(-1))[0].item()
             pred = 1 if prob >= 0.5 else 0
             out = {
@@ -489,6 +663,22 @@ def predict_audio_tiny_cnn(
                 "predicted_label": "positive" if pred == 1 else "negative",
                 "score_positive": float(prob),
                 "probabilities": [float(1.0 - prob), float(prob)],
+                "mel_shape_used": [int(mel.shape[0]), int(mel.shape[1])],
+            }
+        elif task == "multilabel":
+            prob = torch.sigmoid(logits)[0].cpu().numpy()
+            pred = (prob >= 0.5).astype("int64")
+            classes = list((bundle.get("y_meta") or {}).get("classes") or [])
+            if not classes:
+                classes = [f"class_{i}" for i in range(int(prob.shape[0]))]
+            out = {
+                "bundle_type": "audio_tiny_cnn",
+                "task": "multilabel",
+                "predicted_multi_hot": [int(v) for v in pred.tolist()],
+                "probabilities": [float(v) for v in prob.tolist()],
+                "classes": [str(c) for c in classes],
+                "scores_by_class": {str(classes[i]): float(prob[i]) for i in range(len(classes))},
+                "predicted_labels": [str(classes[i]) for i in range(len(classes)) if int(pred[i]) == 1],
                 "mel_shape_used": [int(mel.shape[0]), int(mel.shape[1])],
             }
         else:
