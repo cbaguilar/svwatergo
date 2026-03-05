@@ -93,6 +93,16 @@ def _balanced_loss_kwargs(
     return {"weight": torch.tensor(w, dtype=torch.float32)}
 
 
+def _move_loss_kwargs_to_device(loss_kwargs: Dict[str, Any], device) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for k, v in loss_kwargs.items():
+        if hasattr(v, "to"):
+            out[k] = v.to(device)
+        else:
+            out[k] = v
+    return out
+
+
 def _load_mels_from_manifest_rows(df: pd.DataFrame) -> np.ndarray:
     grouped = df.groupby("mel_shard_path", sort=False)
     chunks = []
@@ -318,6 +328,7 @@ def fit_audio_tiny_cnn(
         task=task,
         class_weight=class_weight,
     )
+    loss_kwargs = _move_loss_kwargs_to_device(loss_kwargs, device)
     if task == "binary":
         criterion = nn.BCEWithLogitsLoss(**loss_kwargs)
     elif task == "multilabel":
@@ -326,7 +337,9 @@ def fit_audio_tiny_cnn(
             pos = np.sum(y_tr, axis=0)
             neg = y_tr.shape[0] - pos
             pos_w = np.where(pos > 0, neg / np.maximum(pos, 1.0), 1.0).astype(np.float32)
-            criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_w, dtype=torch.float32))
+            criterion = nn.BCEWithLogitsLoss(
+                pos_weight=torch.tensor(pos_w, dtype=torch.float32, device=device)
+            )
         else:
             criterion = nn.BCEWithLogitsLoss()
     else:
