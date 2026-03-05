@@ -744,20 +744,27 @@ def _split_assign_source_day_event(
         class_row_weight: float = 2.0,
         global_weight: float = 1.0,
     ) -> float:
+        def _delta_error(cur_v: int, proj_v: int, target_v: int) -> float:
+            cur_over = max(0, cur_v - target_v)
+            proj_over = max(0, proj_v - target_v)
+            cur_err = abs(cur_v - target_v) + (cur_over * 2)
+            proj_err = abs(proj_v - target_v) + (proj_over * 2)
+            return float(proj_err - cur_err)
+
+        cw_cur = class_current_windows[klass][split]
         cw_proj = class_current_windows[klass][split] + 1
         cw_target = class_target_windows[klass][split]
-        cw_over = max(0, cw_proj - cw_target)
-        cw_cost = abs(cw_proj - cw_target) + (cw_over * 2)
+        cw_cost = _delta_error(cw_cur, cw_proj, cw_target)
 
+        cr_cur = class_current_rows[klass][split]
         cr_proj = class_current_rows[klass][split] + int(n)
         cr_target = class_target_rows[klass][split]
-        cr_over = max(0, cr_proj - cr_target)
-        cr_cost = abs(cr_proj - cr_target) + (cr_over * 2)
+        cr_cost = _delta_error(cr_cur, cr_proj, cr_target)
 
+        g_cur = current[split]
         g_proj = current[split] + int(n)
         g_target = target[split]
-        g_over = max(0, g_proj - g_target)
-        g_cost = abs(g_proj - g_target) + (g_over * 2)
+        g_cost = _delta_error(g_cur, g_proj, g_target)
         return (class_window_weight * cw_cost) + (class_row_weight * cr_cost) + (global_weight * g_cost)
 
     def _assign_group(gid: str, klass: str, n: int, allowed: Optional[Sequence[str]] = None) -> None:
