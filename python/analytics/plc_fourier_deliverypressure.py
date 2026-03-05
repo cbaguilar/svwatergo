@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -99,6 +100,11 @@ def _site_from_path(path: Path) -> str:
     return ""
 
 
+def _expand_glob_pattern(pattern: str) -> List[Path]:
+    # pathlib.Path.glob does not support absolute patterns, so use glob.glob for both.
+    return [Path(p) for p in sorted(glob.glob(pattern, recursive=True))]
+
+
 def _load_rows(
     globs: Sequence[str],
     site: Optional[str],
@@ -109,7 +115,7 @@ def _load_rows(
 ) -> pd.DataFrame:
     files: List[Path] = []
     for g in globs:
-        files.extend(sorted(Path(".").glob(g)))
+        files.extend(_expand_glob_pattern(g))
 
     if not files:
         raise SystemExit("No parquet files matched --input-glob")
