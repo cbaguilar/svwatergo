@@ -386,9 +386,11 @@ class AppState:
             .reset_index()
         )
         g["window_seconds"] = (g["end_ts"] - g["start_ts"]).dt.total_seconds()
+        # Keep datetime sort keys for API ordering, then cast for JSON output.
+        g = g.sort_values(["day_utc", "start_ts", "event_window_id"], ascending=[True, True, True]).reset_index(drop=True)
         g["start_ts"] = g["start_ts"].astype("string")
         g["end_ts"] = g["end_ts"].astype("string")
-        return g.sort_values(["n_segments", "window_seconds"], ascending=[False, False]).reset_index(drop=True)
+        return g
 
     def summary(self) -> Dict[str, Any]:
         by_split = self.df["split"].astype("string").value_counts(dropna=False).to_dict()
