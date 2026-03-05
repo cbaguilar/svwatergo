@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..train.audio_pca_svm import fit_audio_pca_svm
+from ..train.audio_tiny_cnn import fit_audio_tiny_cnn
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Train PCA+SVM on labeled audio mel dataset")
+    p = argparse.ArgumentParser(description="Train tiny CNN on labeled audio mel dataset")
     p.add_argument("--dataset", nargs="+", required=True, help="Labeled dataset parquet path(s)")
     p.add_argument("--split-manifest", default="", help="Optional split manifest parquet (uses fixed splits instead of random split)")
     p.add_argument("--split-col", default="split", help="Split column name (default: split)")
@@ -22,19 +22,18 @@ def main() -> int:
     p.add_argument("--positive-label", default="on", help="Binary positive class when target is string labels")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--sample", choices=["head", "random"], default="random")
-    p.add_argument("--n-components", type=int, default=8)
     p.add_argument("--test-size", type=float, default=0.2)
     p.add_argument("--random-state", type=int, default=42)
-    p.add_argument("--svm-kernel", default="rbf", choices=["linear", "rbf", "poly", "sigmoid"])
-    p.add_argument("--svm-c", type=float, default=1.0)
-    p.add_argument("--svm-gamma", default="scale")
-    p.add_argument("--svm-class-weight", choices=["balanced"], default=None, help="Optional class weighting for SVM")
-    p.add_argument("--no-standardize", action="store_true")
+    p.add_argument("--epochs", type=int, default=12)
+    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--learning-rate", type=float, default=1e-3)
+    p.add_argument("--weight-decay", type=float, default=1e-4)
+    p.add_argument("--class-weight", choices=["balanced"], default=None, help="Optional class weighting for CNN loss")
 
-    # Persisted mel settings used for wav inference; defaults match current mel generator.
+    # Persisted mel settings used for wav inference.
     p.add_argument("--sample-rate", type=int, default=16000)
     p.add_argument("--mono", action="store_true", default=True)
-    p.add_argument("--target-seconds", type=float, default=4.0)
+    p.add_argument("--target-seconds", type=float, default=10.0)
     p.add_argument("--n-fft", type=int, default=1024)
     p.add_argument("--win-length", type=int, default=1024)
     p.add_argument("--hop-length", type=int, default=256)
@@ -49,6 +48,7 @@ def main() -> int:
     dfs = [pd.read_parquet(pth) for pth in args.dataset]
     df = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
     split_manifest_df = pd.read_parquet(args.split_manifest) if str(args.split_manifest).strip() else None
+
     mel_config = {
         "sample_rate": int(args.sample_rate),
         "mono": bool(args.mono),
@@ -64,7 +64,7 @@ def main() -> int:
         "to_db": bool(args.to_db),
     }
 
-    res = fit_audio_pca_svm(
+    res = fit_audio_tiny_cnn(
         df,
         Path(args.out_dir),
         target_col=str(args.target_col),
@@ -72,14 +72,13 @@ def main() -> int:
         positive_label=str(args.positive_label),
         limit=int(args.limit),
         sample_mode=str(args.sample),
-        n_components=int(args.n_components),
-        standardize=not bool(args.no_standardize),
         test_size=float(args.test_size),
         random_state=int(args.random_state),
-        svm_kernel=str(args.svm_kernel),
-        svm_c=float(args.svm_c),
-        svm_gamma=str(args.svm_gamma),
-        svm_class_weight=str(args.svm_class_weight) if args.svm_class_weight else None,
+        epochs=int(args.epochs),
+        batch_size=int(args.batch_size),
+        learning_rate=float(args.learning_rate),
+        weight_decay=float(args.weight_decay),
+        class_weight=str(args.class_weight) if args.class_weight else None,
         mel_config=mel_config,
         split_manifest_df=split_manifest_df,
         split_col=str(args.split_col),

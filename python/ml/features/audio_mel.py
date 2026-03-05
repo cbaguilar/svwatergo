@@ -467,9 +467,16 @@ def waveform_to_logmel(
 def partition_key_for_segment(seg: Dict[str, Any], *, partition_by: str) -> str:
     if partition_by == "none":
         return "all"
-    ts = seg.get("segment_start_ts_utc") or ""
+    ts = seg.get("segment_start_ts_utc")
     if isinstance(ts, str) and ts:
         return ts.split("T", 1)[0]
+    if ts is not None:
+        try:
+            t = pd.to_datetime(ts, utc=True, errors="coerce")
+            if pd.notna(t):
+                return pd.Timestamp(t).strftime("%Y-%m-%d")
+        except Exception:
+            pass
     return "unknown"
 
 
