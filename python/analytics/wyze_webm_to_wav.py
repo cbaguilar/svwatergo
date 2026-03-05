@@ -16,6 +16,18 @@ WYZE_WEBM_RE = re.compile(
     r"^(?P<camera>.+?)_(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3,6})?Z)_chunk=(?P<chunk>\d+)\.webm$",
     re.IGNORECASE,
 )
+WYZE_WEBM_10S_RE = re.compile(
+    r"^(?P<camera>.+?)__(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3,6})?Z)__(?P<seconds>\d+)s\.webm$",
+    re.IGNORECASE,
+)
+WYZE_WEBM_10S_SINGLE_RE = re.compile(
+    r"^(?P<camera>.+?)_(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3,6})?Z)_(?P<seconds>\d+)s\.webm$",
+    re.IGNORECASE,
+)
+WYZE_WEBM_MS_RE = re.compile(
+    r"^(?P<camera>.+?)__(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3,6})?Z)__(?P<millis>\d+)ms\.webm$",
+    re.IGNORECASE,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -335,12 +347,69 @@ def main() -> None:
 
 def parse_wyze_webm_filename(name: str) -> Optional[Tuple[str, str, int]]:
     m = WYZE_WEBM_RE.match(name)
-    if not m:
-        return None
-    camera = str(m.group("camera"))
-    ts_raw = str(m.group("ts"))
-    chunk_idx = int(m.group("chunk"))
-    return camera, ts_raw, chunk_idx
+    if m:
+        camera = str(m.group("camera"))
+        ts_raw = str(m.group("ts"))
+        chunk_idx = int(m.group("chunk"))
+        return camera, ts_raw, chunk_idx
+
+    # Alternate naming used by browser capture output:
+    # camera_5__2026-03-01T23-31-53-598Z__10s.webm
+    m2 = WYZE_WEBM_10S_RE.match(name)
+    if m2:
+        camera = str(m2.group("camera"))
+        ts_raw = str(m2.group("ts"))
+        # No explicit chunk id in this filename style.
+        return camera, ts_raw, 0
+
+    m3 = WYZE_WEBM_MS_RE.match(name)
+    if m3:
+        camera = str(m3.group("camera"))
+        ts_raw = str(m3.group("ts"))
+        # No explicit chunk id in this filename style.
+        return camera, ts_raw, 0
+
+    # Another observed naming pattern:
+    # Pryor_Farms_3_behind_ro__2026-02-28T04-19-26-682Z_10s.webm
+    m4 = WYZE_WEBM_10S_SINGLE_RE.match(name)
+    if m4:
+        camera = str(m4.group("camera"))
+        ts_raw = str(m4.group("ts"))
+        # No explicit chunk id in this filename style.
+        return camera, ts_raw, 0
+
+    # Defensive fallback for variants like:
+    #   <camera>__<ts>__10s.webm
+    #   <camera>__<ts>__10000ms.webm
+    #   <camera>_<ts>_10s.webm
+    # where camera can contain underscores and minor producer changes.
+    lower = name.lower()
+    if lower.endswith(".webm"):
+        stem = name[:-5]
+        parts = stem.split("__")
+        if len(parts) >= 3:
+            camera = "__".join(parts[:-2]).strip("_")
+            ts_raw = parts[-2].strip()
+            tail = parts[-1].strip().lower()
+            if _looks_like_wyze_ts(ts_raw) and (tail.endswith("s") or tail.endswith("ms")):
+                return camera, ts_raw, 0
+
+        parts = stem.rsplit("_", 2)
+        if len(parts) == 3:
+            camera, ts_raw, tail = parts
+            if _looks_like_wyze_ts(ts_raw) and tail.lower().endswith("s"):
+                return camera.strip("_"), ts_raw.strip(), 0
+    return None
+
+
+def _looks_like_wyze_ts(ts_raw: str) -> bool:
+    return bool(
+        re.match(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3,6})?Z$",
+            str(ts_raw).strip(),
+            re.IGNORECASE,
+        )
+    )
 
 
 def compute_clip_bounds(ts_nominal: pd.Timestamp, *, dur_s: float, timestamp_kind: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
