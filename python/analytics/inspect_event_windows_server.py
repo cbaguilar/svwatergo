@@ -19,6 +19,16 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+try:
+    import soundfile as sf  # type: ignore
+except Exception:
+    sf = None
+
+try:
+    from scipy.io import wavfile  # type: ignore
+except Exception:
+    wavfile = None
+
 
 DEFAULT_SAMPLES = (
     "/mnt/d/datasets/svwatergo/derived/"
@@ -576,17 +586,7 @@ class AppState:
         wav_p = self._check_allowed(path)
         if not wav_p.exists():
             raise FileNotFoundError(str(wav_p))
-        with wave.open(str(wav_p), "rb") as wf:
-            n_channels = wf.getnchannels()
-            sampwidth = wf.getsampwidth()
-            rate = wf.getframerate()
-            n_frames = wf.getnframes()
-            raw = wf.readframes(n_frames)
-        if sampwidth != 2:
-            raise ValueError(f"unsupported wav sample width: {sampwidth} bytes")
-        y = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        if n_channels > 1:
-            y = y.reshape(-1, n_channels).mean(axis=1)
+        y, rate = _load_wav_for_spec(wav_p)
         if y.size == 0:
             raise ValueError("empty wav")
         return _plot_wav_spec_png(y, sample_rate=rate, title=wav_p.name)
@@ -711,6 +711,33 @@ def _plot_wav_spec_png(y: np.ndarray, *, sample_rate: int, title: str) -> bytes:
     fig.savefig(buf, format="png", dpi=120)
     plt.close(fig)
     return buf.getvalue()
+
+
+def _load_wav_for_spec(path: Path) -> tuple[np.ndarray, int]:
+    if sf is not None:
+        data, sr = sf.read(str(path), always_2d=False)
+        y = np.asarray(data, dtype=np.float32)
+        if y.ndim > 1:
+            y = y.mean(axis=1)
+        return y, int(sr)
+    if wavfile is not None:
+        sr, data = wavfile.read(str(path))
+        y = np.asarray(data, dtype=np.float32)
+        if y.ndim > 1:
+            y = y.mean(axis=1)
+        return y, int(sr)
+    with wave.open(str(path), "rb") as wf:
+        n_channels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        rate = wf.getframerate()
+        n_frames = wf.getnframes()
+        raw = wf.readframes(n_frames)
+    if sampwidth != 2:
+        raise ValueError(f"unsupported wav sample width without soundfile/scipy: {sampwidth} bytes")
+    y = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+    if n_channels > 1:
+        y = y.reshape(-1, n_channels).mean(axis=1)
+    return y, int(rate)
 
 
 def make_handler(state: AppState):
