@@ -24,6 +24,7 @@ def main() -> int:
         help="Comma-separated target columns for multilabel task (default: overlap_s_producing,overlap_s_delivering)",
     )
     p.add_argument("--task", choices=["binary", "multiclass", "multilabel"], default="binary")
+    p.add_argument("--model-arch", choices=["tiny_cnn", "resnet_small"], default="tiny_cnn")
     p.add_argument("--positive-threshold", type=float, default=0.0, help="Positive threshold for numeric multilabel targets")
     p.add_argument("--positive-label", default="on", help="Binary positive class when target is string labels")
     p.add_argument("--limit", type=int, default=0)
@@ -102,6 +103,7 @@ def main() -> int:
         split_col=str(args.split_col),
         dataset_id_col=str(args.dataset_id_col),
         split_manifest_id_col=str(args.split_id_col),
+        model_arch=str(args.model_arch),
     )
     print(f"Model      -> {res.model_path}")
     print(f"Metrics    -> {res.metrics_path}")

@@ -137,6 +137,71 @@ class _TinyCNN:
         )
 
 
+def _res_block(nn, in_ch: int, out_ch: int, stride: int = 1):
+    block = nn.Sequential(
+        nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False),
+        nn.BatchNorm2d(out_ch),
+        nn.ReLU(),
+        nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False),
+        nn.BatchNorm2d(out_ch),
+    )
+    if stride != 1 or in_ch != out_ch:
+        skip = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size=1, stride=stride, bias=False),
+            nn.BatchNorm2d(out_ch),
+        )
+    else:
+        skip = nn.Identity()
+    relu = nn.ReLU()
+    return nn.ModuleList([block, skip, relu])
+
+
+class _SmallResNet:
+    def __init__(self, nn, out_dim: int):
+        class _Net(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.stem = nn.Sequential(
+                    nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1, bias=False),
+                    nn.BatchNorm2d(16),
+                    nn.ReLU(),
+                )
+                self.b1 = _res_block(nn, 16, 16, stride=1)
+                self.b2 = _res_block(nn, 16, 32, stride=2)
+                self.b3 = _res_block(nn, 32, 64, stride=2)
+                self.head = nn.Sequential(
+                    nn.AdaptiveAvgPool2d((1, 1)),
+                    nn.Flatten(),
+                    nn.Linear(64, 64),
+                    nn.ReLU(),
+                    nn.Dropout(0.2),
+                    nn.Linear(64, int(out_dim)),
+                )
+
+            @staticmethod
+            def _run_block(block_parts, x):
+                block, skip, relu = block_parts
+                return relu(block(x) + skip(x))
+
+            def forward(self, x):
+                x = self.stem(x)
+                x = self._run_block(self.b1, x)
+                x = self._run_block(self.b2, x)
+                x = self._run_block(self.b3, x)
+                return self.head(x)
+
+        self.model = _Net()
+
+
+def _build_model(nn, *, out_dim: int, model_arch: str):
+    arch = str(model_arch).strip().lower()
+    if arch in ("tiny", "tiny_cnn", "tiny_cnn_v1"):
+        return _TinyCNN(nn, out_dim=out_dim).model, "tiny_cnn_v1"
+    if arch in ("resnet", "resnet_small", "resnet_small_v1"):
+        return _SmallResNet(nn, out_dim=out_dim).model, "resnet_small_v1"
+    raise ValueError(f"Unknown model_arch: {model_arch!r}")
+
+
 def _coerce_multilabel_target(
     df: pd.DataFrame,
     *,
@@ -308,11 +373,12 @@ def fit_audio_tiny_cnn(
     split_col: str = "split",
     dataset_id_col: str = "sample_id",
     split_manifest_id_col: str = "sample_id",
+    model_arch: str = "tiny_cnn",
 ) -> AudioTinyCNNResult:
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
     device = _select_device(torch)
-    print(f"[device] tiny_cnn using {device}", flush=True)
+    print(f"[device] audio_cnn using {device}", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if class_weight not in (None, "balanced"):
@@ -405,8 +471,8 @@ def fit_audio_tiny_cnn(
     else:
         n_classes = int(y.shape[1])
         out_dim = n_classes
-    tiny = _TinyCNN(nn, out_dim=out_dim)
-    model = tiny.model.to(device)
+    model, arch_kind = _build_model(nn, out_dim=out_dim, model_arch=str(model_arch))
+    model = model.to(device)
 
     loss_kwargs = _balanced_loss_kwargs(
         torch=torch,
@@ -680,7 +746,7 @@ def fit_audio_tiny_cnn(
             "test_idx": idx_test.tolist(),
             "val_idx": idx_val.tolist(),
             "split_source": str(split_source),
-            "arch": {"kind": "tiny_cnn_v1"},
+            "arch": {"kind": str(arch_kind)},
         },
         model_path,
     )
@@ -736,7 +802,8 @@ def fit_audio_tiny_cnn(
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,
         "val_metrics": val_metrics,
-        "train_params": {
+            "train_params": {
+            "model_arch": str(arch_kind),
             "epochs": int(epochs),
             "batch_size": int(batch_size),
             "learning_rate": float(learning_rate),
@@ -766,10 +833,11 @@ def load_audio_tiny_cnn_bundle(model_path: Path) -> Dict[str, Any]:
             raise ValueError(f"Tiny CNN bundle missing key: {key}")
     n_classes = int(obj["n_classes"])
     out_dim = int(obj.get("output_dim", 1 if str(obj.get("task", "binary")) == "binary" else n_classes))
-    tiny = _TinyCNN(nn, out_dim=out_dim)
-    tiny.model.load_state_dict(obj["state_dict"])
-    tiny.model.eval()
-    obj["_model"] = tiny.model
+    arch_kind = str(((obj.get("arch") or {}).get("kind")) or "tiny_cnn_v1")
+    model, _ = _build_model(nn, out_dim=out_dim, model_arch=arch_kind)
+    model.load_state_dict(obj["state_dict"])
+    model.eval()
+    obj["_model"] = model
     return obj
 
 
