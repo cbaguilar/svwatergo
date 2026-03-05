@@ -20,6 +20,7 @@ def render_audio_pca_svm_overview(
     score_label: Optional[str] = None,
     max_points: int = 12000,
     class_names: Optional[Sequence[str]] = None,
+    tuned_thresholds_by_class: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     try:
         import matplotlib.pyplot as plt  # type: ignore
@@ -36,6 +37,24 @@ def render_audio_pca_svm_overview(
     for c in ("pca1", "pca2", "pca3", "y_true", "y_pred"):
         if c not in df.columns:
             raise ValueError(f"Projection file missing required column: {c}")
+
+    applied_thresholds: Dict[str, float] = {}
+    if tuned_thresholds_by_class:
+        for name, thr in tuned_thresholds_by_class.items():
+            score_col = f"score_{name}"
+            pred_col = f"y_pred_{name}"
+            if score_col in df.columns:
+                t = float(thr)
+                df[pred_col] = (pd.to_numeric(df[score_col], errors="coerce").fillna(0.0) >= t).astype("int64")
+                applied_thresholds[str(name)] = t
+        if applied_thresholds:
+            first = next(iter(applied_thresholds.keys()))
+            true_base = f"y_true_{first}"
+            pred_base = f"y_pred_{first}"
+            if true_base in df.columns:
+                df["y_true"] = pd.to_numeric(df[true_base], errors="coerce").fillna(0).astype(int)
+            if pred_base in df.columns:
+                df["y_pred"] = pd.to_numeric(df[pred_base], errors="coerce").fillna(0).astype(int)
 
     df["y_true"] = pd.to_numeric(df["y_true"], errors="coerce").fillna(0).astype(int)
     df["y_pred"] = pd.to_numeric(df["y_pred"], errors="coerce").fillna(0).astype(int)
@@ -191,6 +210,7 @@ def render_audio_pca_svm_overview(
         "source_counts": {str(k): int(v) for k, v in df[source_col].astype(str).value_counts().to_dict().items()}
         if source_col is not None
         else {},
+        "applied_tuned_thresholds": applied_thresholds,
     }
     out_meta.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {"plot_path": out_png, "meta_path": out_meta, "meta": meta}

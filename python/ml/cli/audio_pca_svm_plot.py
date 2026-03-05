@@ -19,6 +19,8 @@ def main() -> int:
     p.add_argument("--score-label", default=None)
     p.add_argument("--class-names", nargs="*", default=None, help="Optional explicit multiclass names by class index")
     p.add_argument("--max-points", type=int, default=12000)
+    p.add_argument("--metrics-path", default=None, help="Optional metrics JSON (used for tuned thresholds/class names)")
+    p.add_argument("--use-tuned-thresholds", default="no", choices=["yes", "no"], help="For tiny-cnn multilabel, recompute y_pred_* from score_* using tuned thresholds")
     args = p.parse_args()
 
     if bool(args.projection) == bool(args.checkpoint_dir):
@@ -27,8 +29,17 @@ def main() -> int:
     proj = Path(args.projection) if args.projection else ckpt_dir / "train_projection.parquet"
 
     class_names = args.class_names
-    if not class_names and ckpt_dir is not None:
-        metrics_path = ckpt_dir / "audio_pca_svm_metrics.json"
+    metrics_path = Path(args.metrics_path) if args.metrics_path else None
+    if metrics_path is None and ckpt_dir is not None:
+        # Prefer tiny-cnn metrics when present, fallback to pca+svm.
+        tiny_metrics = ckpt_dir / "audio_tiny_cnn_metrics.json"
+        svm_metrics = ckpt_dir / "audio_pca_svm_metrics.json"
+        if tiny_metrics.exists():
+            metrics_path = tiny_metrics
+        elif svm_metrics.exists():
+            metrics_path = svm_metrics
+    metrics: dict = {}
+    if metrics_path is not None and metrics_path.exists():
         if metrics_path.exists():
             try:
                 metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
@@ -37,6 +48,13 @@ def main() -> int:
                     class_names = [str(x) for x in maybe]
             except Exception:
                 pass
+
+    tuned_thresholds_by_class = None
+    if str(args.use_tuned_thresholds) == "yes":
+        classes = ((metrics.get("y_meta") or {}).get("classes")) if isinstance(metrics, dict) else None
+        th = metrics.get("inference_thresholds") if isinstance(metrics, dict) else None
+        if isinstance(classes, list) and isinstance(th, list) and len(classes) == len(th) and len(classes) > 0:
+            tuned_thresholds_by_class = {str(c): float(v) for c, v in zip(classes, th)}
 
     res = render_audio_pca_svm_overview(
         projection_path=proj,
@@ -48,6 +66,7 @@ def main() -> int:
         score_label=str(args.score_label) if args.score_label else None,
         max_points=int(args.max_points),
         class_names=class_names,
+        tuned_thresholds_by_class=tuned_thresholds_by_class,
     )
     print(f"Plot -> {res['plot_path']}")
     print(f"Meta -> {res['meta_path']}")
