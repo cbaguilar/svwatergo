@@ -52,6 +52,7 @@ class MelSegmentsConfig:
     power: float = 2.0
     log_eps: float = 1e-10
     to_db: bool = False
+    mel_normalization: str = "legacy"
     shard_size: int = 1024
     partition_by: str = "utc_day"
     write_csv: bool = False
@@ -90,6 +91,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--power", type=float, default=2.0, help="Magnitude exponent before mel projection (e.g. 2 for power)")
     p.add_argument("--log-eps", type=float, default=1e-10, help="Epsilon before log10")
     p.add_argument("--to-db", action="store_true", help="Store mel in dB scale (10*log10)")
+    p.add_argument(
+        "--mel-normalization",
+        default="legacy",
+        choices=["legacy", "none", "log_db", "log10", "log1p_zscore", "log10_median_sub"],
+        help=(
+            "Post-mel normalization mode. "
+            "legacy preserves existing behavior (to_db ? 10*log10 : log10)."
+        ),
+    )
 
     p.add_argument("--shard-size", type=int, default=1024, help="Segments per .npz shard")
     p.add_argument(
@@ -126,6 +136,7 @@ def config_from_args(args: argparse.Namespace) -> MelSegmentsConfig:
         power=float(args.power),
         log_eps=float(args.log_eps),
         to_db=bool(args.to_db),
+        mel_normalization=str(args.mel_normalization),
         shard_size=int(args.shard_size),
         partition_by=str(args.partition_by),
         write_csv=bool(args.write_csv),
@@ -193,6 +204,7 @@ def generate_mel_segments(cfg: MelSegmentsConfig) -> Path:
                 power=float(cfg.power),
                 log_eps=float(cfg.log_eps),
                 to_db=bool(cfg.to_db),
+                mel_normalization=str(cfg.mel_normalization),
             )
             mel = mel.astype(cfg.dtype, copy=False)
         except Exception as e:
@@ -297,6 +309,7 @@ def generate_mel_segments(cfg: MelSegmentsConfig) -> Path:
         "power": float(cfg.power),
         "log_eps": float(cfg.log_eps),
         "to_db": bool(cfg.to_db),
+        "mel_normalization": str(cfg.mel_normalization),
         "shard_size": int(cfg.shard_size),
         "partition_by": str(cfg.partition_by),
         "write_csv": bool(cfg.write_csv),
@@ -446,6 +459,7 @@ def waveform_to_logmel(
     power: float,
     log_eps: float,
     to_db: bool,
+    mel_normalization: str = "legacy",
 ) -> np.ndarray:
     if y.ndim != 1:
         y = y.reshape(-1)
@@ -461,12 +475,29 @@ def waveform_to_logmel(
     if power != 1.0:
         spec = spec ** power
     mel = np.matmul(mel_filter, spec)
-    mel = np.maximum(mel, float(log_eps))
-    if to_db:
-        mel = (10.0 * np.log10(mel)).astype("float32")
-    else:
-        mel = np.log10(mel).astype("float32")
-    return mel
+    mel = np.maximum(mel, float(log_eps)).astype("float32", copy=False)
+
+    mode = str(mel_normalization or "legacy").strip().lower()
+    if mode == "legacy":
+        if to_db:
+            return (10.0 * np.log10(mel)).astype("float32")
+        return np.log10(mel).astype("float32")
+    if mode == "none":
+        return mel.astype("float32", copy=False)
+    if mode == "log_db":
+        return (10.0 * np.log10(mel)).astype("float32")
+    if mode == "log10":
+        return np.log10(mel).astype("float32")
+    if mode == "log1p_zscore":
+        x = np.log1p(mel).astype("float32")
+        mu = x.mean(axis=1, keepdims=True)
+        sigma = x.std(axis=1, keepdims=True)
+        return ((x - mu) / (sigma + 1e-6)).astype("float32")
+    if mode == "log10_median_sub":
+        x = np.log10(mel).astype("float32")
+        baseline = np.median(x, axis=1, keepdims=True)
+        return (x - baseline).astype("float32")
+    raise ValueError(f"Unknown mel_normalization mode: {mel_normalization!r}")
 
 
 def partition_key_for_segment(seg: Dict[str, Any], *, partition_by: str) -> str:

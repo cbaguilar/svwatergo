@@ -418,6 +418,7 @@ def _load_mel_from_wav(path: Path, *, mel_cfg: Dict[str, Any], expected_shape: T
     power = float(mel_cfg.get("power", 2.0))
     log_eps = float(mel_cfg.get("log_eps", 1e-10))
     to_db = bool(mel_cfg.get("to_db", False))
+    mel_normalization = str(mel_cfg.get("mel_normalization", "legacy"))
 
     y, sr_in, _ = read_wav_with_meta(path, decoder="soundfile", sample_rate=sample_rate, mono=mono)
     y = ensure_mono(y) if mono else np.asarray(y, dtype="float32")
@@ -436,6 +437,7 @@ def _load_mel_from_wav(path: Path, *, mel_cfg: Dict[str, Any], expected_shape: T
         power=power,
         log_eps=log_eps,
         to_db=to_db,
+        mel_normalization=mel_normalization,
     )
     if mel.shape != expected_shape:
         mel = _resize_2d_nearest(mel, expected_shape)

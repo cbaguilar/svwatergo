@@ -49,6 +49,11 @@ def main() -> int:
     p.add_argument("--power", type=float, default=2.0)
     p.add_argument("--log-eps", type=float, default=1e-10)
     p.add_argument("--to-db", action="store_true")
+    p.add_argument(
+        "--mel-normalization",
+        default="legacy",
+        choices=["legacy", "none", "log_db", "log10", "log1p_zscore", "log10_median_sub"],
+    )
     args = p.parse_args()
 
     dfs = [pd.read_parquet(pth) for pth in args.dataset]
@@ -68,6 +73,7 @@ def main() -> int:
         "power": float(args.power),
         "log_eps": float(args.log_eps),
         "to_db": bool(args.to_db),
+        "mel_normalization": str(args.mel_normalization),
     }
 
     res = fit_audio_tiny_cnn(

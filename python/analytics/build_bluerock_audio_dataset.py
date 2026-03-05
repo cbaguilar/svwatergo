@@ -114,6 +114,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mel-fmax", type=float, default=8000.0)
     p.add_argument("--mel-power", type=float, default=2.0)
     p.add_argument("--mel-log-eps", type=float, default=1e-10)
+    p.add_argument(
+        "--mel-normalization",
+        default="legacy",
+        choices=["legacy", "none", "log_db", "log10", "log1p_zscore", "log10_median_sub"],
+        help="Mel normalization mode (legacy preserves prior behavior)",
+    )
     p.add_argument("--mel-dtype", choices=["float16", "float32"], default="float32")
     p.add_argument("--mel-shard-size", type=int, default=1024)
 
@@ -968,6 +974,7 @@ def _write_outputs(
             "fmax": float(args.mel_fmax),
             "power": float(args.mel_power),
             "log_eps": float(args.mel_log_eps),
+            "mel_normalization": str(args.mel_normalization),
             "dtype": str(args.mel_dtype),
         },
         "split": {
@@ -1171,6 +1178,7 @@ def main() -> None:
             fmax=float(args.mel_fmax),
             power=float(args.mel_power),
             log_eps=float(args.mel_log_eps),
+            mel_normalization=str(args.mel_normalization),
             dtype=str(args.mel_dtype),
         )
         generate_mel_segments(cfg)
