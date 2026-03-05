@@ -69,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--limit-files", type=int, default=0, help="Process at most N WEBM files")
     p.add_argument("--progress-every", type=int, default=200, help="Print progress every N files")
+    p.add_argument("--write-csv", action="store_true", help="Also write CSV manifest (default: parquet only)")
     return p.parse_args()
 
 
@@ -311,7 +312,8 @@ def main() -> None:
     manifest_csv = manifest_base / "wyze_webm_wav_manifest.csv"
     manifest_meta = manifest_base / "wyze_webm_wav_manifest_metadata.json"
     manifest_df.to_parquet(manifest_parquet, engine="pyarrow", compression="snappy", index=False)
-    manifest_df.to_csv(manifest_csv, index=False)
+    if args.write_csv:
+        manifest_df.to_csv(manifest_csv, index=False)
 
     meta = {
         "site": site,
@@ -332,6 +334,7 @@ def main() -> None:
         "n_skipped_parse": int(skipped_parse),
         "n_skipped_small": int(skipped_small),
         "n_failed": int(failed),
+        "write_csv": bool(args.write_csv),
     }
     manifest_meta.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -341,7 +344,8 @@ def main() -> None:
         flush=True,
     )
     print(f"[OK] wrote {manifest_parquet} rows={len(manifest_df)}")
-    print(f"[OK] wrote {manifest_csv}")
+    if args.write_csv:
+        print(f"[OK] wrote {manifest_csv}")
     print(f"[OK] wrote {manifest_meta}")
 
 

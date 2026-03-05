@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -80,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--stride-seconds", type=float, default=10.0)
     p.add_argument("--max-gap-stale-s", type=float, default=300.0)
     p.add_argument("--wyze-min-size-bytes", type=int, default=4096)
+    p.add_argument("--wyze-convert-workers", type=int, default=4, help="Parallel workers for Wyze day conversion")
 
     p.add_argument("--split-seed", type=int, default=1337)
     p.add_argument("--train-ratio", type=float, default=0.70)
@@ -97,7 +99,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mel-dtype", choices=["float16", "float32"], default="float32")
     p.add_argument("--mel-shard-size", type=int, default=1024)
 
-    p.add_argument("--skip-existing", action="store_true")
+    p.add_argument(
+        "--skip-existing",
+        dest="skip_existing",
+        action="store_true",
+        default=True,
+        help="Skip converting/rewriting outputs that already exist (default: enabled)",
+    )
+    p.add_argument(
+        "--no-skip-existing",
+        dest="skip_existing",
+        action="store_false",
+        help="Disable skip-existing behavior",
+    )
     p.add_argument("--skip-wyze-conversion", action="store_true", help="Assume Wyze WAV conversion manifests already exist")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
@@ -240,6 +254,7 @@ def _build_wyze_stage(
     camera_filter: Optional[set[str]],
     skip_existing: bool,
     skip_conversion: bool,
+    convert_workers: int,
     dry_run: bool,
 ) -> List[SourceDay]:
     if not wyze_root.exists():
@@ -252,6 +267,7 @@ def _build_wyze_stage(
         selected = {p.name.split("=", 1)[1] for p in wyze_root.glob("camera=*") if p.is_dir()}
 
     out: List[SourceDay] = []
+    pending_jobs: List[Tuple[str, str, str, Path, Path]] = []
     for camera in sorted(selected):
         cam_dir = wyze_root / f"camera={camera}"
         if not cam_dir.exists():
@@ -270,7 +286,14 @@ def _build_wyze_stage(
                 if not manifest.exists():
                     print(f"[skip] expected wyze manifest missing with --skip-wyze-conversion: {manifest}", flush=True)
                     continue
+                out.append(SourceDay(site=site, audio_source=src_name, camera=camera, day=day, wav_root=wav_out))
             else:
+                pending_jobs.append((src_name, camera, day, day_dir, wav_out))
+
+    if pending_jobs:
+        workers = max(1, int(convert_workers))
+        if workers == 1:
+            for src_name, camera, day, day_dir, wav_out in pending_jobs:
                 _convert_wyze_day(
                     repo_root=repo_root,
                     day_root=day_dir,
@@ -282,8 +305,29 @@ def _build_wyze_stage(
                     skip_existing=skip_existing,
                     dry_run=dry_run,
                 )
-            out.append(SourceDay(site=site, audio_source=src_name, camera=camera, day=day, wav_root=wav_out))
-    return out
+                out.append(SourceDay(site=site, audio_source=src_name, camera=camera, day=day, wav_root=wav_out))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                fut_map = {
+                    ex.submit(
+                        _convert_wyze_day,
+                        repo_root=repo_root,
+                        day_root=day_dir,
+                        out_dir=wav_out,
+                        site=site,
+                        camera=camera,
+                        sample_rate=sample_rate,
+                        min_size_bytes=min_size_bytes,
+                        skip_existing=skip_existing,
+                        dry_run=dry_run,
+                    ): (src_name, camera, day, wav_out)
+                    for (src_name, camera, day, day_dir, wav_out) in pending_jobs
+                }
+                for fut in as_completed(fut_map):
+                    src_name, camera, day, wav_out = fut_map[fut]
+                    fut.result()
+                    out.append(SourceDay(site=site, audio_source=src_name, camera=camera, day=day, wav_root=wav_out))
+    return sorted(out, key=lambda x: (x.audio_source, x.day))
 
 
 def _segment_source_day(
@@ -740,6 +784,7 @@ def main() -> None:
                 camera_filter=camera_filter,
                 skip_existing=bool(args.skip_existing),
                 skip_conversion=bool(args.skip_wyze_conversion),
+                convert_workers=int(args.wyze_convert_workers),
                 dry_run=bool(args.dry_run),
             )
         )

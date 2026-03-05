@@ -54,6 +54,7 @@ class MelSegmentsConfig:
     to_db: bool = False
     shard_size: int = 1024
     partition_by: str = "utc_day"
+    write_csv: bool = False
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -97,6 +98,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["utc_day", "none"],
         help="Partition output by segment_start UTC day",
     )
+    p.add_argument("--write-csv", action="store_true", help="Also write CSV manifest (default: parquet only)")
     return p
 
 
@@ -126,6 +128,7 @@ def config_from_args(args: argparse.Namespace) -> MelSegmentsConfig:
         to_db=bool(args.to_db),
         shard_size=int(args.shard_size),
         partition_by=str(args.partition_by),
+        write_csv=bool(args.write_csv),
     )
 
 
@@ -268,7 +271,8 @@ def generate_mel_segments(cfg: MelSegmentsConfig) -> Path:
     manifest_csv = out_base / "audio_mel_segments.csv"
     manifest_meta = out_base / "audio_mel_segments_metadata.json"
     manifest_df.to_parquet(manifest_parquet, index=False)
-    manifest_df.to_csv(manifest_csv, index=False)
+    if bool(cfg.write_csv):
+        manifest_df.to_csv(manifest_csv, index=False)
 
     meta = {
         "segments_root": str(seg_root),
@@ -295,6 +299,7 @@ def generate_mel_segments(cfg: MelSegmentsConfig) -> Path:
         "to_db": bool(cfg.to_db),
         "shard_size": int(cfg.shard_size),
         "partition_by": str(cfg.partition_by),
+        "write_csv": bool(cfg.write_csv),
         "rows": int(len(manifest_df)),
     }
     manifest_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")

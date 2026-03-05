@@ -73,6 +73,7 @@ def parse_args() -> argparse.Namespace:
         choices=["utc_day", "none"],
         help="Partition output folders by segment start UTC day",
     )
+    p.add_argument("--write-csv", action="store_true", help="Also write CSV manifest (default: parquet only)")
     return p.parse_args()
 
 
@@ -200,7 +201,8 @@ def main() -> None:
     manifest_csv = manifest_base / "audio_segments.csv"
     manifest_meta = manifest_base / "audio_segments_metadata.json"
     manifest_df.to_parquet(manifest_parquet, engine="pyarrow", compression="snappy", index=False)
-    manifest_df.to_csv(manifest_csv, index=False)
+    if args.write_csv:
+        manifest_df.to_csv(manifest_csv, index=False)
     meta = {
         "site": str(args.site).strip().lower(),
         "local_root": str(in_root),
@@ -219,6 +221,7 @@ def main() -> None:
         "n_segments_written": int(segments_written),
         "n_segments_skipped_existing": int(segments_skipped),
         "n_segments_write_failed": int(segments_write_failed),
+        "write_csv": bool(args.write_csv),
     }
     manifest_meta.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
@@ -228,7 +231,8 @@ def main() -> None:
         flush=True,
     )
     print(f"[OK] wrote {manifest_parquet} rows={len(manifest_df)}")
-    print(f"[OK] wrote {manifest_csv}")
+    if args.write_csv:
+        print(f"[OK] wrote {manifest_csv}")
     print(f"[OK] wrote {manifest_meta}")
 
 
