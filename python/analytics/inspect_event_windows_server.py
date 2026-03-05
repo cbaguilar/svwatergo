@@ -136,6 +136,19 @@ async function loadSummary() {
   document.getElementById('summary').textContent =
     `rows=${d.n_rows} windows=${d.n_windows} splits=${JSON.stringify(d.by_split)}`;
   window.__defaultBrowseRoot = d.samples_parquet.split('/').slice(0, -4).join('/');
+  const modelEl = document.getElementById('modelPath');
+  if (modelEl && !modelEl.value.trim() && d.default_models) {
+    if (d.default_models.svm_exists) {
+      modelEl.value = d.default_models.svm_path;
+      document.getElementById('modelKind').value = 'pca_svm';
+    } else if (d.default_models.tiny_cnn_exists) {
+      modelEl.value = d.default_models.tiny_cnn_path;
+      document.getElementById('modelKind').value = 'tiny_cnn';
+    } else {
+      modelEl.value = d.default_models.svm_path || d.default_models.tiny_cnn_path || '';
+      document.getElementById('modelKind').value = 'auto';
+    }
+  }
 }
 function esc(x) { return String(x ?? ''); }
 window.__currentAudioPath = '';
@@ -359,12 +372,21 @@ class AppState:
     def summary(self) -> Dict[str, Any]:
         by_split = self.df["split"].astype("string").value_counts(dropna=False).to_dict()
         by_class = self.df["primary_class"].astype("string").value_counts(dropna=False).to_dict()
+        derived_root = self.allowed_roots[0]
+        svm_model = derived_root / "checkpoints" / "bluerock_10s_svm_ropumprun" / "audio_pca_svm_model.joblib"
+        tiny_model = derived_root / "checkpoints" / "bluerock_10s_tiny_cnn_ropumprun" / "audio_tiny_cnn_model.pt"
         return {
             "samples_parquet": str(self.samples_path),
             "n_rows": int(len(self.df)),
             "n_windows": int(self.df["event_window_id"].nunique(dropna=True)),
             "by_split": {str(k): int(v) for k, v in by_split.items()},
             "by_class": {str(k): int(v) for k, v in by_class.items()},
+            "default_models": {
+                "svm_path": str(svm_model),
+                "svm_exists": bool(svm_model.exists()),
+                "tiny_cnn_path": str(tiny_model),
+                "tiny_cnn_exists": bool(tiny_model.exists()),
+            },
         }
 
     def windows(
