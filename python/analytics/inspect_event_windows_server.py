@@ -182,6 +182,7 @@ async function loadWindow(id) {
       const melIdx = btn.getAttribute('data-mel-idx') || '0';
       if (btn.textContent === 'Play') {
         showAudio(path);
+        showSpec(path, mel, melIdx);
       } else {
         showSpec(path, mel, melIdx);
       }
