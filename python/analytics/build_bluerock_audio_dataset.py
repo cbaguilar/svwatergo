@@ -80,6 +80,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--window-seconds", type=float, default=10.0)
     p.add_argument("--stride-seconds", type=float, default=10.0)
     p.add_argument("--max-event-gap-seconds", type=float, default=60.0, help="Max gap to merge adjacent same-class segments into one event window")
+    p.add_argument(
+        "--max-event-window-seconds",
+        type=float,
+        default=200.0,
+        help="Max duration of a single event window before forcing a new split group (<=0 disables cap)",
+    )
     p.add_argument("--max-gap-stale-s", type=float, default=300.0)
     p.add_argument("--wyze-min-size-bytes", type=int, default=4096)
     p.add_argument("--wyze-convert-workers", type=int, default=4, help="Parallel workers for Wyze day conversion")
@@ -404,7 +410,7 @@ def _window_features_for_segments(
 
 
 def _ts_ns(series: pd.Series) -> np.ndarray:
-    return pd.to_datetime(series, utc=True, errors="coerce").view("int64").to_numpy()
+    return pd.to_datetime(series, utc=True, errors="coerce").astype("int64", copy=False).to_numpy()
 
 
 def _step_hold_true_and_known_s(
@@ -478,7 +484,7 @@ def _label_segments_with_plc_overlap(
     plc["plctime"] = pd.to_datetime(plc["plctime"], utc=True, errors="coerce")
     plc = plc[plc["plctime"].notna()].sort_values("plctime")
 
-    ts_ns = plc["plctime"].view("int64").to_numpy()
+    ts_ns = plc["plctime"].astype("int64", copy=False).to_numpy()
     ro_vals = pd.to_numeric(plc.get("ropumprun", pd.Series(np.nan, index=plc.index)), errors="coerce").to_numpy(dtype=float)
     de_vals = pd.to_numeric(plc.get("deliveryrun", pd.Series(np.nan, index=plc.index)), errors="coerce").to_numpy(dtype=float)
     st_vals = pd.to_numeric(plc.get("state", pd.Series(np.nan, index=plc.index)), errors="coerce").to_numpy(dtype=float)
@@ -591,7 +597,12 @@ def _label_segments_with_plc_overlap(
     return out
 
 
-def _attach_event_windows(df: pd.DataFrame, *, max_gap_seconds: float) -> pd.DataFrame:
+def _attach_event_windows(
+    df: pd.DataFrame,
+    *,
+    max_gap_seconds: float,
+    max_window_seconds: float,
+) -> pd.DataFrame:
     out = df.copy()
     out["segment_start_ts_utc"] = pd.to_datetime(out["segment_start_ts_utc"], utc=True, errors="coerce")
     out = out.sort_values(["audio_source", "day_utc", "segment_start_ts_utc", "sample_id"]).reset_index(drop=True)
@@ -600,7 +611,9 @@ def _attach_event_windows(df: pd.DataFrame, *, max_gap_seconds: float) -> pd.Dat
     last_key: Optional[Tuple[str, str]] = None
     last_class = ""
     last_end: Optional[pd.Timestamp] = None
+    window_start: Optional[pd.Timestamp] = None
     idx = -1
+    max_window_s = float(max_window_seconds)
 
     for row in out.itertuples(index=False):
         key = (str(row.audio_source), str(row.day_utc))
@@ -619,9 +632,14 @@ def _attach_event_windows(df: pd.DataFrame, *, max_gap_seconds: float) -> pd.Dat
             gap_s = float((start - last_end).total_seconds())
             if gap_s > float(max_gap_seconds):
                 new_window = True
+            elif max_window_s > 0 and window_start is not None:
+                window_duration_s = float((end - window_start).total_seconds())
+                if window_duration_s > max_window_s:
+                    new_window = True
 
         if new_window:
             idx += 1
+            window_start = start
 
         event_ids.append(f"{row.site}/{row.day_utc}/{klass}/{idx:06d}")
         last_key = key
@@ -1000,7 +1018,11 @@ def main() -> None:
         raise SystemExit("No rows after PLC join/labeling.")
 
     samples = pd.concat(out_rows, ignore_index=True)
-    samples = _attach_event_windows(samples, max_gap_seconds=float(args.max_event_gap_seconds))
+    samples = _attach_event_windows(
+        samples,
+        max_gap_seconds=float(args.max_event_gap_seconds),
+        max_window_seconds=float(args.max_event_window_seconds),
+    )
     samples = _split_assign_source_day_event(
         samples,
         seed=int(args.split_seed),
@@ -1070,6 +1092,8 @@ def main() -> None:
             "train_ratio": float(args.train_ratio),
             "test_ratio": float(args.test_ratio),
             "val_ratio": float(args.val_ratio),
+            "max_event_gap_seconds": float(args.max_event_gap_seconds),
+            "max_event_window_seconds": float(args.max_event_window_seconds),
             "actual": {
                 k: float(v)
                 for k, v in (

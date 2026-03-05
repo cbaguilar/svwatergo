@@ -89,7 +89,7 @@ def _window_start_for_ts(
     This avoids pandas .dt.floor() limitations for arbitrary seconds and ensures
     windows line up exactly with day_start.
     """
-    ts_ns = ts.view("int64")
+    ts_ns = ts.astype("int64", copy=False)
     day_ns = int(day_start.value)
     win_ns = int(window.value)
     k = (ts_ns - day_ns) // win_ns
@@ -144,7 +144,7 @@ def compute_window_features_for_day(
 
     # Precompute arrays once (avoid per-window pandas conversions)
     ts = pd.to_datetime(df[ts_col], utc=True)
-    ts_ns = ts.view("int64").to_numpy()
+    ts_ns = ts.astype("int64", copy=False).to_numpy()
     ts_sec_all = ts_ns.astype("float64") / 1e9
 
     col_arrays: Dict[str, np.ndarray] = {}
@@ -152,8 +152,8 @@ def compute_window_features_for_day(
         col_arrays[c] = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype="float64", copy=False)
 
     # Precompute window boundaries in ns and row index ranges via searchsorted
-    window_start_ns = window_index.view("int64")
-    window_end_ns = (window_index + window).view("int64")
+    window_start_ns = window_index.astype("int64", copy=False).to_numpy()
+    window_end_ns = (window_index + window).astype("int64", copy=False).to_numpy()
     idx_start = np.searchsorted(ts_ns, window_start_ns, side="left")
     idx_end = np.searchsorted(ts_ns, window_end_ns, side="left")
 
@@ -280,7 +280,7 @@ def compute_window_features_for_intervals(
     ends = pd.to_datetime(interval_end, utc=True, errors="coerce")
 
     ts = pd.to_datetime(df[ts_col], utc=True)
-    ts_ns = ts.view("int64").to_numpy()
+    ts_ns = ts.astype("int64", copy=False).to_numpy()
     ts_sec_all = ts_ns.astype("float64") / 1e9
 
     col_arrays: Dict[str, np.ndarray] = {}
