@@ -10,15 +10,20 @@ SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/si
 # Binary ropumprun proxy from dataset builder output.
 TARGET_COL="${TARGET_COL:-overlap_s_producing}"
 
-OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_svm_ropumprun}"
-PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_svm_ropumprun_4panel.png}"
-PLOT_META="${PLOT_META:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_svm_ropumprun_4panel.json}"
-INFER_JSON="${INFER_JSON:-/mnt/d/datasets/svwatergo/derived/inference/bluerock_10s_svm_ropumprun_infer_sample.json}"
+OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_tiny_cnn_ropumprun}"
+PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_tiny_cnn_ropumprun_4panel.png}"
+PLOT_META="${PLOT_META:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_tiny_cnn_ropumprun_4panel.json}"
+INFER_JSON="${INFER_JSON:-/mnt/d/datasets/svwatergo/derived/inference/bluerock_10s_tiny_cnn_ropumprun_infer_sample.json}"
+
+EPOCHS="${EPOCHS:-12}"
+BATCH_SIZE="${BATCH_SIZE:-64}"
+LEARNING_RATE="${LEARNING_RATE:-1e-3}"
+WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
 
 cd "$REPO"
 mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$(dirname "$INFER_JSON")" "$OUT_DIR"
 
-"$PYTHON" -m python.ml.cli.audio_pca_svm_train \
+"$PYTHON" -m python.ml.cli.audio_tiny_cnn_train \
   --dataset "$DATASET" \
   --split-manifest "$SPLIT" \
   --dataset-id-col sample_id \
@@ -27,8 +32,11 @@ mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$(dirname "$INFER_J
   --out-dir "$OUT_DIR" \
   --task binary \
   --target-col "$TARGET_COL" \
-  --n-components 8 \
-  --svm-class-weight balanced \
+  --epochs "$EPOCHS" \
+  --batch-size "$BATCH_SIZE" \
+  --learning-rate "$LEARNING_RATE" \
+  --weight-decay "$WEIGHT_DECAY" \
+  --class-weight balanced \
   --sample-rate 16000 \
   --target-seconds 10
 
@@ -36,14 +44,14 @@ mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$(dirname "$INFER_J
   --checkpoint-dir "$OUT_DIR" \
   --out-png "$PLOT_PNG" \
   --out-meta "$PLOT_META" \
-  --title "Audio PCA+SVM (bluerock 10s, ${TARGET_COL})"
+  --title "Audio Tiny CNN (bluerock 10s, ${TARGET_COL})"
 
 SAMPLE_WAV=$("$PYTHON" -c "import pandas as pd; df=pd.read_parquet('$DATASET', columns=['segment_path','split']); s=df[df['split'].astype(str)=='test']['segment_path']; print(s.iloc[0] if len(s) else df['segment_path'].iloc[0])")
 
 "$PYTHON" -m python.ml.cli.audio_pca_svm_infer \
-  --model "$OUT_DIR/audio_pca_svm_model.joblib" \
+  --model "$OUT_DIR/audio_tiny_cnn_model.pt" \
   --wav "$SAMPLE_WAV" > "$INFER_JSON"
 
-echo "[OK] model -> $OUT_DIR/audio_pca_svm_model.joblib"
+echo "[OK] model -> $OUT_DIR/audio_tiny_cnn_model.pt"
 echo "[OK] plot  -> $PLOT_PNG"
 echo "[OK] infer -> $INFER_JSON"
