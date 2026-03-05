@@ -216,6 +216,7 @@ def fit_audio_tiny_cnn(
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
     device = _select_device(torch)
+    print(f"[device] tiny_cnn using {device}", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if class_weight not in (None, "balanced"):
