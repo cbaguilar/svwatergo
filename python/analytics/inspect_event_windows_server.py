@@ -75,7 +75,7 @@ UI_HTML = """<!doctype html>
     <div><b>Selected Window</b>: <span id="selectedWindow" class="mono"></span></div>
     <table id="segmentsTbl">
       <thead><tr>
-        <th>sample_id</th><th>start</th><th>end</th><th>class</th><th>states</th><th>mel_ok</th><th>audio</th><th>spec</th>
+        <th>sample_id</th><th>start</th><th>end</th><th>class</th><th>states</th><th>mel_ok</th><th>audio</th><th>spec</th><th>infer</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -83,10 +83,26 @@ UI_HTML = """<!doctype html>
 
   <div class="panel">
     <div><b>Segment Media</b>: <span id="mediaInfo" class="mono"></span></div>
+    <div class="row" style="margin-top:8px;">
+      <div style="min-width:55%">
+        <label>model path</label>
+        <input id="modelPath" style="width:100%" placeholder="/mnt/d/.../audio_pca_svm_model.joblib or .../audio_tiny_cnn_model.pt" />
+      </div>
+      <div>
+        <label>model kind</label>
+        <select id="modelKind">
+          <option value="auto">auto</option>
+          <option value="pca_svm">pca_svm</option>
+          <option value="tiny_cnn">tiny_cnn</option>
+        </select>
+      </div>
+      <div><label>&nbsp;</label><button onclick="inferCurrent()">Infer Current</button></div>
+    </div>
     <audio id="audioPlayer" controls style="width:100%; margin-top:8px;"></audio>
     <div style="margin-top:8px;">
       <img id="specImg" style="max-width:100%; border:1px solid #ddd;" />
     </div>
+    <pre id="inferOut"></pre>
   </div>
 
   <div class="panel">
@@ -122,6 +138,7 @@ async function loadSummary() {
   window.__defaultBrowseRoot = d.samples_parquet.split('/').slice(0, -4).join('/');
 }
 function esc(x) { return String(x ?? ''); }
+window.__currentAudioPath = '';
 async function loadWindows() {
   const q = new URLSearchParams();
   const split = document.getElementById('split').value.trim();
@@ -171,7 +188,8 @@ async function loadWindow(id) {
       <td>${esc(s.states_seen || '')}</td>
       <td title="${esc(s.mel_status || '')}">${s.mel_ok ? 'yes' : 'no'}</td>
       <td><button data-audio="${audioPath}">Play</button></td>
-      <td><button data-audio="${audioPath}" data-mel="${melPath}" data-mel-idx="${melIdx}">Spec</button></td>`;
+      <td><button data-audio="${audioPath}" data-mel="${melPath}" data-mel-idx="${melIdx}">Spec</button></td>
+      <td><button data-audio="${audioPath}" data-infer="1">Infer</button></td>`;
     tb.appendChild(tr);
   }
   for (const b of tb.querySelectorAll('button[data-audio]')) {
@@ -180,7 +198,10 @@ async function loadWindow(id) {
       const path = btn.getAttribute('data-audio') || '';
       const mel = btn.getAttribute('data-mel') || '';
       const melIdx = btn.getAttribute('data-mel-idx') || '0';
-      if (btn.textContent === 'Play') {
+      const doInfer = btn.getAttribute('data-infer') === '1';
+      if (doInfer) {
+        inferPath(path).catch(e => alert(e.message));
+      } else if (btn.textContent === 'Play') {
         showAudio(path);
         showSpec(path, mel, melIdx);
       } else {
@@ -193,6 +214,7 @@ function showAudio(path) {
   const p = document.getElementById('audioPlayer');
   p.src = '/audio?path=' + encodeURIComponent(path);
   p.play().catch(() => {});
+  window.__currentAudioPath = path;
   document.getElementById('mediaInfo').textContent = `audio: ${path}`;
 }
 function showSpec(audioPath, melPath, melIdx) {
@@ -205,6 +227,22 @@ function showSpec(audioPath, melPath, melIdx) {
   }
   img.src = url;
   document.getElementById('mediaInfo').textContent = `spec: ${audioPath}`;
+}
+async function inferPath(path) {
+  const model = document.getElementById('modelPath').value.trim();
+  const kind = document.getElementById('modelKind').value;
+  if (!model) throw new Error('model path is required');
+  if (!path) throw new Error('audio path is required');
+  const q = new URLSearchParams();
+  q.set('path', path);
+  q.set('model', model);
+  q.set('model_kind', kind || 'auto');
+  const d = await jget('/api/infer?' + q.toString());
+  document.getElementById('inferOut').textContent = JSON.stringify(d, null, 2);
+}
+async function inferCurrent() {
+  const p = window.__currentAudioPath || '';
+  await inferPath(p);
 }
 async function loadFile() {
   const p = document.getElementById('filePath').value.trim();
@@ -440,6 +478,55 @@ class AppState:
         if not p.exists():
             raise FileNotFoundError(str(p))
         return p.read_bytes()
+
+    def infer_audio(self, *, path: str, model: str, model_kind: str = "auto") -> Dict[str, Any]:
+        wav_p = self._check_allowed(path)
+        model_p = self._check_allowed(model)
+        if not wav_p.exists():
+            raise FileNotFoundError(str(wav_p))
+        if not model_p.exists():
+            raise FileNotFoundError(str(model_p))
+
+        kind = str(model_kind or "auto").strip().lower()
+        if kind not in {"auto", "pca_svm", "tiny_cnn"}:
+            raise ValueError("model_kind must be one of auto, pca_svm, tiny_cnn")
+        if kind == "auto":
+            kind = "tiny_cnn" if model_p.suffix.lower() == ".pt" else "pca_svm"
+
+        if kind == "tiny_cnn":
+            from python.ml.train.audio_tiny_cnn import predict_audio_tiny_cnn  # type: ignore
+
+            pred = predict_audio_tiny_cnn(model_path=model_p, wav_path=wav_p)
+        else:
+            from python.ml.train.audio_pca_svm import predict_audio_pca_svm  # type: ignore
+
+            pred = predict_audio_pca_svm(model_path=model_p, wav_path=wav_p)
+
+        stats: Dict[str, Any] = {"path": str(wav_p), "size_bytes": int(wav_p.stat().st_size)}
+        try:
+            with wave.open(str(wav_p), "rb") as wf:
+                n_channels = int(wf.getnchannels())
+                sample_rate = int(wf.getframerate())
+                n_frames = int(wf.getnframes())
+                sampwidth = int(wf.getsampwidth())
+            stats.update(
+                {
+                    "sample_rate": sample_rate,
+                    "n_channels": n_channels,
+                    "n_frames": n_frames,
+                    "sample_width_bytes": sampwidth,
+                    "duration_sec": (float(n_frames) / float(sample_rate) if sample_rate > 0 else None),
+                }
+            )
+        except Exception:
+            pass
+
+        return {
+            "model": str(model_p),
+            "model_kind": kind,
+            "audio_stats": stats,
+            "prediction": pred,
+        }
 
     def render_spectrogram_png(
         self,
@@ -697,6 +784,19 @@ def make_handler(state: AppState):
                         mel_index=int(_q1(q, "mel_index", "0")),
                     )
                     self._write_bytes(png, content_type="image/png", code=200)
+                    return
+                if path == "/api/infer":
+                    wav = _q1(q, "path", "")
+                    model = _q1(q, "model", "")
+                    if not wav or not model:
+                        self._write_json({"error": "path and model are required"}, code=400)
+                        return
+                    out = state.infer_audio(
+                        path=wav,
+                        model=model,
+                        model_kind=_q1(q, "model_kind", "auto"),
+                    )
+                    self._write_json(out)
                     return
                 self._write_json({"error": f"not found: {path}"}, code=404)
             except FileNotFoundError as exc:
