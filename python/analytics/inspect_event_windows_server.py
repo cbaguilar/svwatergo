@@ -2,15 +2,22 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import mimetypes
+import wave
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
+import matplotlib
 import pandas as pd
+import numpy as np
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
 
 
 DEFAULT_SAMPLES = (
@@ -61,7 +68,20 @@ UI_HTML = """<!doctype html>
 
   <div class="panel">
     <div><b>Selected Window</b>: <span id="selectedWindow" class="mono"></span></div>
-    <pre id="windowSegments"></pre>
+    <table id="segmentsTbl">
+      <thead><tr>
+        <th>sample_id</th><th>start</th><th>end</th><th>class</th><th>states</th><th>audio</th><th>spec</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div><b>Segment Media</b>: <span id="mediaInfo" class="mono"></span></div>
+    <audio id="audioPlayer" controls style="width:100%; margin-top:8px;"></audio>
+    <div style="margin-top:8px;">
+      <img id="specImg" style="max-width:100%; border:1px solid #ddd;" />
+    </div>
   </div>
 
   <div class="panel">
@@ -123,7 +143,52 @@ async function loadWindows() {
 async function loadWindow(id) {
   document.getElementById('selectedWindow').textContent = id;
   const d = await jget('/api/window?event_window_id=' + encodeURIComponent(id));
-  document.getElementById('windowSegments').textContent = JSON.stringify(d, null, 2);
+  const tb = document.querySelector('#segmentsTbl tbody');
+  tb.innerHTML = '';
+  for (const s of d.segments) {
+    const tr = document.createElement('tr');
+    const audioPath = esc(s.segment_path || '');
+    const melPath = esc(s.mel_shard_path || '');
+    const melIdx = esc(s.mel_shard_local_index ?? 0);
+    tr.innerHTML = `<td class="mono">${esc(s.sample_id || '')}</td>
+      <td>${esc(s.segment_start_ts_utc || '')}</td>
+      <td>${esc(s.segment_end_ts_utc || '')}</td>
+      <td>${esc(s.primary_class || '')}</td>
+      <td>${esc(s.states_seen || '')}</td>
+      <td><button data-audio="${audioPath}">Play</button></td>
+      <td><button data-audio="${audioPath}" data-mel="${melPath}" data-mel-idx="${melIdx}">Spec</button></td>`;
+    tb.appendChild(tr);
+  }
+  for (const b of tb.querySelectorAll('button[data-audio]')) {
+    b.onclick = (ev) => {
+      const btn = ev.target;
+      const path = btn.getAttribute('data-audio') || '';
+      const mel = btn.getAttribute('data-mel') || '';
+      const melIdx = btn.getAttribute('data-mel-idx') || '0';
+      if (btn.textContent === 'Play') {
+        showAudio(path);
+      } else {
+        showSpec(path, mel, melIdx);
+      }
+    };
+  }
+}
+function showAudio(path) {
+  const p = document.getElementById('audioPlayer');
+  p.src = '/audio?path=' + encodeURIComponent(path);
+  p.play().catch(() => {});
+  document.getElementById('mediaInfo').textContent = `audio: ${path}`;
+}
+function showSpec(audioPath, melPath, melIdx) {
+  const img = document.getElementById('specImg');
+  let url = '';
+  if (melPath) {
+    url = '/spectrogram?mel_shard_path=' + encodeURIComponent(melPath) + '&mel_index=' + encodeURIComponent(melIdx || '0');
+  } else {
+    url = '/spectrogram?path=' + encodeURIComponent(audioPath);
+  }
+  img.src = url;
+  document.getElementById('mediaInfo').textContent = `spec: ${audioPath}`;
 }
 async function loadFile() {
   const p = document.getElementById('filePath').value.trim();
@@ -273,6 +338,53 @@ class AppState:
                 out[c] = out[c].astype("string")
         return {"event_window_id": event_window_id, "total_segments": total, "segments": out.to_dict(orient="records")}
 
+    def read_audio_bytes(self, path: str) -> bytes:
+        p = self._check_allowed(path)
+        if not p.exists():
+            raise FileNotFoundError(str(p))
+        return p.read_bytes()
+
+    def render_spectrogram_png(
+        self,
+        *,
+        path: str = "",
+        mel_shard_path: str = "",
+        mel_index: int = 0,
+    ) -> bytes:
+        if mel_shard_path:
+            mel_p = self._check_allowed(mel_shard_path)
+            if not mel_p.exists():
+                raise FileNotFoundError(str(mel_p))
+            with np.load(mel_p, mmap_mode="r") as data:
+                key = "mel" if "mel" in data.files else ("arr_0" if "arr_0" in data.files else data.files[0])
+                arr = data[key]
+                if arr.ndim == 3:
+                    idx = max(0, min(int(mel_index), int(arr.shape[0]) - 1))
+                    m = np.asarray(arr[idx], dtype=np.float32)
+                elif arr.ndim == 2:
+                    m = np.asarray(arr, dtype=np.float32)
+                else:
+                    raise ValueError(f"unsupported mel array shape: {arr.shape}")
+            return _plot_matrix_png(m, title=f"Mel Spectrogram idx={mel_index}")
+
+        wav_p = self._check_allowed(path)
+        if not wav_p.exists():
+            raise FileNotFoundError(str(wav_p))
+        with wave.open(str(wav_p), "rb") as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            rate = wf.getframerate()
+            n_frames = wf.getnframes()
+            raw = wf.readframes(n_frames)
+        if sampwidth != 2:
+            raise ValueError(f"unsupported wav sample width: {sampwidth} bytes")
+        y = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        if n_channels > 1:
+            y = y.reshape(-1, n_channels).mean(axis=1)
+        if y.size == 0:
+            raise ValueError("empty wav")
+        return _plot_wav_spec_png(y, sample_rate=rate, title=wav_p.name)
+
     def _check_allowed(self, path_str: str) -> Path:
         p = Path(path_str).expanduser().resolve()
         for root in self.allowed_roots:
@@ -331,6 +443,34 @@ def _q1(params: Dict[str, List[str]], key: str, default: str = "") -> str:
     return str(vals[0])
 
 
+def _plot_matrix_png(m: np.ndarray, *, title: str) -> bytes:
+    fig = plt.figure(figsize=(8, 3))
+    ax = fig.add_subplot(1, 1, 1)
+    ax.imshow(m, aspect="auto", origin="lower", interpolation="nearest")
+    ax.set_title(title)
+    ax.set_xlabel("frame")
+    ax.set_ylabel("mel bin")
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120)
+    plt.close(fig)
+    return buf.getvalue()
+
+
+def _plot_wav_spec_png(y: np.ndarray, *, sample_rate: int, title: str) -> bytes:
+    fig = plt.figure(figsize=(8, 3))
+    ax = fig.add_subplot(1, 1, 1)
+    ax.specgram(y, NFFT=512, Fs=float(sample_rate), noverlap=256)
+    ax.set_title(f"Spectrogram: {title}")
+    ax.set_xlabel("time (s)")
+    ax.set_ylabel("freq (Hz)")
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120)
+    plt.close(fig)
+    return buf.getvalue()
+
+
 def make_handler(state: AppState):
     class Handler(BaseHTTPRequestHandler):
         def _write_json(self, obj: Dict[str, Any], code: int = 200) -> None:
@@ -345,6 +485,13 @@ def make_handler(state: AppState):
             data = html.encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _write_bytes(self, data: bytes, *, content_type: str, code: int = 200) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -389,6 +536,21 @@ def make_handler(state: AppState):
                         self._write_json({"error": "path is required"}, code=400)
                         return
                     self._write_json(state.preview_file(p, rows=int(_q1(q, "rows", "20"))))
+                    return
+                if path == "/audio":
+                    p = _q1(q, "path", "")
+                    if not p:
+                        self._write_json({"error": "path is required"}, code=400)
+                        return
+                    self._write_bytes(state.read_audio_bytes(p), content_type="audio/wav", code=200)
+                    return
+                if path == "/spectrogram":
+                    png = state.render_spectrogram_png(
+                        path=_q1(q, "path", ""),
+                        mel_shard_path=_q1(q, "mel_shard_path", ""),
+                        mel_index=int(_q1(q, "mel_index", "0")),
+                    )
+                    self._write_bytes(png, content_type="image/png", code=200)
                     return
                 self._write_json({"error": f"not found: {path}"}, code=404)
             except FileNotFoundError as exc:
