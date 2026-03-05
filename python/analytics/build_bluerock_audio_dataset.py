@@ -57,6 +57,17 @@ class SourceDay:
     wav_root: Path
 
 
+def _parse_bool_text(v: Optional[str]) -> bool:
+    if v is None:
+        return True
+    s = str(v).strip().lower()
+    if s in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if s in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {v!r}")
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
@@ -120,6 +131,19 @@ def parse_args() -> argparse.Namespace:
         help="Disable skip-existing behavior",
     )
     p.add_argument("--skip-wyze-conversion", action="store_true", help="Assume Wyze WAV conversion manifests already exist")
+    p.add_argument(
+        "--resplit-only",
+        nargs="?",
+        const=True,
+        default=False,
+        type=_parse_bool_text,
+        help="Reuse existing samples parquet and only recompute event windows + train/test/val split (optionally pass yes/no)",
+    )
+    p.add_argument(
+        "--resplit-samples-parquet",
+        default="",
+        help="Optional input samples parquet for --resplit-only (default: output samples parquet path)",
+    )
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -721,19 +745,19 @@ def _split_assign_source_day_event(
         global_weight: float = 1.0,
     ) -> float:
         cw_proj = class_current_windows[klass][split] + 1
-        cw_over = max(0, cw_proj - class_target_windows[klass][split])
-        cw_def = max(0, class_target_windows[klass][split] - cw_proj)
-        cw_cost = (cw_over * 2) + cw_def
+        cw_target = class_target_windows[klass][split]
+        cw_over = max(0, cw_proj - cw_target)
+        cw_cost = abs(cw_proj - cw_target) + (cw_over * 2)
 
         cr_proj = class_current_rows[klass][split] + int(n)
-        cr_over = max(0, cr_proj - class_target_rows[klass][split])
-        cr_def = max(0, class_target_rows[klass][split] - cr_proj)
-        cr_cost = (cr_over * 2) + cr_def
+        cr_target = class_target_rows[klass][split]
+        cr_over = max(0, cr_proj - cr_target)
+        cr_cost = abs(cr_proj - cr_target) + (cr_over * 2)
 
         g_proj = current[split] + int(n)
-        g_over = max(0, g_proj - target[split])
-        g_def = max(0, target[split] - g_proj)
-        g_cost = (g_over * 2) + g_def
+        g_target = target[split]
+        g_over = max(0, g_proj - g_target)
+        g_cost = abs(g_proj - g_target) + (g_over * 2)
         return (class_window_weight * cw_cost) + (class_row_weight * cr_cost) + (global_weight * g_cost)
 
     def _assign_group(gid: str, klass: str, n: int, allowed: Optional[Sequence[str]] = None) -> None:
@@ -821,10 +845,99 @@ def _build_stats(df: pd.DataFrame) -> Dict[str, Any]:
     return stats
 
 
+def _write_outputs(
+    *,
+    samples: pd.DataFrame,
+    out_dataset_root: Path,
+    args: argparse.Namespace,
+    site: str,
+    missing_mels: int,
+    mode: str,
+) -> None:
+    out_dataset_root.mkdir(parents=True, exist_ok=True)
+    samples_path = out_dataset_root / "samples.parquet"
+    split_manifest_path = out_dataset_root / "split_manifest.parquet"
+    stats_path = out_dataset_root / "class_stats.json"
+    report_path = out_dataset_root / "build_report.json"
+
+    samples.to_parquet(samples_path, index=False)
+
+    split_cols = [
+        "sample_id",
+        "site",
+        "audio_source",
+        "camera",
+        "day_utc",
+        "segment_start_ts_utc",
+        "segment_end_ts_utc",
+        "primary_class",
+        "event_window_id",
+        "split_group_id",
+        "split",
+        "split_seed",
+    ]
+    split_manifest = samples[[c for c in split_cols if c in samples.columns]].copy()
+    split_manifest.to_parquet(split_manifest_path, index=False)
+
+    stats = _build_stats(samples)
+    stats_path.write_text(json.dumps(stats, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    report = {
+        "site": site,
+        "window_seconds": float(args.window_seconds),
+        "stride_seconds": float(args.stride_seconds),
+        "sample_rate": int(args.sample_rate),
+        "wyze_min_size_bytes": int(args.wyze_min_size_bytes),
+        "n_sources": int(samples["audio_source"].nunique()),
+        "n_days": int(samples["day_utc"].nunique()),
+        "n_samples": int(len(samples)),
+        "n_missing_mels": int(missing_mels),
+        "build_mode": str(mode),
+        "outputs": {
+            "samples_parquet": str(samples_path),
+            "split_manifest_parquet": str(split_manifest_path),
+            "class_stats_json": str(stats_path),
+        },
+        "mel_config": {
+            "sample_rate": int(args.sample_rate),
+            "n_fft": int(args.mel_n_fft),
+            "win_length": int(args.mel_win_length),
+            "hop_length": int(args.mel_hop_length),
+            "n_mels": int(args.mel_n_mels),
+            "fmin": float(args.mel_fmin),
+            "fmax": float(args.mel_fmax),
+            "power": float(args.mel_power),
+            "log_eps": float(args.mel_log_eps),
+            "dtype": str(args.mel_dtype),
+        },
+        "split": {
+            "seed": int(args.split_seed),
+            "train_ratio": float(args.train_ratio),
+            "test_ratio": float(args.test_ratio),
+            "val_ratio": float(args.val_ratio),
+            "max_event_gap_seconds": float(args.max_event_gap_seconds),
+            "max_event_window_seconds": float(args.max_event_window_seconds),
+            "actual": {
+                k: float(v)
+                for k, v in (
+                    samples["split"].value_counts(normalize=True).sort_index().to_dict().items()
+                )
+            },
+        },
+    }
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    print(f"[ok] wrote {samples_path} rows={len(samples)}", flush=True)
+    print(f"[ok] wrote {split_manifest_path}", flush=True)
+    print(f"[ok] wrote {stats_path}", flush=True)
+    print(f"[ok] wrote {report_path}", flush=True)
+
+
 def main() -> None:
     args = parse_args()
     site = str(args.site).strip().lower()
     paths = _resolve_paths(args)
+    resplit_only = bool(args.resplit_only)
 
     include_rpi = bool(args.include_rpi)
     include_wyze = bool(args.include_wyze)
@@ -841,6 +954,56 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     out_root = paths["out_root"]
     out_dataset_root = out_root / "dataset=audio_event_dataset" / f"site={site}" / f"window_s={int(args.window_seconds)}"
+
+    if resplit_only:
+        samples_in = Path(args.resplit_samples_parquet) if str(args.resplit_samples_parquet).strip() else (out_dataset_root / "samples.parquet")
+        if not samples_in.exists():
+            raise SystemExit(f"--resplit-only input missing: {samples_in}")
+        if args.dry_run:
+            print(f"[dry-run] would resplit from {samples_in}", flush=True)
+            return
+        samples = pd.read_parquet(samples_in)
+        if samples.empty:
+            raise SystemExit(f"--resplit-only input empty: {samples_in}")
+        if "site" not in samples.columns:
+            samples["site"] = site
+        required_cols = [
+            "site",
+            "audio_source",
+            "day_utc",
+            "primary_class",
+            "segment_start_ts_utc",
+            "segment_end_ts_utc",
+            "sample_id",
+        ]
+        missing = [c for c in required_cols if c not in samples.columns]
+        if missing:
+            raise SystemExit(f"--resplit-only missing required columns: {', '.join(missing)}")
+
+        samples = _attach_event_windows(
+            samples,
+            max_gap_seconds=float(args.max_event_gap_seconds),
+            max_window_seconds=float(args.max_event_window_seconds),
+        )
+        samples = _split_assign_source_day_event(
+            samples,
+            seed=int(args.split_seed),
+            train_ratio=float(args.train_ratio),
+            test_ratio=float(args.test_ratio),
+            val_ratio=float(args.val_ratio),
+        )
+        missing_mels = 0
+        if "mel_shard_path" in samples.columns:
+            missing_mels = int(samples["mel_shard_path"].isna().sum())
+        _write_outputs(
+            samples=samples,
+            out_dataset_root=out_dataset_root,
+            args=args,
+            site=site,
+            missing_mels=missing_mels,
+            mode="resplit_only",
+        )
+        return
 
     MelSegmentsConfig, generate_mel_segments = _import_ml_audio_mel()
     generate_window_features_for_intervals_df = _import_window_features_pipeline()
@@ -1031,83 +1194,14 @@ def main() -> None:
         val_ratio=float(args.val_ratio),
     )
 
-    # Persist outputs
-    out_dataset_root.mkdir(parents=True, exist_ok=True)
-    samples_path = out_dataset_root / "samples.parquet"
-    split_manifest_path = out_dataset_root / "split_manifest.parquet"
-    stats_path = out_dataset_root / "class_stats.json"
-    report_path = out_dataset_root / "build_report.json"
-
-    samples.to_parquet(samples_path, index=False)
-
-    split_cols = [
-        "sample_id",
-        "site",
-        "audio_source",
-        "camera",
-        "day_utc",
-        "segment_start_ts_utc",
-        "segment_end_ts_utc",
-        "primary_class",
-        "event_window_id",
-        "split_group_id",
-        "split",
-        "split_seed",
-    ]
-    split_manifest = samples[[c for c in split_cols if c in samples.columns]].copy()
-    split_manifest.to_parquet(split_manifest_path, index=False)
-
-    stats = _build_stats(samples)
-    stats_path.write_text(json.dumps(stats, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-    report = {
-        "site": site,
-        "window_seconds": float(args.window_seconds),
-        "stride_seconds": float(args.stride_seconds),
-        "sample_rate": int(args.sample_rate),
-        "wyze_min_size_bytes": int(args.wyze_min_size_bytes),
-        "n_sources": int(samples["audio_source"].nunique()),
-        "n_days": int(samples["day_utc"].nunique()),
-        "n_samples": int(len(samples)),
-        "n_missing_mels": int(missing_mels),
-        "outputs": {
-            "samples_parquet": str(samples_path),
-            "split_manifest_parquet": str(split_manifest_path),
-            "class_stats_json": str(stats_path),
-        },
-        "mel_config": {
-            "sample_rate": int(args.sample_rate),
-            "n_fft": int(args.mel_n_fft),
-            "win_length": int(args.mel_win_length),
-            "hop_length": int(args.mel_hop_length),
-            "n_mels": int(args.mel_n_mels),
-            "fmin": float(args.mel_fmin),
-            "fmax": float(args.mel_fmax),
-            "power": float(args.mel_power),
-            "log_eps": float(args.mel_log_eps),
-            "dtype": str(args.mel_dtype),
-        },
-        "split": {
-            "seed": int(args.split_seed),
-            "train_ratio": float(args.train_ratio),
-            "test_ratio": float(args.test_ratio),
-            "val_ratio": float(args.val_ratio),
-            "max_event_gap_seconds": float(args.max_event_gap_seconds),
-            "max_event_window_seconds": float(args.max_event_window_seconds),
-            "actual": {
-                k: float(v)
-                for k, v in (
-                    samples["split"].value_counts(normalize=True).sort_index().to_dict().items()
-                )
-            },
-        },
-    }
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-    print(f"[ok] wrote {samples_path} rows={len(samples)}", flush=True)
-    print(f"[ok] wrote {split_manifest_path}", flush=True)
-    print(f"[ok] wrote {stats_path}", flush=True)
-    print(f"[ok] wrote {report_path}", flush=True)
+    _write_outputs(
+        samples=samples,
+        out_dataset_root=out_dataset_root,
+        args=args,
+        site=site,
+        missing_mels=missing_mels,
+        mode="full_build",
+    )
 
 
 if __name__ == "__main__":
