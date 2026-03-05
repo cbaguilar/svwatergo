@@ -674,55 +674,85 @@ def _split_assign_source_day_event(
 
     current = {"train": 0, "test": 0, "val": 0}
     group_to_split: Dict[str, str] = {}
+    class_levels = sorted(grp["primary_class"].astype(str).unique().tolist())
+    class_current: Dict[str, Dict[str, int]] = {k: {"train": 0, "test": 0, "val": 0} for k in class_levels}
+    class_target: Dict[str, Dict[str, int]] = {}
+    for klass in class_levels:
+        c_total = int(grp.loc[grp["primary_class"].astype(str) == klass, "n_rows"].sum())
+        class_target[klass] = {
+            "train": max(0, int(round(train_ratio * c_total))),
+            "test": max(0, int(round(test_ratio * c_total))),
+            "val": max(0, int(round(val_ratio * c_total))),
+        }
 
-    def _pick_split_for_n(n: int, allowed: Optional[Sequence[str]] = None) -> str:
-        splits = list(allowed) if allowed else ["train", "test", "val"]
-        best_split = None
-        best_cost = None
-        for sp in splits:
-            proj = current[sp] + int(n)
-            overflow = max(0, proj - target[sp])
-            deficit = max(0, target[sp] - proj)
-            cost = (overflow * 2) + deficit
-            if best_cost is None or cost < best_cost:
-                best_cost = cost
-                best_split = sp
-        return str(best_split)
+    def _cost_for(
+        *,
+        klass: str,
+        n: int,
+        split: str,
+        class_weight: float = 8.0,
+        global_weight: float = 1.0,
+    ) -> float:
+        c_proj = class_current[klass][split] + int(n)
+        c_over = max(0, c_proj - class_target[klass][split])
+        c_def = max(0, class_target[klass][split] - c_proj)
+        c_cost = (c_over * 2) + c_def
 
-    # Coverage pass: try to place every class into each split when enough event windows exist.
-    for klass in sorted(grp["primary_class"].astype(str).unique().tolist()):
+        g_proj = current[split] + int(n)
+        g_over = max(0, g_proj - target[split])
+        g_def = max(0, target[split] - g_proj)
+        g_cost = (g_over * 2) + g_def
+        return (class_weight * c_cost) + (global_weight * g_cost)
+
+    def _assign_group(gid: str, klass: str, n: int, allowed: Optional[Sequence[str]] = None) -> None:
+        if gid in group_to_split:
+            return
+        choices = list(allowed) if allowed else ["train", "test", "val"]
+        best_split = min(choices, key=lambda sp: _cost_for(klass=klass, n=n, split=sp))
+        group_to_split[gid] = best_split
+        current[best_split] += int(n)
+        class_current[klass][best_split] += int(n)
+
+    # Per-class assignment for stratified class balance across splits.
+    for klass in class_levels:
         class_rows = grp[grp["primary_class"].astype(str) == klass].copy()
         if class_rows.empty:
             continue
         class_rows = class_rows.sort_values(["n_rows", "_hash"], ascending=[False, True]).reset_index(drop=True)
+
+        # Coverage seed pass.
         n_groups = int(len(class_rows))
         if n_groups >= 3:
-            preferred_splits: List[str] = ["train", "test", "val"]
+            seed_splits: List[str] = ["train", "test", "val"]
         elif n_groups == 2:
-            preferred_splits = ["train", "test"]
+            seed_splits = ["train", "test"]
         else:
-            preferred_splits = ["train"]
+            seed_splits = ["train"]
+        for i in range(min(len(seed_splits), len(class_rows))):
+            row = class_rows.iloc[i]
+            _assign_group(
+                gid=str(row["split_group_id"]),
+                klass=klass,
+                n=int(row["n_rows"]),
+                allowed=[seed_splits[i]],
+            )
 
-        for i, row in class_rows.iterrows():
-            gid = str(row["split_group_id"])
-            if gid in group_to_split:
-                continue
-            if i < len(preferred_splits):
-                chosen = _pick_split_for_n(int(row["n_rows"]), allowed=[preferred_splits[i]])
-            else:
-                chosen = _pick_split_for_n(int(row["n_rows"]))
-            group_to_split[gid] = chosen
-            current[chosen] += int(row["n_rows"])
+        # Balance remaining rows within class.
+        for i in range(len(seed_splits), len(class_rows)):
+            row = class_rows.iloc[i]
+            _assign_group(
+                gid=str(row["split_group_id"]),
+                klass=klass,
+                n=int(row["n_rows"]),
+                allowed=None,
+            )
 
-    # Balance pass for remaining groups.
+    # Safety pass: assign any leftover groups.
     for row in grp.itertuples(index=False):
         gid = str(row.split_group_id)
-        n = int(row.n_rows)
         if gid in group_to_split:
             continue
-        chosen = _pick_split_for_n(n)
-        group_to_split[gid] = chosen
-        current[chosen] += n
+        _assign_group(gid=gid, klass=str(row.primary_class), n=int(row.n_rows), allowed=None)
 
     out["split"] = out["split_group_id"].map(group_to_split).astype("string")
     out["split_seed"] = int(seed)
