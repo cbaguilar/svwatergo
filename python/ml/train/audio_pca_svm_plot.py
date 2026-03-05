@@ -55,6 +55,9 @@ def render_audio_pca_svm_overview(
         df["pred_label"] = np.where(df["y_pred"] == 1, positive_name, negative_name)
 
     plot_df = df if len(df) <= int(max_points) else df.sample(int(max_points), random_state=42)
+    source_col = next((c for c in ("audio_source", "source_name", "source") if c in plot_df.columns), None)
+    if source_col is not None:
+        plot_df["source_label"] = plot_df[source_col].astype(str).fillna("unknown")
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 10), constrained_layout=True)
 
@@ -107,7 +110,17 @@ def render_audio_pca_svm_overview(
     ax.legend(fontsize=8)
 
     ax = axes[1, 1]
-    if is_multiclass:
+    if source_col is not None:
+        labels_src = sorted(plot_df["source_label"].unique().tolist())
+        palette_src = plt.cm.tab20(np.linspace(0, 1, max(1, len(labels_src))))
+        colors_src = {lab: palette_src[i] for i, lab in enumerate(labels_src)}
+        for label in labels_src:
+            m = plot_df["source_label"] == label
+            if m.any():
+                ax.scatter(plot_df.loc[m, "pca1"], plot_df.loc[m, "pca2"], s=8, alpha=0.45, c=[colors_src[label]], label=label)
+        ax.set_title("PC1 vs PC2 (Audio Source)")
+        ax.legend(fontsize=8)
+    elif is_multiclass:
         score_cols = sorted([c for c in plot_df.columns if c.startswith("score_class_")], key=lambda x: int(x.split("_")[-1]))
         if score_cols:
             conf = plot_df[score_cols].max(axis=1)
@@ -177,6 +190,10 @@ def render_audio_pca_svm_overview(
         "accuracy": accuracy,
         "split_counts": {str(k): int(v) for k, v in df["split"].astype(str).value_counts().to_dict().items()}
         if "split" in df.columns
+        else {},
+        "source_column": str(source_col) if source_col is not None else None,
+        "source_counts": {str(k): int(v) for k, v in df[source_col].astype(str).value_counts().to_dict().items()}
+        if source_col is not None
         else {},
     }
     out_meta.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
