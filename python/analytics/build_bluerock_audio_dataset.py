@@ -675,14 +675,22 @@ def _split_assign_source_day_event(
     current = {"train": 0, "test": 0, "val": 0}
     group_to_split: Dict[str, str] = {}
     class_levels = sorted(grp["primary_class"].astype(str).unique().tolist())
-    class_current: Dict[str, Dict[str, int]] = {k: {"train": 0, "test": 0, "val": 0} for k in class_levels}
-    class_target: Dict[str, Dict[str, int]] = {}
+    class_current_rows: Dict[str, Dict[str, int]] = {k: {"train": 0, "test": 0, "val": 0} for k in class_levels}
+    class_current_windows: Dict[str, Dict[str, int]] = {k: {"train": 0, "test": 0, "val": 0} for k in class_levels}
+    class_target_rows: Dict[str, Dict[str, int]] = {}
+    class_target_windows: Dict[str, Dict[str, int]] = {}
     for klass in class_levels:
-        c_total = int(grp.loc[grp["primary_class"].astype(str) == klass, "n_rows"].sum())
-        class_target[klass] = {
-            "train": max(0, int(round(train_ratio * c_total))),
-            "test": max(0, int(round(test_ratio * c_total))),
-            "val": max(0, int(round(val_ratio * c_total))),
+        c_rows_total = int(grp.loc[grp["primary_class"].astype(str) == klass, "n_rows"].sum())
+        c_win_total = int((grp["primary_class"].astype(str) == klass).sum())
+        class_target_rows[klass] = {
+            "train": max(0, int(round(train_ratio * c_rows_total))),
+            "test": max(0, int(round(test_ratio * c_rows_total))),
+            "val": max(0, int(round(val_ratio * c_rows_total))),
+        }
+        class_target_windows[klass] = {
+            "train": max(0, int(round(train_ratio * c_win_total))),
+            "test": max(0, int(round(test_ratio * c_win_total))),
+            "val": max(0, int(round(val_ratio * c_win_total))),
         }
 
     def _cost_for(
@@ -690,19 +698,25 @@ def _split_assign_source_day_event(
         klass: str,
         n: int,
         split: str,
-        class_weight: float = 8.0,
+        class_window_weight: float = 14.0,
+        class_row_weight: float = 2.0,
         global_weight: float = 1.0,
     ) -> float:
-        c_proj = class_current[klass][split] + int(n)
-        c_over = max(0, c_proj - class_target[klass][split])
-        c_def = max(0, class_target[klass][split] - c_proj)
-        c_cost = (c_over * 2) + c_def
+        cw_proj = class_current_windows[klass][split] + 1
+        cw_over = max(0, cw_proj - class_target_windows[klass][split])
+        cw_def = max(0, class_target_windows[klass][split] - cw_proj)
+        cw_cost = (cw_over * 2) + cw_def
+
+        cr_proj = class_current_rows[klass][split] + int(n)
+        cr_over = max(0, cr_proj - class_target_rows[klass][split])
+        cr_def = max(0, class_target_rows[klass][split] - cr_proj)
+        cr_cost = (cr_over * 2) + cr_def
 
         g_proj = current[split] + int(n)
         g_over = max(0, g_proj - target[split])
         g_def = max(0, target[split] - g_proj)
         g_cost = (g_over * 2) + g_def
-        return (class_weight * c_cost) + (global_weight * g_cost)
+        return (class_window_weight * cw_cost) + (class_row_weight * cr_cost) + (global_weight * g_cost)
 
     def _assign_group(gid: str, klass: str, n: int, allowed: Optional[Sequence[str]] = None) -> None:
         if gid in group_to_split:
@@ -711,14 +725,16 @@ def _split_assign_source_day_event(
         best_split = min(choices, key=lambda sp: _cost_for(klass=klass, n=n, split=sp))
         group_to_split[gid] = best_split
         current[best_split] += int(n)
-        class_current[klass][best_split] += int(n)
+        class_current_rows[klass][best_split] += int(n)
+        class_current_windows[klass][best_split] += 1
 
     # Per-class assignment for stratified class balance across splits.
     for klass in class_levels:
         class_rows = grp[grp["primary_class"].astype(str) == klass].copy()
         if class_rows.empty:
             continue
-        class_rows = class_rows.sort_values(["n_rows", "_hash"], ascending=[False, True]).reset_index(drop=True)
+        # Window-count balancing should not always prioritize largest windows first.
+        class_rows = class_rows.sort_values(["_hash"], ascending=[True]).reset_index(drop=True)
 
         # Coverage seed pass.
         n_groups = int(len(class_rows))
