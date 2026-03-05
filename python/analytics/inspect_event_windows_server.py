@@ -75,7 +75,7 @@ UI_HTML = """<!doctype html>
     <div><b>Selected Window</b>: <span id="selectedWindow" class="mono"></span></div>
     <table id="segmentsTbl">
       <thead><tr>
-        <th>sample_id</th><th>start</th><th>end</th><th>class</th><th>states</th><th>audio</th><th>spec</th>
+        <th>sample_id</th><th>start</th><th>end</th><th>class</th><th>states</th><th>mel_ok</th><th>audio</th><th>spec</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -169,6 +169,7 @@ async function loadWindow(id) {
       <td>${esc(s.segment_end_ts_utc || '')}</td>
       <td>${esc(s.primary_class || '')}</td>
       <td>${esc(s.states_seen || '')}</td>
+      <td title="${esc(s.mel_status || '')}">${s.mel_ok ? 'yes' : 'no'}</td>
       <td><button data-audio="${audioPath}">Play</button></td>
       <td><button data-audio="${audioPath}" data-mel="${melPath}" data-mel-idx="${melIdx}">Spec</button></td>`;
     tb.appendChild(tr);
@@ -199,7 +200,7 @@ function showSpec(audioPath, melPath, melIdx) {
   if (melPath) {
     url = '/spectrogram?mel_shard_path=' + encodeURIComponent(melPath) + '&mel_index=' + encodeURIComponent(melIdx || '0');
   } else {
-    url = '/spectrogram?path=' + encodeURIComponent(audioPath);
+    url = '/spectrogram?path=' + encodeURIComponent(audioPath) + '&mel_index=' + encodeURIComponent(melIdx || '0');
   }
   img.src = url;
   document.getElementById('mediaInfo').textContent = `spec: ${audioPath}`;
@@ -368,6 +369,7 @@ class AppState:
             "segment_end_ts_utc",
             "segment_path",
             "mel_shard_path",
+            "mel_shard_local_index",
             "window_seconds",
             "overlap_s_producing",
             "overlap_s_delivering",
@@ -377,6 +379,56 @@ class AppState:
         ]
         cols = [c for c in keep_cols if c in out.columns]
         out = out[cols].head(max(1, min(int(limit), 10000))).copy()
+        mel_shape_cache: Dict[str, Any] = {}
+        mel_ok: List[bool] = []
+        mel_status: List[str] = []
+        for row in out.itertuples(index=False):
+            mpath = getattr(row, "mel_shard_path", None)
+            midx_raw = getattr(row, "mel_shard_local_index", None)
+            if not isinstance(mpath, str) or not mpath.strip():
+                mel_ok.append(False)
+                mel_status.append("missing_mel_path")
+                continue
+            try:
+                p = self._check_allowed(mpath)
+            except Exception:
+                mel_ok.append(False)
+                mel_status.append("path_not_allowed")
+                continue
+            if not p.exists():
+                mel_ok.append(False)
+                mel_status.append("missing_shard")
+                continue
+            p_str = str(p)
+            if p_str not in mel_shape_cache:
+                try:
+                    with np.load(p, mmap_mode="r") as data:
+                        key = "mel" if "mel" in data.files else ("arr_0" if "arr_0" in data.files else data.files[0])
+                        arr = data[key]
+                        mel_shape_cache[p_str] = tuple(int(x) for x in arr.shape)
+                except Exception:
+                    mel_shape_cache[p_str] = None
+            shape = mel_shape_cache[p_str]
+            if shape is None:
+                mel_ok.append(False)
+                mel_status.append("unreadable_shard")
+                continue
+            try:
+                midx = int(midx_raw)
+            except Exception:
+                mel_ok.append(False)
+                mel_status.append("invalid_index")
+                continue
+            if len(shape) == 3:
+                ok = 0 <= midx < int(shape[0])
+            elif len(shape) == 2:
+                ok = (midx == 0)
+            else:
+                ok = False
+            mel_ok.append(bool(ok))
+            mel_status.append("ok" if ok else f"index_oob shape={shape}")
+        out["mel_ok"] = mel_ok
+        out["mel_status"] = mel_status
         for c in ["segment_start_ts_utc", "segment_end_ts_utc"]:
             if c in out.columns:
                 out[c] = out[c].astype("string")
