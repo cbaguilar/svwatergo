@@ -79,6 +79,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sample-rate", type=int, default=16000)
     p.add_argument("--window-seconds", type=float, default=10.0)
     p.add_argument("--stride-seconds", type=float, default=10.0)
+    p.add_argument("--max-event-gap-seconds", type=float, default=60.0, help="Max gap to merge adjacent same-class segments into one event window")
     p.add_argument("--max-gap-stale-s", type=float, default=300.0)
     p.add_argument("--wyze-min-size-bytes", type=int, default=4096)
     p.add_argument("--wyze-convert-workers", type=int, default=4, help="Parallel workers for Wyze day conversion")
@@ -649,18 +650,15 @@ def _split_assign_source_day_event(
         return out
 
     out = df.copy()
-    out["split_group_id"] = (
-        out["audio_source"].astype(str)
-        + "|"
-        + out["day_utc"].astype(str)
-        + "|"
-        + out["event_window_id"].astype(str)
-    )
+    # Split by event periods (event_window_id), intentionally ignoring source.
+    out["split_group_id"] = out["event_window_id"].astype(str)
 
     grp = (
-        out.groupby(["audio_source", "split_group_id"], as_index=False)
-        .size()
-        .rename(columns={"size": "n_rows"})
+        out.groupby(["split_group_id"], as_index=False)
+        .agg(
+            n_rows=("split_group_id", "size"),
+            primary_class=("primary_class", "first"),
+        )
     )
 
     # Greedy by large groups first, deterministic tie-break by hash
@@ -675,31 +673,54 @@ def _split_assign_source_day_event(
     }
 
     current = {"train": 0, "test": 0, "val": 0}
-    source_home: Dict[str, str] = {}
     group_to_split: Dict[str, str] = {}
 
+    def _pick_split_for_n(n: int, allowed: Optional[Sequence[str]] = None) -> str:
+        splits = list(allowed) if allowed else ["train", "test", "val"]
+        best_split = None
+        best_cost = None
+        for sp in splits:
+            proj = current[sp] + int(n)
+            overflow = max(0, proj - target[sp])
+            deficit = max(0, target[sp] - proj)
+            cost = (overflow * 2) + deficit
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best_split = sp
+        return str(best_split)
+
+    # Coverage pass: try to place every class into each split when enough event windows exist.
+    for klass in sorted(grp["primary_class"].astype(str).unique().tolist()):
+        class_rows = grp[grp["primary_class"].astype(str) == klass].copy()
+        if class_rows.empty:
+            continue
+        class_rows = class_rows.sort_values(["n_rows", "_hash"], ascending=[False, True]).reset_index(drop=True)
+        n_groups = int(len(class_rows))
+        if n_groups >= 3:
+            preferred_splits: List[str] = ["train", "test", "val"]
+        elif n_groups == 2:
+            preferred_splits = ["train", "test"]
+        else:
+            preferred_splits = ["train"]
+
+        for i, row in class_rows.iterrows():
+            gid = str(row["split_group_id"])
+            if gid in group_to_split:
+                continue
+            if i < len(preferred_splits):
+                chosen = _pick_split_for_n(int(row["n_rows"]), allowed=[preferred_splits[i]])
+            else:
+                chosen = _pick_split_for_n(int(row["n_rows"]))
+            group_to_split[gid] = chosen
+            current[chosen] += int(row["n_rows"])
+
+    # Balance pass for remaining groups.
     for row in grp.itertuples(index=False):
-        source = str(row.audio_source)
         gid = str(row.split_group_id)
         n = int(row.n_rows)
-
-        if source in source_home:
-            chosen = source_home[source]
-        else:
-            # assign source first time by closest projected target fit
-            best_split = None
-            best_cost = None
-            for sp in ["train", "test", "val"]:
-                proj = current[sp] + n
-                overflow = max(0, proj - target[sp])
-                deficit = max(0, target[sp] - proj)
-                cost = (overflow * 2) + deficit
-                if best_cost is None or cost < best_cost:
-                    best_cost = cost
-                    best_split = sp
-            chosen = str(best_split)
-            source_home[source] = chosen
-
+        if gid in group_to_split:
+            continue
+        chosen = _pick_split_for_n(n)
         group_to_split[gid] = chosen
         current[chosen] += n
 
@@ -933,7 +954,7 @@ def main() -> None:
         raise SystemExit("No rows after PLC join/labeling.")
 
     samples = pd.concat(out_rows, ignore_index=True)
-    samples = _attach_event_windows(samples, max_gap_seconds=float(args.window_seconds) * 1.5)
+    samples = _attach_event_windows(samples, max_gap_seconds=float(args.max_event_gap_seconds))
     samples = _split_assign_source_day_event(
         samples,
         seed=int(args.split_seed),
