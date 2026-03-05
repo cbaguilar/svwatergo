@@ -47,6 +47,9 @@ UI_HTML = """<!doctype html>
 <body>
   <h2>Event Window Inspector</h2>
   <div id="summary" class="mono"></div>
+  <div style="margin:6px 0;">
+    <a href="#" onclick="loadDir(''); return false;">Browse Raw Dataset</a>
+  </div>
 
   <div class="panel">
     <div class="row">
@@ -96,6 +99,14 @@ UI_HTML = """<!doctype html>
     <pre id="filePreview"></pre>
   </div>
 
+  <div class="panel">
+    <div><b>Directory Browser</b>: <span id="dirPath" class="mono"></span></div>
+    <table id="dirTbl">
+      <thead><tr><th>name</th><th>type</th><th>size</th><th>path</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
 <script>
 async function jget(url) {
   const r = await fetch(url);
@@ -106,6 +117,7 @@ async function loadSummary() {
   const d = await jget('/api/summary');
   document.getElementById('summary').textContent =
     `rows=${d.n_rows} windows=${d.n_windows} splits=${JSON.stringify(d.by_split)}`;
+  window.__defaultBrowseRoot = d.samples_parquet.split('/').slice(0, -4).join('/');
 }
 function esc(x) { return String(x ?? ''); }
 async function loadWindows() {
@@ -197,8 +209,38 @@ async function loadFile() {
   const d = await jget('/api/file?path=' + encodeURIComponent(p) + '&rows=' + encodeURIComponent(rows || '20'));
   document.getElementById('filePreview').textContent = JSON.stringify(d, null, 2);
 }
+async function loadDir(path) {
+  const target = path && path.length ? path : (window.__defaultBrowseRoot || '');
+  const d = await jget('/api/files?path=' + encodeURIComponent(target));
+  document.getElementById('dirPath').textContent = d.path;
+  const tb = document.querySelector('#dirTbl tbody');
+  tb.innerHTML = '';
+  for (const it of d.items) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><a href="#" data-p="${esc(it.path)}">${esc(it.name)}</a></td>
+      <td>${it.is_dir ? 'dir' : 'file'}</td>
+      <td>${esc(it.size ?? '')}</td>
+      <td class="mono">${esc(it.path)}</td>`;
+    tb.appendChild(tr);
+  }
+  for (const a of tb.querySelectorAll('a[data-p]')) {
+    a.onclick = async (ev) => {
+      ev.preventDefault();
+      const p = ev.target.getAttribute('data-p') || '';
+      const row = ev.target.closest('tr');
+      const isDir = row && row.children[1] && row.children[1].textContent === 'dir';
+      if (isDir) {
+        await loadDir(p);
+      } else {
+        document.getElementById('filePath').value = p;
+        await loadFile();
+      }
+    };
+  }
+}
 loadSummary().catch(e => alert(e.message));
 loadWindows().catch(e => alert(e.message));
+loadDir('').catch(e => console.log(e.message));
 </script>
 </body>
 </html>
