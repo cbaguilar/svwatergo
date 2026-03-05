@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -38,113 +39,88 @@ def render_audio_pca_svm_overview(
 
     df["y_true"] = pd.to_numeric(df["y_true"], errors="coerce").fillna(0).astype(int)
     df["y_pred"] = pd.to_numeric(df["y_pred"], errors="coerce").fillna(0).astype(int)
-    df["is_error"] = df["y_true"] != df["y_pred"]
-    accuracy = float((~df["is_error"]).mean()) if len(df) else 0.0
-    uniq_classes = sorted(set(df["y_true"].unique().tolist()) | set(df["y_pred"].unique().tolist()))
-    is_multiclass = len(uniq_classes) > 2
 
-    if is_multiclass:
-        if class_names and len(class_names) > max(uniq_classes):
-            idx_to_name = {i: str(class_names[i]) for i in uniq_classes}
+    multilabel_true_cols = sorted([c for c in df.columns if c.startswith("y_true_")])
+    multilabel_suffixes = [c[len("y_true_") :] for c in multilabel_true_cols if f"y_pred_{c[len('y_true_'):]}" in df.columns]
+    is_multilabel = len(multilabel_suffixes) >= 2
+
+    if is_multilabel:
+        true_cols = [f"y_true_{s}" for s in multilabel_suffixes]
+        pred_cols = [f"y_pred_{s}" for s in multilabel_suffixes]
+        df["true_label"] = df[true_cols].astype(int).astype(str).agg("".join, axis=1)
+        df["pred_label"] = df[pred_cols].astype(int).astype(str).agg("".join, axis=1)
+        df["is_error"] = (df[true_cols].astype(int).to_numpy() != df[pred_cols].astype(int).to_numpy()).any(axis=1)
+        score_cols_ml = [f"score_{s}" for s in multilabel_suffixes if f"score_{s}" in df.columns]
+        if score_cols_ml:
+            # Confidence that all bits are correct: high when scores are far from 0.5.
+            df["pred_confidence"] = (
+                np.abs(df[score_cols_ml].astype(float).to_numpy() - 0.5) * 2.0
+            ).mean(axis=1)
         else:
-            idx_to_name = {i: f"class_{i}" for i in uniq_classes}
-        df["true_label"] = df["y_true"].map(idx_to_name).fillna("unknown")
-        df["pred_label"] = df["y_pred"].map(idx_to_name).fillna("unknown")
+            df["pred_confidence"] = np.nan
+        task_mode = "multilabel"
     else:
-        df["true_label"] = np.where(df["y_true"] == 1, positive_name, negative_name)
-        df["pred_label"] = np.where(df["y_pred"] == 1, positive_name, negative_name)
+        df["is_error"] = df["y_true"] != df["y_pred"]
+        uniq_classes = sorted(set(df["y_true"].unique().tolist()) | set(df["y_pred"].unique().tolist()))
+        is_multiclass = len(uniq_classes) > 2
+        if is_multiclass:
+            if class_names and len(class_names) > max(uniq_classes):
+                idx_to_name = {i: str(class_names[i]) for i in uniq_classes}
+            else:
+                idx_to_name = {i: f"class_{i}" for i in uniq_classes}
+            df["true_label"] = df["y_true"].map(idx_to_name).fillna("unknown")
+            df["pred_label"] = df["y_pred"].map(idx_to_name).fillna("unknown")
+            score_cols = sorted([c for c in df.columns if c.startswith("score_class_")], key=lambda x: int(x.split("_")[-1]))
+            if score_cols:
+                df["pred_confidence"] = df[score_cols].max(axis=1).astype(float)
+            else:
+                df["pred_confidence"] = np.nan
+            task_mode = "multiclass"
+        else:
+            df["true_label"] = np.where(df["y_true"] == 1, positive_name, negative_name)
+            df["pred_label"] = np.where(df["y_pred"] == 1, positive_name, negative_name)
+            if "score_positive" in df.columns:
+                df["pred_confidence"] = np.maximum(df["score_positive"].astype(float), 1.0 - df["score_positive"].astype(float))
+            else:
+                df["pred_confidence"] = np.nan
+            task_mode = "binary"
+
+    accuracy = float((~df["is_error"]).mean()) if len(df) else 0.0
 
     plot_df = df if len(df) <= int(max_points) else df.sample(int(max_points), random_state=42)
     source_col = next((c for c in ("audio_source", "source_name", "source") if c in plot_df.columns), None)
     if source_col is not None:
         plot_df["source_label"] = plot_df[source_col].astype(str).fillna("unknown")
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 10), constrained_layout=True)
+    panel_count = 5 if source_col is not None else 4
+    ncols = 3 if panel_count > 4 else 2
+    nrows = int(math.ceil(panel_count / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6.5 * ncols, 4.8 * nrows), constrained_layout=True)
+    axes_flat = np.atleast_1d(axes).reshape(-1)
 
-    ax = axes[0, 0]
-    labels_true = sorted(plot_df["true_label"].astype(str).unique().tolist())
-    if is_multiclass:
-        palette = plt.cm.tab10(np.linspace(0, 1, max(1, len(labels_true))))
-        colors_true = {lab: palette[i] for i, lab in enumerate(labels_true)}
-    else:
-        colors_true = {negative_name: "#1f77b4", positive_name: "#d62728"}
-        labels_true = [negative_name, positive_name]
-    for label in labels_true:
-        m = plot_df["true_label"] == label
-        if m.any():
-            ax.scatter(plot_df.loc[m, "pca1"], plot_df.loc[m, "pca2"], s=8, alpha=0.45, c=colors_true[label], label=label)
-    ax.set_title("PC1 vs PC2 (True Label)")
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.grid(alpha=0.2)
-    ax.legend(fontsize=8)
-
-    ax = axes[0, 1]
-    labels_pred = sorted(plot_df["pred_label"].astype(str).unique().tolist())
-    if is_multiclass:
-        palette2 = plt.cm.tab20(np.linspace(0, 1, max(1, len(labels_pred))))
-        colors_pred = {lab: palette2[i] for i, lab in enumerate(labels_pred)}
-    else:
-        colors_pred = {negative_name: "#2ca02c", positive_name: "#ff7f0e"}
-        labels_pred = [negative_name, positive_name]
-    for label in labels_pred:
-        m = plot_df["pred_label"] == label
-        if m.any():
-            ax.scatter(plot_df.loc[m, "pca1"], plot_df.loc[m, "pca2"], s=8, alpha=0.45, c=colors_pred[label], label=label)
-    ax.set_title("PC1 vs PC2 (Predicted Label)")
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.grid(alpha=0.2)
-    ax.legend(fontsize=8)
-
-    ax = axes[1, 0]
-    m_ok = ~plot_df["is_error"]
-    m_err = plot_df["is_error"]
-    ax.scatter(plot_df.loc[m_ok, "pca1"], plot_df.loc[m_ok, "pca3"], s=7, alpha=0.2, c="#7f7f7f", label="correct")
-    if m_err.any():
-        ax.scatter(plot_df.loc[m_err, "pca1"], plot_df.loc[m_err, "pca3"], s=14, alpha=0.85, c="#e41a1c", label="error")
-    ax.set_title("PC1 vs PC3 (Errors Highlighted)")
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC3")
-    ax.grid(alpha=0.2)
-    ax.legend(fontsize=8)
-
-    ax = axes[1, 1]
-    if source_col is not None:
-        labels_src = sorted(plot_df["source_label"].unique().tolist())
-        palette_src = plt.cm.tab20(np.linspace(0, 1, max(1, len(labels_src))))
-        colors_src = {lab: palette_src[i] for i, lab in enumerate(labels_src)}
-        for label in labels_src:
-            m = plot_df["source_label"] == label
+    def _scatter_categorical(ax, col: str, panel_title: str) -> None:
+        labels = sorted(plot_df[col].astype(str).unique().tolist())
+        palette = plt.cm.tab20(np.linspace(0, 1, max(1, len(labels))))
+        colors = {lab: palette[i] for i, lab in enumerate(labels)}
+        for label in labels:
+            m = plot_df[col] == label
             if m.any():
-                ax.scatter(plot_df.loc[m, "pca1"], plot_df.loc[m, "pca2"], s=8, alpha=0.45, c=[colors_src[label]], label=label)
-        ax.set_title("PC1 vs PC2 (Audio Source)")
+                ax.scatter(plot_df.loc[m, "pca1"], plot_df.loc[m, "pca2"], s=8, alpha=0.45, c=[colors[label]], label=label)
+        ax.set_title(panel_title)
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.grid(alpha=0.2)
         ax.legend(fontsize=8)
-    elif is_multiclass:
-        score_cols = sorted([c for c in plot_df.columns if c.startswith("score_class_")], key=lambda x: int(x.split("_")[-1]))
-        if score_cols:
-            conf = plot_df[score_cols].max(axis=1)
-            sc = ax.scatter(
-                plot_df["pca1"],
-                plot_df["pca2"],
-                c=conf,
-                s=8,
-                alpha=0.55,
-                cmap="viridis",
-                vmin=0,
-                vmax=1,
-            )
-            cbar = fig.colorbar(sc, ax=ax)
-            cbar.set_label(score_label or "max class probability")
-            ax.set_title("PC1 vs PC2 (Prediction Confidence)")
-        else:
-            ax.scatter(plot_df["pca1"], plot_df["pca2"], s=8, alpha=0.4, c="#444")
-            ax.set_title("PC1 vs PC2")
-    elif "score_positive" in plot_df.columns:
+
+    _scatter_categorical(axes_flat[0], "true_label", "PC1 vs PC2 (True Label)")
+    _scatter_categorical(axes_flat[1], "pred_label", "PC1 vs PC2 (Predicted Label)")
+
+    ax = axes_flat[2]
+    if np.isfinite(plot_df["pred_confidence"].to_numpy(dtype=float)).any():
         sc = ax.scatter(
             plot_df["pca1"],
             plot_df["pca2"],
-            c=plot_df["score_positive"],
+            c=plot_df["pred_confidence"],
             s=8,
             alpha=0.55,
             cmap="viridis",
@@ -152,14 +128,34 @@ def render_audio_pca_svm_overview(
             vmax=1,
         )
         cbar = fig.colorbar(sc, ax=ax)
-        cbar.set_label(score_label or f"score_positive (P[{positive_name}])")
-        ax.set_title("PC1 vs PC2 (Model Score)")
+        cbar.set_label(score_label or "prediction confidence")
+        ax.set_title("PC1 vs PC2 (Confidence)")
     else:
-        ax.scatter(plot_df["pca1"], plot_df["pca2"], s=8, alpha=0.4, c="#444")
-        ax.set_title("PC1 vs PC2")
+        ax.scatter(plot_df["pca1"], plot_df["pca2"], s=8, alpha=0.35, c="#444")
+        ax.set_title("PC1 vs PC2 (Confidence N/A)")
     ax.set_xlabel("PC1")
     ax.set_ylabel("PC2")
     ax.grid(alpha=0.2)
+
+    ax = axes_flat[3]
+    m_ok = ~plot_df["is_error"]
+    m_err = plot_df["is_error"]
+    ax.scatter(plot_df.loc[m_ok, "pca1"], plot_df.loc[m_ok, "pca2"], s=7, alpha=0.2, c="#7f7f7f", label="correct")
+    if m_err.any():
+        ax.scatter(plot_df.loc[m_err, "pca1"], plot_df.loc[m_err, "pca2"], s=14, alpha=0.85, c="#e41a1c", label="error")
+    ax.set_title("PC1 vs PC2 (Errors Highlighted)")
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.grid(alpha=0.2)
+    ax.legend(fontsize=8)
+
+    used_axes = 4
+    if source_col is not None:
+        _scatter_categorical(axes_flat[4], "source_label", "PC1 vs PC2 (Audio Source)")
+        used_axes = 5
+
+    for ax in axes_flat[used_axes:]:
+        ax.axis("off")
 
     fig.suptitle(title, fontsize=14)
     fig.text(
@@ -179,7 +175,7 @@ def render_audio_pca_svm_overview(
         "plot_path": str(out_png),
         "rows_total": int(len(df)),
         "rows_plotted": int(len(plot_df)),
-        "task_mode": "multiclass" if is_multiclass else "binary",
+        "task_mode": str(task_mode),
         "class_names": list(class_names) if class_names is not None else None,
         "positive_name": str(positive_name),
         "negative_name": str(negative_name),
