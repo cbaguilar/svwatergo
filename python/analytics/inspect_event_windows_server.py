@@ -5,6 +5,7 @@ import argparse
 import io
 import json
 import mimetypes
+import sys
 import wave
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,16 @@ DEFAULT_SAMPLES = (
     "/mnt/d/datasets/svwatergo/derived/"
     "dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet"
 )
+
+
+def _ensure_repo_on_syspath() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+
+_ensure_repo_on_syspath()
 
 UI_HTML = """<!doctype html>
 <html>
