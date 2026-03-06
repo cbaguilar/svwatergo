@@ -34,6 +34,19 @@ def main() -> int:
     p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--epochs", type=int, default=12)
     p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--dataloader-num-workers", type=int, default=0, help="DataLoader worker count")
+    p.add_argument(
+        "--dataloader-pin-memory",
+        default="auto",
+        choices=["auto", "yes", "no"],
+        help="Pin DataLoader memory (auto enables on CUDA)",
+    )
+    p.add_argument(
+        "--dataloader-persistent-workers",
+        default="no",
+        choices=["yes", "no"],
+        help="Keep DataLoader workers alive between epochs (requires num_workers>0)",
+    )
     p.add_argument("--learning-rate", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--lr-drop-epochs", default="", help="Comma-separated epochs to apply multiplicative LR drop (e.g. 10,15)")
@@ -159,6 +172,13 @@ def main() -> int:
         random_state=int(args.random_state),
         epochs=int(args.epochs),
         batch_size=int(args.batch_size),
+        dataloader_num_workers=int(args.dataloader_num_workers),
+        dataloader_pin_memory=(
+            None
+            if str(args.dataloader_pin_memory) == "auto"
+            else (str(args.dataloader_pin_memory) == "yes")
+        ),
+        dataloader_persistent_workers=(str(args.dataloader_persistent_workers) == "yes"),
         learning_rate=float(args.learning_rate),
         weight_decay=float(args.weight_decay),
         lr_drop_epochs=[int(x.strip()) for x in str(args.lr_drop_epochs).split(",") if x.strip()],

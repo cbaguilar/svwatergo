@@ -770,6 +770,9 @@ def fit_audio_tiny_cnn(
     random_state: int = 42,
     epochs: int = 12,
     batch_size: int = 64,
+    dataloader_num_workers: int = 0,
+    dataloader_pin_memory: Optional[bool] = None,
+    dataloader_persistent_workers: bool = False,
     learning_rate: float = 1e-3,
     weight_decay: float = 1e-4,
     class_weight: Optional[str] = None,
@@ -1016,14 +1019,24 @@ def fit_audio_tiny_cnn(
         y_test = torch.from_numpy(np.asarray(y[idx_test], dtype=np.int64))
         y_val = torch.from_numpy(np.asarray(y[idx_val], dtype=np.int64))
 
+    dl_num_workers = max(0, int(dataloader_num_workers))
+    dl_pin_memory = bool(dataloader_pin_memory) if dataloader_pin_memory is not None else (str(device) == "cuda")
+    dl_persistent_workers = bool(dataloader_persistent_workers) and dl_num_workers > 0
+    dl_kwargs = {
+        "num_workers": int(dl_num_workers),
+        "pin_memory": bool(dl_pin_memory),
+    }
+    if dl_num_workers > 0:
+        dl_kwargs["persistent_workers"] = bool(dl_persistent_workers)
+
     if aux_targets_all is not None:
         y_aux_train_fit = torch.from_numpy(np.asarray(aux_targets_all[idx_train_fit], dtype=np.float32))
-        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit, y_aux_train_fit), batch_size=int(batch_size), shuffle=True)
+        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit, y_aux_train_fit), batch_size=int(batch_size), shuffle=True, **dl_kwargs)
     else:
-        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit), batch_size=int(batch_size), shuffle=True)
-    train_eval_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=False)
-    test_dl = DataLoader(TensorDataset(X_test, y_test), batch_size=int(batch_size), shuffle=False)
-    val_dl = DataLoader(TensorDataset(X_val, y_val), batch_size=int(batch_size), shuffle=False)
+        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit), batch_size=int(batch_size), shuffle=True, **dl_kwargs)
+    train_eval_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=False, **dl_kwargs)
+    test_dl = DataLoader(TensorDataset(X_test, y_test), batch_size=int(batch_size), shuffle=False, **dl_kwargs)
+    val_dl = DataLoader(TensorDataset(X_val, y_val), batch_size=int(batch_size), shuffle=False, **dl_kwargs)
 
     if task == "binary":
         n_classes = 2
@@ -1093,7 +1106,7 @@ def fit_audio_tiny_cnn(
         y_score: List[float] = []
         with torch.no_grad():
             for xb, yb in dl:
-                xb = xb.to(device)
+                xb = xb.to(device, non_blocking=True)
                 logits = model(xb)
                 if task == "binary":
                     score = torch.sigmoid(logits.view(-1))
@@ -1140,12 +1153,12 @@ def fit_audio_tiny_cnn(
         for batch in train_dl:
             if len(batch) == 3:
                 xb, yb, y_auxb = batch
-                y_auxb = y_auxb.to(device)
+                y_auxb = y_auxb.to(device, non_blocking=True)
             else:
                 xb, yb = batch
                 y_auxb = None
-            xb = xb.to(device)
-            yb = yb.to(device)
+            xb = xb.to(device, non_blocking=True)
+            yb = yb.to(device, non_blocking=True)
             optim.zero_grad(set_to_none=True)
             logits, emb = _forward_logits_and_embedding(model, xb, arch_kind=str(arch_kind))
             if task == "binary":
@@ -1338,7 +1351,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
                 logits = model(xb).view(-1)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1355,7 +1368,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
                 logits = model(xb)
                 prob = torch.softmax(logits, dim=1).cpu().numpy()
                 pred = np.argmax(prob, axis=1).astype("int64")
@@ -1368,7 +1381,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1384,7 +1397,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1768,6 +1781,9 @@ def fit_audio_tiny_cnn(
             "model_arch": str(arch_kind),
             "epochs": int(epochs),
             "batch_size": int(batch_size),
+            "dataloader_num_workers": int(dl_num_workers),
+            "dataloader_pin_memory": bool(dl_pin_memory),
+            "dataloader_persistent_workers": bool(dl_persistent_workers),
             "learning_rate": float(learning_rate),
             "lr_drop_epochs": sorted([int(e) for e in drop_epochs]),
             "lr_drop_gamma": float(lr_drop_gamma),
@@ -1921,7 +1937,7 @@ def predict_audio_tiny_cnn(
             std=float(gnorm.get("std", 1.0)),
             eps=float(gnorm.get("eps", 1e-6)),
         )
-    x = torch.tensor(mel[None, None, :, :], dtype=torch.float32, device=device)
+    x = torch.from_numpy(np.asarray(mel[None, None, :, :], dtype=np.float32)).to(device, non_blocking=True)
     model = bundle["_model"].to(device)
     model.eval()
     with torch.no_grad():
