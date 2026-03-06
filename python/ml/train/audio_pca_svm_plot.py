@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,6 +20,7 @@ def render_audio_pca_svm_overview(
     max_points: int = 12000,
     class_names: Optional[Sequence[str]] = None,
     tuned_thresholds_by_class: Optional[Dict[str, float]] = None,
+    pc_pairs: Optional[Sequence[Tuple[int, int]]] = None,
 ) -> Dict[str, Any]:
     try:
         import matplotlib.pyplot as plt  # type: ignore
@@ -34,9 +34,16 @@ def render_audio_pca_svm_overview(
         out_meta = projection_path.with_name("pca_run_overview_metadata.json")
 
     df = pd.read_parquet(projection_path).copy()
-    for c in ("pca1", "pca2", "pca3", "y_true", "y_pred"):
+    for c in ("y_true", "y_pred"):
         if c not in df.columns:
             raise ValueError(f"Projection file missing required column: {c}")
+    if pc_pairs is None:
+        pc_pairs = [(1, 2)]
+    pairs = [(int(a), int(b)) for a, b in pc_pairs]
+    for a, b in pairs:
+        for c in (f"pca{a}", f"pca{b}"):
+            if c not in df.columns:
+                raise ValueError(f"Projection file missing required column for --pc-pairs: {c}")
 
     applied_thresholds: Dict[str, float] = {}
     if tuned_thresholds_by_class:
@@ -111,70 +118,99 @@ def render_audio_pca_svm_overview(
     if source_col is not None:
         plot_df["source_label"] = plot_df[source_col].astype(str).fillna("unknown")
 
-    panel_count = 5 if source_col is not None else 4
-    ncols = 3 if panel_count > 4 else 2
-    nrows = int(math.ceil(panel_count / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(6.5 * ncols, 4.8 * nrows), constrained_layout=True)
-    axes_flat = np.atleast_1d(axes).reshape(-1)
+    ncols = 5 if source_col is not None else 4
+    nrows = int(len(pairs))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.3 * nrows), constrained_layout=True)
+    if nrows == 1:
+        axes = np.asarray([axes], dtype=object)
 
-    def _scatter_categorical(ax, col: str, panel_title: str) -> None:
+    def _scatter_categorical(ax, col: str, panel_title: str, xcol: str, ycol: str, xname: str, yname: str) -> None:
         labels = sorted(plot_df[col].astype(str).unique().tolist())
         palette = plt.cm.tab20(np.linspace(0, 1, max(1, len(labels))))
         colors = {lab: palette[i] for i, lab in enumerate(labels)}
         for label in labels:
             m = plot_df[col] == label
             if m.any():
-                ax.scatter(plot_df.loc[m, "pca1"], plot_df.loc[m, "pca2"], s=8, alpha=0.45, c=[colors[label]], label=label)
+                ax.scatter(plot_df.loc[m, xcol], plot_df.loc[m, ycol], s=8, alpha=0.45, c=[colors[label]], label=label)
         ax.set_title(panel_title)
-        ax.set_xlabel("PC1")
-        ax.set_ylabel("PC2")
+        ax.set_xlabel(xname)
+        ax.set_ylabel(yname)
         ax.grid(alpha=0.2)
         ax.legend(fontsize=8)
 
-    _scatter_categorical(axes_flat[0], "true_label", "PC1 vs PC2 (True Label)")
-    _scatter_categorical(axes_flat[1], "pred_label", "PC1 vs PC2 (Predicted Label)")
+    conf_finite = np.isfinite(plot_df["pred_confidence"].to_numpy(dtype=float)).any()
+    sc = None
+    for row_i, (pcx, pcy) in enumerate(pairs):
+        xcol = f"pca{pcx}"
+        ycol = f"pca{pcy}"
+        xname = f"PC{pcx}"
+        yname = f"PC{pcy}"
 
-    ax = axes_flat[2]
-    if np.isfinite(plot_df["pred_confidence"].to_numpy(dtype=float)).any():
-        sc = ax.scatter(
-            plot_df["pca1"],
-            plot_df["pca2"],
-            c=plot_df["pred_confidence"],
-            s=8,
-            alpha=0.55,
-            cmap="viridis",
-            vmin=0,
-            vmax=1,
+        _scatter_categorical(
+            axes[row_i, 0],
+            "true_label",
+            f"{xname} vs {yname} (True Label)",
+            xcol,
+            ycol,
+            xname,
+            yname,
         )
-        cbar = fig.colorbar(sc, ax=ax)
+        _scatter_categorical(
+            axes[row_i, 1],
+            "pred_label",
+            f"{xname} vs {yname} (Predicted Label)",
+            xcol,
+            ycol,
+            xname,
+            yname,
+        )
+
+        ax = axes[row_i, 2]
+        if conf_finite:
+            sc = ax.scatter(
+                plot_df[xcol],
+                plot_df[ycol],
+                c=plot_df["pred_confidence"],
+                s=8,
+                alpha=0.55,
+                cmap="viridis",
+                vmin=0,
+                vmax=1,
+            )
+            ax.set_title(f"{xname} vs {yname} (Confidence)")
+        else:
+            ax.scatter(plot_df[xcol], plot_df[ycol], s=8, alpha=0.35, c="#444")
+            ax.set_title(f"{xname} vs {yname} (Confidence N/A)")
+        ax.set_xlabel(xname)
+        ax.set_ylabel(yname)
+        ax.grid(alpha=0.2)
+
+        ax = axes[row_i, 3]
+        m_ok = ~plot_df["is_error"]
+        m_err = plot_df["is_error"]
+        ax.scatter(plot_df.loc[m_ok, xcol], plot_df.loc[m_ok, ycol], s=7, alpha=0.2, c="#7f7f7f", label="correct")
+        if m_err.any():
+            ax.scatter(plot_df.loc[m_err, xcol], plot_df.loc[m_err, ycol], s=14, alpha=0.85, c="#e41a1c", label="error")
+        ax.set_title(f"{xname} vs {yname} (Errors Highlighted)")
+        ax.set_xlabel(xname)
+        ax.set_ylabel(yname)
+        ax.grid(alpha=0.2)
+        ax.legend(fontsize=8)
+
+        if source_col is not None:
+            _scatter_categorical(
+                axes[row_i, 4],
+                "source_label",
+                f"{xname} vs {yname} (Audio Source)",
+                xcol,
+                ycol,
+                xname,
+                yname,
+            )
+
+    if sc is not None:
+        cbar = fig.colorbar(sc, ax=axes[:, 2].ravel().tolist() if nrows > 1 else axes[0, 2])
         cbar.set_label(score_label or "prediction confidence")
-        ax.set_title("PC1 vs PC2 (Confidence)")
-    else:
-        ax.scatter(plot_df["pca1"], plot_df["pca2"], s=8, alpha=0.35, c="#444")
-        ax.set_title("PC1 vs PC2 (Confidence N/A)")
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.grid(alpha=0.2)
-
-    ax = axes_flat[3]
-    m_ok = ~plot_df["is_error"]
-    m_err = plot_df["is_error"]
-    ax.scatter(plot_df.loc[m_ok, "pca1"], plot_df.loc[m_ok, "pca2"], s=7, alpha=0.2, c="#7f7f7f", label="correct")
-    if m_err.any():
-        ax.scatter(plot_df.loc[m_err, "pca1"], plot_df.loc[m_err, "pca2"], s=14, alpha=0.85, c="#e41a1c", label="error")
-    ax.set_title("PC1 vs PC2 (Errors Highlighted)")
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.grid(alpha=0.2)
-    ax.legend(fontsize=8)
-
-    used_axes = 4
-    if source_col is not None:
-        _scatter_categorical(axes_flat[4], "source_label", "PC1 vs PC2 (Audio Source)")
-        used_axes = 5
-
-    for ax in axes_flat[used_axes:]:
-        ax.axis("off")
 
     fig.suptitle(title, fontsize=14)
     fig.text(
@@ -211,6 +247,7 @@ def render_audio_pca_svm_overview(
         if source_col is not None
         else {},
         "applied_tuned_thresholds": applied_thresholds,
+        "pc_pairs": [[int(a), int(b)] for a, b in pairs],
     }
     out_meta.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {"plot_path": out_png, "meta_path": out_meta, "meta": meta}
