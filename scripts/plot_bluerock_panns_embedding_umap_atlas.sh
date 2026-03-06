@@ -37,17 +37,19 @@ FEATURE_PAIR="${FEATURE_PAIR:-1:2}"
 cd "$REPO"
 
 if [[ "$REBUILD_INPUT" == "yes" || ! -f "$UMAP_INPUT_PARQUET" ]]; then
-  "$PYTHON" - <<'PY'
+  "$PYTHON" - "$DATASET" "$SPLIT" "$EMBEDDINGS_NPZ" "$EMBEDDINGS_KEY" "$UMAP_INPUT_PARQUET" <<'PY'
 import numpy as np
 import pandas as pd
 from pathlib import Path
-import os
+import sys
 
-samples = Path(os.environ["DATASET"])
-split = Path(os.environ["SPLIT"])
-npz = Path(os.environ["EMBEDDINGS_NPZ"])
-emb_key = str(os.environ.get("EMBEDDINGS_KEY", "embeddings"))
-out = Path(os.environ["UMAP_INPUT_PARQUET"])
+if len(sys.argv) != 6:
+    raise SystemExit(f"expected 5 args, got {len(sys.argv)-1}")
+samples = Path(sys.argv[1])
+split = Path(sys.argv[2])
+npz = Path(sys.argv[3])
+emb_key = str(sys.argv[4] or "embeddings")
+out = Path(sys.argv[5])
 
 if not samples.exists():
     raise SystemExit(f"dataset not found: {samples}")
