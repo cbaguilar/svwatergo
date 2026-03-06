@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import io
 import json
 import mimetypes
@@ -34,6 +35,10 @@ except Exception:
 DEFAULT_SAMPLES = (
     "/mnt/d/datasets/svwatergo/derived/"
     "dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet"
+)
+DEFAULT_SAMPLES_GLOB = (
+    "/mnt/d/datasets/svwatergo/derived/"
+    "dataset=audio_event_dataset/site=*/window_s=10/samples.parquet"
 )
 DEFAULT_MODELS_DIR = "/mnt/d/datasets/svwatergo/derived/checkpoints"
 
@@ -77,6 +82,7 @@ UI_HTML = """<!doctype html>
 
   <div class="panel">
     <div class="row">
+      <div><label>site</label><input id="site" value="" /></div>
       <div><label>split</label><input id="split" value="" /></div>
       <div><label>class</label><input id="klass" value="" /></div>
       <div><label>source</label><input id="source" value="" /></div>
@@ -87,7 +93,7 @@ UI_HTML = """<!doctype html>
     </div>
     <table id="windowsTbl">
       <thead><tr>
-        <th>event_window_id</th><th>split</th><th>class</th><th>segments</th><th>seconds</th><th>source</th><th>day</th><th>start</th><th>end</th>
+        <th>event_window_id</th><th>site</th><th>split</th><th>class</th><th>segments</th><th>seconds</th><th>source</th><th>day</th><th>start</th><th>end</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -161,8 +167,8 @@ async function jget(url) {
 async function loadSummary() {
   const d = await jget('/api/summary');
   document.getElementById('summary').textContent =
-    `rows=${d.n_rows} windows=${d.n_windows} splits=${JSON.stringify(d.by_split)}`;
-  window.__defaultBrowseRoot = d.samples_parquet.split('/').slice(0, -4).join('/');
+    `rows=${d.n_rows} windows=${d.n_windows} splits=${JSON.stringify(d.by_split)} sites=${JSON.stringify(d.by_site || {})}`;
+  window.__defaultBrowseRoot = d.dataset_root || '';
   const modelEl = document.getElementById('modelPath');
   if (modelEl && !modelEl.value.trim() && d.default_models) {
     if (d.default_models.svm_exists) {
@@ -206,12 +212,14 @@ function esc(x) { return String(x ?? ''); }
 window.__currentAudioPath = '';
 async function loadWindows() {
   const q = new URLSearchParams();
+  const site = document.getElementById('site').value.trim();
   const split = document.getElementById('split').value.trim();
   const klass = document.getElementById('klass').value.trim();
   const source = document.getElementById('source').value.trim();
   const day = document.getElementById('day').value.trim();
   const minSeg = document.getElementById('minSeg').value.trim();
   const limit = document.getElementById('limit').value.trim();
+  if (site) q.set('site', site);
   if (split) q.set('split', split);
   if (klass) q.set('primary_class', klass);
   if (source) q.set('audio_source', source);
@@ -223,7 +231,7 @@ async function loadWindows() {
   tb.innerHTML = '';
   for (const w of d.windows) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><a href="#" data-id="${esc(w.event_window_id)}">${esc(w.event_window_id)}</a></td>
+    tr.innerHTML = `<td><a href="#" data-id="${esc(w.event_window_id)}">${esc(w.event_window_id)}</a></td><td>${esc(w.site || '')}</td>
       <td>${esc(w.split)}</td><td>${esc(w.primary_class)}</td><td>${esc(w.n_segments)}</td>
       <td>${esc(w.window_seconds)}</td><td>${esc(w.audio_source)}</td><td>${esc(w.day_utc)}</td>
       <td>${esc(w.start_ts)}</td><td>${esc(w.end_ts)}</td>`;
@@ -356,7 +364,17 @@ loadDir('').catch(e => console.log(e.message));
 
 def _arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Basic web inspector for event windows and raw dataset files.")
-    p.add_argument("--samples-parquet", default=DEFAULT_SAMPLES)
+    p.add_argument(
+        "--samples-parquet",
+        action="append",
+        default=[],
+        help="Samples parquet path (repeatable). If omitted, defaults to bluerock sample.",
+    )
+    p.add_argument(
+        "--samples-glob",
+        default="",
+        help="Optional glob for samples parquet files (e.g. dataset=audio_event_dataset/site=*/window_s=10/samples.parquet)",
+    )
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8787)
     p.add_argument(
@@ -373,21 +391,49 @@ def _arg_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _default_allowed_roots(samples: Path) -> List[Path]:
-    for parent in samples.parents:
-        if parent.name == "derived":
-            return [parent]
-    return [samples.parent]
+def _default_allowed_roots(samples_paths: List[Path]) -> List[Path]:
+    out: List[Path] = []
+    seen = set()
+    for samples in samples_paths:
+        cand = samples.parent
+        for parent in samples.parents:
+            if parent.name == "derived":
+                cand = parent
+                break
+        c = cand.resolve()
+        if str(c) not in seen:
+            seen.add(str(c))
+            out.append(c)
+    return out
+
+
+def _infer_site_from_samples_path(samples_path: Path) -> str:
+    for part in samples_path.parts:
+        if part.startswith("site="):
+            return part.split("=", 1)[1].strip().lower()
+    return ""
 
 
 class AppState:
-    def __init__(self, samples_path: Path, allowed_roots: List[Path], models_dir: Path) -> None:
-        self.samples_path = samples_path
+    def __init__(self, samples_paths: List[Path], allowed_roots: List[Path], models_dir: Path) -> None:
+        self.samples_paths = [p.resolve() for p in samples_paths]
         self.allowed_roots = allowed_roots
         self.models_dir = models_dir
-        self.df = pd.read_parquet(samples_path)
+        if not self.samples_paths:
+            raise ValueError("No samples parquet files provided.")
+        dfs: List[pd.DataFrame] = []
+        for sp in self.samples_paths:
+            dfi = pd.read_parquet(sp)
+            if "site" not in dfi.columns:
+                dfi["site"] = _infer_site_from_samples_path(sp)
+            else:
+                dfi["site"] = dfi["site"].astype("string").fillna("").str.strip().str.lower()
+            dfi["__samples_path"] = str(sp)
+            dfs.append(dfi)
+        self.df = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
         required = [
             "event_window_id",
+            "site",
             "split",
             "primary_class",
             "audio_source",
@@ -411,6 +457,7 @@ class AppState:
         g = (
             df.groupby("event_window_id", dropna=False)
             .agg(
+                site=("site", "first"),
                 split=("split", "first"),
                 primary_class=("primary_class", "first"),
                 audio_source=("audio_source", "first"),
@@ -424,7 +471,7 @@ class AppState:
         )
         g["window_seconds"] = (g["end_ts"] - g["start_ts"]).dt.total_seconds()
         # Keep datetime sort keys for API ordering, then cast for JSON output.
-        g = g.sort_values(["day_utc", "start_ts", "event_window_id"], ascending=[True, True, True]).reset_index(drop=True)
+        g = g.sort_values(["site", "day_utc", "start_ts", "event_window_id"], ascending=[True, True, True, True]).reset_index(drop=True)
         g["start_ts"] = g["start_ts"].astype("string")
         g["end_ts"] = g["end_ts"].astype("string")
         return g
@@ -432,15 +479,19 @@ class AppState:
     def summary(self) -> Dict[str, Any]:
         by_split = self.df["split"].astype("string").value_counts(dropna=False).to_dict()
         by_class = self.df["primary_class"].astype("string").value_counts(dropna=False).to_dict()
+        by_site = self.df["site"].astype("string").value_counts(dropna=False).to_dict()
         derived_root = self.allowed_roots[0]
         svm_model = derived_root / "checkpoints" / "bluerock_10s_svm_ropumprun" / "audio_pca_svm_model.joblib"
         tiny_model = derived_root / "checkpoints" / "bluerock_10s_tiny_cnn_ropumprun" / "audio_tiny_cnn_model.pt"
         return {
-            "samples_parquet": str(self.samples_path),
+            "samples_parquet": str(self.samples_paths[0]),
+            "samples_parquets": [str(p) for p in self.samples_paths],
+            "dataset_root": str(derived_root),
             "n_rows": int(len(self.df)),
             "n_windows": int(self.df["event_window_id"].nunique(dropna=True)),
             "by_split": {str(k): int(v) for k, v in by_split.items()},
             "by_class": {str(k): int(v) for k, v in by_class.items()},
+            "by_site": {str(k): int(v) for k, v in by_site.items()},
             "default_models": {
                 "svm_path": str(svm_model),
                 "svm_exists": bool(svm_model.exists()),
@@ -462,6 +513,7 @@ class AppState:
     def windows(
         self,
         *,
+        site: str = "",
         split: str = "",
         primary_class: str = "",
         audio_source: str = "",
@@ -471,6 +523,8 @@ class AppState:
         offset: int = 0,
     ) -> Dict[str, Any]:
         out = self._windows_df
+        if site:
+            out = out[out["site"].astype("string") == site]
         if split:
             out = out[out["split"].astype("string") == split]
         if primary_class:
@@ -851,6 +905,7 @@ def make_handler(state: AppState):
                     return
                 if path == "/api/windows":
                     out = state.windows(
+                        site=_q1(q, "site", ""),
                         split=_q1(q, "split", ""),
                         primary_class=_q1(q, "primary_class", ""),
                         audio_source=_q1(q, "audio_source", ""),
@@ -872,7 +927,7 @@ def make_handler(state: AppState):
                     self._write_json(state.list_models(limit=int(_q1(q, "limit", "1000"))))
                     return
                 if path == "/api/files":
-                    p = _q1(q, "path", str(state.samples_path.parent))
+                    p = _q1(q, "path", str(state.samples_paths[0].parent))
                     self._write_json(state.list_dir(p))
                     return
                 if path == "/api/file":
@@ -926,18 +981,38 @@ def make_handler(state: AppState):
 
 def main() -> int:
     args = _arg_parser().parse_args()
-    samples = Path(args.samples_parquet).expanduser().resolve()
-    if not samples.exists():
-        raise SystemExit(f"samples parquet not found: {samples}")
+    sample_paths: List[Path] = []
+    for p in (args.samples_parquet or []):
+        if str(p).strip():
+            sample_paths.append(Path(str(p)).expanduser().resolve())
+    if args.samples_glob:
+        for p in sorted(glob.glob(str(args.samples_glob), recursive=True)):
+            sample_paths.append(Path(p).expanduser().resolve())
+    if not sample_paths:
+        sample_paths = [Path(DEFAULT_SAMPLES).expanduser().resolve()]
+    # Deduplicate while preserving order.
+    dedup: List[Path] = []
+    seen = set()
+    for p in sample_paths:
+        rp = p.resolve()
+        if str(rp) not in seen:
+            seen.add(str(rp))
+            dedup.append(rp)
+    sample_paths = dedup
+    missing = [p for p in sample_paths if not p.exists()]
+    if missing:
+        raise SystemExit("samples parquet not found:\n" + "\n".join(str(p) for p in missing))
     roots = [Path(p).expanduser().resolve() for p in args.allow_root]
     if not roots:
-        roots = _default_allowed_roots(samples)
+        roots = _default_allowed_roots(sample_paths)
     models_dir = Path(args.models_dir).expanduser().resolve()
-    state = AppState(samples, roots, models_dir=models_dir)
+    state = AppState(sample_paths, roots, models_dir=models_dir)
     handler = make_handler(state)
     server = ThreadingHTTPServer((str(args.host), int(args.port)), handler)
     print(f"[ok] serving http://{args.host}:{args.port}", flush=True)
-    print(f"[ok] samples={samples}", flush=True)
+    print(f"[ok] samples={len(sample_paths)}", flush=True)
+    for sp in sample_paths:
+        print(f"      - {sp}", flush=True)
     print(f"[ok] allowed_roots={[str(r) for r in roots]}", flush=True)
     try:
         server.serve_forever()
