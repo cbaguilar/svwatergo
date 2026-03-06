@@ -103,6 +103,18 @@ def _parse_feature_pair(s: str) -> tuple[int, int]:
     return ia, ib
 
 
+def _default_feature_regex() -> List[str]:
+    # Broad default set for operational sensor/state atlas panels.
+    return [
+        r"state|status|mode|run|running|on|off|open|close|valve|pump|motor",
+        r"flow|press|pressure|conduct|temp|temperature|ph|orp|turb|level",
+        r"power|powermeter|current|voltage|energy|kw|kwh|amp|watt",
+        r"duty|ratio|percent|pct",
+        r"(^|_)dt($|_)|deriv|derivative|delta|diff|gradient|slope|rate",
+        r"setpoint|sp($|_)|cmd|command|feedback|fb($|_)",
+    ]
+
+
 def main() -> None:
     args = build_argparser().parse_args()
 
@@ -173,7 +185,7 @@ def main() -> None:
         max_points=int(args.max_points_plot),
         pc_pairs=[(1, 2)],
         feature_atlas=(str(args.feature_atlas) == "yes"),
-        feature_regex=list(args.feature_regex or []),
+        feature_regex=list(args.feature_regex or _default_feature_regex()),
         feature_max_cols=int(args.feature_max_cols),
         feature_pair=feature_pair,
     )
