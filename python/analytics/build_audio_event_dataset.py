@@ -535,6 +535,11 @@ def _label_segments_with_plc_overlap(
     plc_df: pd.DataFrame,
     seg_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    def _compose_prod_deliv_class(*, has_prod: bool, has_del: bool) -> str:
+        prod = "producing" if bool(has_prod) else "not_producing"
+        dele = "delivering" if bool(has_del) else "not_delivering"
+        return f"{prod}|{dele}"
+
     if plc_df.empty:
         out = seg_df.copy()
         out["overlap_s_producing"] = 0.0
@@ -542,7 +547,7 @@ def _label_segments_with_plc_overlap(
         out["overlap_s_flushing"] = 0.0
         out["overlap_s_quiet"] = 0.0
         out["quiet_full"] = False
-        out["primary_class"] = "unknown"
+        out["primary_class"] = "not_producing|not_delivering"
         out["states_seen"] = "unknown"
         out["is_transition_segment"] = False
         out["transition_count"] = 0
@@ -577,7 +582,7 @@ def _label_segments_with_plc_overlap(
             overlap_flush.append(0.0)
             overlap_quiet.append(0.0)
             quiet_fulls.append(False)
-            cls.append("unknown")
+            cls.append("not_producing|not_delivering")
             states_seen.append("unknown")
             transitions.append(0)
             continue
@@ -614,16 +619,7 @@ def _label_segments_with_plc_overlap(
         has_del = de_on_s > 0.0
         has_flush = fl_on_s > 0.0
 
-        if has_flush:
-            label = "flushing"
-        elif has_del:
-            label = "delivering"
-        elif has_prod:
-            label = "producing"
-        elif quiet_full:
-            label = "quiet"
-        else:
-            label = "unknown"
+        label_4way = _compose_prod_deliv_class(has_prod=has_prod, has_del=has_del)
 
         seen = []
         if has_flush:
@@ -642,7 +638,7 @@ def _label_segments_with_plc_overlap(
         overlap_flush.append(float(fl_on_s))
         overlap_quiet.append(float(window_s if quiet_full else 0.0))
         quiet_fulls.append(bool(quiet_full))
-        cls.append(label)
+        cls.append(label_4way)
         states_seen.append("|".join(seen))
         transitions.append(len(seen) - 1 if len(seen) > 1 else 0)
 

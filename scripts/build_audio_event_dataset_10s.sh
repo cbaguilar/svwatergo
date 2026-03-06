@@ -22,6 +22,8 @@ INCLUDE_RPI="${INCLUDE_RPI:-yes}"
 INCLUDE_WYZE="${INCLUDE_WYZE:-yes}"
 SKIP_EXISTING="${SKIP_EXISTING:-no}"
 SKIP_WYZE_CONVERSION="${SKIP_WYZE_CONVERSION:-no}"
+RESPLIT_ONLY="${RESPLIT_ONLY:-no}"
+RESPLIT_SAMPLES_PARQUET="${RESPLIT_SAMPLES_PARQUET:-}"
 
 WINDOW_SECONDS="${WINDOW_SECONDS:-10}"
 STRIDE_SECONDS="${STRIDE_SECONDS:-10}"
@@ -89,6 +91,12 @@ else
 fi
 if [[ "$SKIP_WYZE_CONVERSION" == "yes" ]]; then
   args+=(--skip-wyze-conversion)
+fi
+if [[ "$RESPLIT_ONLY" == "yes" ]]; then
+  args+=(--resplit-only)
+fi
+if [[ -n "$RESPLIT_SAMPLES_PARQUET" ]]; then
+  args+=(--resplit-samples-parquet "$RESPLIT_SAMPLES_PARQUET")
 fi
 
 if [[ -n "$DATE_LIST" ]]; then
