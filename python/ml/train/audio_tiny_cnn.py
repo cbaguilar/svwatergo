@@ -16,6 +16,8 @@ from .audio_pca_svm import (
     _normalize_split_value,
     _sample_rows,
 )
+from .audio_model_minicnn import build_tiny_cnn_model
+from .audio_model_resnet import build_small_resnet_model
 
 try:
     from sklearn.decomposition import PCA
@@ -133,85 +135,12 @@ def _cmvn_per_clip_per_freq(X_mel: np.ndarray, *, eps: float = 1e-6) -> np.ndarr
     return ((X - mu) / (sigma + float(eps))).astype("float32", copy=False)
 
 
-class _TinyCNN:
-    def __init__(self, nn, out_dim: int):
-        self.model = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(8, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((4, 8)),
-            nn.Flatten(),
-            nn.Linear(16 * 4 * 8, 32),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(32, int(out_dim)),
-        )
-
-
-def _res_block(nn, in_ch: int, out_ch: int, stride: int = 1):
-    block = nn.Sequential(
-        nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False),
-        nn.BatchNorm2d(out_ch),
-        nn.ReLU(),
-        nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False),
-        nn.BatchNorm2d(out_ch),
-    )
-    if stride != 1 or in_ch != out_ch:
-        skip = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=1, stride=stride, bias=False),
-            nn.BatchNorm2d(out_ch),
-        )
-    else:
-        skip = nn.Identity()
-    relu = nn.ReLU()
-    return nn.ModuleList([block, skip, relu])
-
-
-class _SmallResNet:
-    def __init__(self, nn, out_dim: int):
-        class _Net(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.stem = nn.Sequential(
-                    nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1, bias=False),
-                    nn.BatchNorm2d(16),
-                    nn.ReLU(),
-                )
-                self.b1 = _res_block(nn, 16, 16, stride=1)
-                self.b2 = _res_block(nn, 16, 32, stride=2)
-                self.b3 = _res_block(nn, 32, 64, stride=2)
-                self.head = nn.Sequential(
-                    nn.AdaptiveAvgPool2d((1, 1)),
-                    nn.Flatten(),
-                    nn.Linear(64, 64),
-                    nn.ReLU(),
-                    nn.Dropout(0.2),
-                    nn.Linear(64, int(out_dim)),
-                )
-
-            @staticmethod
-            def _run_block(block_parts, x):
-                block, skip, relu = block_parts
-                return relu(block(x) + skip(x))
-
-            def forward(self, x):
-                x = self.stem(x)
-                x = self._run_block(self.b1, x)
-                x = self._run_block(self.b2, x)
-                x = self._run_block(self.b3, x)
-                return self.head(x)
-
-        self.model = _Net()
-
-
 def _build_model(nn, *, out_dim: int, model_arch: str):
     arch = str(model_arch).strip().lower()
     if arch in ("tiny", "tiny_cnn", "tiny_cnn_v1"):
-        return _TinyCNN(nn, out_dim=out_dim).model, "tiny_cnn_v1"
+        return build_tiny_cnn_model(nn, out_dim=out_dim), "tiny_cnn_v1"
     if arch in ("resnet", "resnet_small", "resnet_small_v1"):
-        return _SmallResNet(nn, out_dim=out_dim).model, "resnet_small_v1"
+        return build_small_resnet_model(nn, out_dim=out_dim), "resnet_small_v1"
     raise ValueError(f"Unknown model_arch: {model_arch!r}")
 
 
@@ -1174,11 +1103,49 @@ def load_audio_tiny_cnn_bundle(model_path: Path) -> Dict[str, Any]:
             raise ValueError(f"Tiny CNN bundle missing key: {key}")
     n_classes = int(obj["n_classes"])
     out_dim = int(obj.get("output_dim", 1 if str(obj.get("task", "binary")) == "binary" else n_classes))
-    arch_kind = str(((obj.get("arch") or {}).get("kind")) or "tiny_cnn_v1")
-    model, _ = _build_model(nn, out_dim=out_dim, model_arch=arch_kind)
-    model.load_state_dict(obj["state_dict"])
+    state_dict = obj["state_dict"]
+    arch_kind = str(((obj.get("arch") or {}).get("kind")) or "").strip()
+
+    # Backward/robust compatibility: infer architecture from key patterns when metadata is missing.
+    sd_keys = [str(k) for k in getattr(state_dict, "keys", lambda: [])()]
+    looks_resnet = any(k.startswith("stem.") or k.startswith("b1.") or k.startswith("head.") for k in sd_keys)
+    looks_tiny = any(k.startswith("0.") or k.startswith("3.") or k.startswith("7.") for k in sd_keys)
+
+    candidates: List[str] = []
+    if arch_kind:
+        candidates.append(arch_kind)
+    if looks_resnet:
+        candidates.append("resnet_small_v1")
+    if looks_tiny:
+        candidates.append("tiny_cnn_v1")
+    if not candidates:
+        candidates = ["tiny_cnn_v1", "resnet_small_v1"]
+    # Preserve order, dedupe.
+    ordered = list(dict.fromkeys(candidates))
+
+    last_err: Optional[Exception] = None
+    model = None
+    for cand in ordered:
+        try:
+            m, _ = _build_model(nn, out_dim=out_dim, model_arch=cand)
+            m.load_state_dict(state_dict)
+            model = m
+            arch_kind = cand
+            break
+        except Exception as exc:  # pragma: no cover - fallback path
+            last_err = exc
+            continue
+    if model is None:
+        raise ValueError(
+            f"Failed to load tiny_cnn bundle architecture. "
+            f"candidates={ordered}, first_state_keys={sd_keys[:8]}, error={last_err}"
+        ) from last_err
+
     model.eval()
     obj["_model"] = model
+    obj.setdefault("arch", {})
+    if isinstance(obj["arch"], dict):
+        obj["arch"]["kind"] = str(arch_kind)
     return obj
 
 

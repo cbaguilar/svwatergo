@@ -35,6 +35,7 @@ DEFAULT_SAMPLES = (
     "/mnt/d/datasets/svwatergo/derived/"
     "dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet"
 )
+DEFAULT_MODELS_DIR = "/mnt/d/datasets/svwatergo/derived/checkpoints"
 
 
 def _ensure_repo_on_syspath() -> None:
@@ -109,6 +110,11 @@ UI_HTML = """<!doctype html>
         <label>model path</label>
         <input id="modelPath" style="width:100%" placeholder="/mnt/d/.../audio_pca_svm_model.joblib or .../audio_tiny_cnn_model.pt" />
       </div>
+      <div style="min-width:30%">
+        <label>checkpoint .pt</label>
+        <select id="modelSelect" style="width:100%"></select>
+      </div>
+      <div><label>&nbsp;</label><button onclick="loadModels()">Refresh Models</button></div>
       <div>
         <label>model kind</label>
         <select id="modelKind">
@@ -170,6 +176,31 @@ async function loadSummary() {
       document.getElementById('modelKind').value = 'auto';
     }
   }
+  await loadModels();
+}
+async function loadModels() {
+  const d = await jget('/api/models');
+  const sel = document.getElementById('modelSelect');
+  const modelEl = document.getElementById('modelPath');
+  const current = (modelEl.value || '').trim();
+  sel.innerHTML = '';
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = '-- select .pt checkpoint --';
+  sel.appendChild(empty);
+  for (const p of (d.models || [])) {
+    const o = document.createElement('option');
+    o.value = String(p);
+    o.textContent = String(p).replace((d.root || ''), '').replace(/^\\//, '');
+    if (current && current === o.value) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => {
+    const v = (sel.value || '').trim();
+    if (!v) return;
+    modelEl.value = v;
+    document.getElementById('modelKind').value = 'tiny_cnn';
+  };
 }
 function esc(x) { return String(x ?? ''); }
 window.__currentAudioPath = '';
@@ -334,6 +365,11 @@ def _arg_parser() -> argparse.ArgumentParser:
         default=[],
         help="Allowed root for /api/file and /api/files (repeatable). Defaults to parent of samples parquet.",
     )
+    p.add_argument(
+        "--models-dir",
+        default=DEFAULT_MODELS_DIR,
+        help="Directory to recursively scan for .pt model checkpoints.",
+    )
     return p
 
 
@@ -345,9 +381,10 @@ def _default_allowed_roots(samples: Path) -> List[Path]:
 
 
 class AppState:
-    def __init__(self, samples_path: Path, allowed_roots: List[Path]) -> None:
+    def __init__(self, samples_path: Path, allowed_roots: List[Path], models_dir: Path) -> None:
         self.samples_path = samples_path
         self.allowed_roots = allowed_roots
+        self.models_dir = models_dir
         self.df = pd.read_parquet(samples_path)
         required = [
             "event_window_id",
@@ -410,7 +447,17 @@ class AppState:
                 "tiny_cnn_path": str(tiny_model),
                 "tiny_cnn_exists": bool(tiny_model.exists()),
             },
+            "models_dir": str(self.models_dir),
         }
+
+    def list_models(self, *, limit: int = 1000) -> Dict[str, Any]:
+        root = self._check_allowed(str(self.models_dir))
+        if not root.exists():
+            return {"root": str(root), "models": []}
+        paths = [p for p in root.rglob("*.pt") if p.is_file()]
+        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        models = [str(p) for p in paths[: max(1, min(int(limit), 5000))]]
+        return {"root": str(root), "models": models}
 
     def windows(
         self,
@@ -821,6 +868,9 @@ def make_handler(state: AppState):
                         return
                     self._write_json(state.one_window(event_window_id, limit=int(_q1(q, "limit", "2000"))))
                     return
+                if path == "/api/models":
+                    self._write_json(state.list_models(limit=int(_q1(q, "limit", "1000"))))
+                    return
                 if path == "/api/files":
                     p = _q1(q, "path", str(state.samples_path.parent))
                     self._write_json(state.list_dir(p))
@@ -882,7 +932,8 @@ def main() -> int:
     roots = [Path(p).expanduser().resolve() for p in args.allow_root]
     if not roots:
         roots = _default_allowed_roots(samples)
-    state = AppState(samples, roots)
+    models_dir = Path(args.models_dir).expanduser().resolve()
+    state = AppState(samples, roots, models_dir=models_dir)
     handler = make_handler(state)
     server = ThreadingHTTPServer((str(args.host), int(args.port)), handler)
     print(f"[ok] serving http://{args.host}:{args.port}", flush=True)
