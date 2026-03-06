@@ -136,6 +136,20 @@ def _cmvn_per_clip_per_freq(X_mel: np.ndarray, *, eps: float = 1e-6) -> np.ndarr
     return ((X - mu) / (sigma + float(eps))).astype("float32", copy=False)
 
 
+def _global_mel_norm(
+    X_mel: np.ndarray,
+    *,
+    mean: float,
+    std: float,
+    eps: float = 1e-6,
+) -> np.ndarray:
+    X = np.asarray(X_mel, dtype=np.float32)
+    s = float(std)
+    if not np.isfinite(s) or s <= 0.0:
+        s = 1.0
+    return ((X - float(mean)) / (s + float(eps))).astype("float32", copy=False)
+
+
 def _build_model(nn, *, out_dim: int, model_arch: str):
     arch = str(model_arch).strip().lower()
     if arch in ("tiny", "tiny_cnn", "tiny_cnn_v1"):
@@ -632,6 +646,28 @@ def fit_audio_tiny_cnn(
     else:
         if task == "multilabel" and int(np.sum(y[idx_train], axis=0).max()) <= 0:
             raise ValueError("Train split has no positive multilabel targets.")
+
+    mel_global_norm: Dict[str, Any] = {"enabled": False}
+    use_global_norm = bool((mel_config or {}).get("train_mel_global_norm", False))
+    global_norm_eps = float((mel_config or {}).get("train_mel_global_norm_eps", 1e-6))
+    if use_global_norm:
+        train_view = np.asarray(X_mel[idx_train], dtype=np.float32)
+        mean = float(np.mean(train_view, dtype=np.float64))
+        std = float(np.std(train_view, dtype=np.float64))
+        X_mel = _global_mel_norm(X_mel, mean=mean, std=std, eps=global_norm_eps)
+        mel_global_norm = {
+            "enabled": True,
+            "fit_split": "train",
+            "mean": float(mean),
+            "std": float(std),
+            "eps": float(global_norm_eps),
+        }
+        if not quiet:
+            print(
+                "[mel_global_norm] "
+                f"mean={mean:.6g} std={std:.6g} eps={float(global_norm_eps):.2e}",
+                flush=True,
+            )
 
     aux_targets_all: Optional[np.ndarray] = None
     aux_meta: Dict[str, Any] = {"enabled": bool(aux_enabled)}
@@ -1158,6 +1194,7 @@ def fit_audio_tiny_cnn(
             "output_dim": int(out_dim),
             "mel_shape": {"n_mels": int(n_mels), "n_frames": int(n_frames)},
             "mel_config": mel_config or {},
+            "mel_global_norm": mel_global_norm,
             "n_rows": int(len(df)),
             "train_idx": idx_train.tolist(),
             "test_idx": idx_test.tolist(),
@@ -1314,6 +1351,7 @@ def fit_audio_tiny_cnn(
         "val_metrics": val_metrics,
         "metrics_by_source": by_source,
         "aux_target_pca": aux_meta,
+        "mel_global_norm": mel_global_norm,
         "train_params": {
             "model_arch": str(arch_kind),
             "epochs": int(epochs),
@@ -1463,6 +1501,14 @@ def predict_audio_tiny_cnn(
     )
     if bool((bundle.get("mel_config") or {}).get("cmvn", False)):
         mel = _cmvn_per_clip_per_freq(mel[None, :, :])[0]
+    gnorm = bundle.get("mel_global_norm") or {}
+    if bool(gnorm.get("enabled", False)):
+        mel = _global_mel_norm(
+            mel,
+            mean=float(gnorm.get("mean", 0.0)),
+            std=float(gnorm.get("std", 1.0)),
+            eps=float(gnorm.get("eps", 1e-6)),
+        )
     x = torch.tensor(mel[None, None, :, :], dtype=torch.float32, device=device)
     model = bundle["_model"].to(device)
     model.eval()

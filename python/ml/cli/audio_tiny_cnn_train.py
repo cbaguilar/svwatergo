@@ -96,6 +96,18 @@ def main() -> int:
         choices=["legacy", "none", "log_db", "log10", "log1p_zscore", "log10_median_sub"],
     )
     p.add_argument("--cmvn", action="store_true", help="Apply per-clip per-frequency CMVN before training/inference")
+    p.add_argument(
+        "--train-mel-global-norm",
+        default="no",
+        choices=["yes", "no"],
+        help="Apply train-split global mel mean/std normalization",
+    )
+    p.add_argument(
+        "--train-mel-global-norm-eps",
+        type=float,
+        default=1e-6,
+        help="Epsilon for train-split global mel normalization",
+    )
     args = p.parse_args()
 
     dfs = [pd.read_parquet(pth) for pth in args.dataset]
@@ -117,6 +129,8 @@ def main() -> int:
         "to_db": bool(args.to_db),
         "mel_normalization": str(args.mel_normalization),
         "cmvn": bool(args.cmvn),
+        "train_mel_global_norm": (str(args.train_mel_global_norm) == "yes"),
+        "train_mel_global_norm_eps": float(args.train_mel_global_norm_eps),
     }
 
     res = fit_audio_tiny_cnn(
