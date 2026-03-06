@@ -1001,23 +1001,23 @@ def fit_audio_tiny_cnn(
                 flush=True,
             )
 
-    X_train_fit = torch.tensor(X[idx_train_fit], dtype=torch.float32)
-    X_train = torch.tensor(X[idx_train], dtype=torch.float32)
-    X_test = torch.tensor(X[idx_test], dtype=torch.float32)
-    X_val = torch.tensor(X[idx_val], dtype=torch.float32)
+    X_train_fit = torch.from_numpy(np.asarray(X[idx_train_fit], dtype=np.float32))
+    X_train = torch.from_numpy(np.asarray(X[idx_train], dtype=np.float32))
+    X_test = torch.from_numpy(np.asarray(X[idx_test], dtype=np.float32))
+    X_val = torch.from_numpy(np.asarray(X[idx_val], dtype=np.float32))
     if task in ("multilabel", "multiregression"):
-        y_train_fit = torch.tensor(y[idx_train_fit], dtype=torch.float32)
-        y_train = torch.tensor(y[idx_train], dtype=torch.float32)
-        y_test = torch.tensor(y[idx_test], dtype=torch.float32)
-        y_val = torch.tensor(y[idx_val], dtype=torch.float32)
+        y_train_fit = torch.from_numpy(np.asarray(y[idx_train_fit], dtype=np.float32))
+        y_train = torch.from_numpy(np.asarray(y[idx_train], dtype=np.float32))
+        y_test = torch.from_numpy(np.asarray(y[idx_test], dtype=np.float32))
+        y_val = torch.from_numpy(np.asarray(y[idx_val], dtype=np.float32))
     else:
-        y_train_fit = torch.tensor(y[idx_train_fit], dtype=torch.long)
-        y_train = torch.tensor(y[idx_train], dtype=torch.long)
-        y_test = torch.tensor(y[idx_test], dtype=torch.long)
-        y_val = torch.tensor(y[idx_val], dtype=torch.long)
+        y_train_fit = torch.from_numpy(np.asarray(y[idx_train_fit], dtype=np.int64))
+        y_train = torch.from_numpy(np.asarray(y[idx_train], dtype=np.int64))
+        y_test = torch.from_numpy(np.asarray(y[idx_test], dtype=np.int64))
+        y_val = torch.from_numpy(np.asarray(y[idx_val], dtype=np.int64))
 
     if aux_targets_all is not None:
-        y_aux_train_fit = torch.tensor(aux_targets_all[idx_train_fit], dtype=torch.float32)
+        y_aux_train_fit = torch.from_numpy(np.asarray(aux_targets_all[idx_train_fit], dtype=np.float32))
         train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit, y_aux_train_fit), batch_size=int(batch_size), shuffle=True)
     else:
         train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit), batch_size=int(batch_size), shuffle=True)
@@ -1338,7 +1338,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
                 logits = model(xb).view(-1)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1355,7 +1355,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
                 logits = model(xb)
                 prob = torch.softmax(logits, dim=1).cpu().numpy()
                 pred = np.argmax(prob, axis=1).astype("int64")
@@ -1368,7 +1368,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1384,7 +1384,7 @@ def fit_audio_tiny_cnn(
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
                 i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
