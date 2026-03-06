@@ -5,6 +5,13 @@ set -euo pipefail
 # Example:
 #   SITE=pryorfarm bash scripts/build_audio_event_dataset_10s.sh
 #   SITE=santateresa INCLUDE_WYZE=yes bash scripts/build_audio_event_dataset_10s.sh
+#
+# Wyze camera defaults by site (from builder code):
+#   bluerock:    Bluerock_Cam_1, Bluerock_Cam_2, camera_5
+#   pryorfarm:   Pryor_Farms_1, Pryor_Farms_1_inside_near_door_, Pryor_Farms_3_behind_ro_
+#   santateresa: Santa_Teresa_Cam_1, Santa_Teresa_Outside
+# Override with:
+#   WYZE_CAMERA_LIST="cam_a,cam_b"
 
 PYTHON="${PYTHON:-/home/cbaguilar/miniforge3/envs/rapids-cu13/bin/python}"
 SITE="${SITE:-bluerock}"

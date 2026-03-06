@@ -46,6 +46,22 @@ def _import_window_features_pipeline():
 
 
 BLUEROCK_WYZE_CAMERAS = ["Bluerock_Cam_1", "Bluerock_Cam_2", "camera_5"]
+PRYORFARM_WYZE_CAMERAS = [
+    "Pryor_Farms_1",
+    "Pryor_Farms_1_inside_near_door_",
+    "Pryor_Farms_3_behind_ro_",
+]
+SANTATERESA_WYZE_CAMERAS = [
+    "Santa_Teresa_Cam_1",
+    "Santa_Teresa_Outside",
+]
+
+# Optional camera aliasing by site to merge equivalent placements into one source.
+WYZE_CAMERA_ALIAS_BY_SITE: Dict[str, Dict[str, str]] = {
+    "pryorfarm": {
+        "Pryor_Farms_1": "Pryor_Farms_1_inside_near_door_",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -239,7 +255,25 @@ def _site_default_wyze_cameras(site: str) -> List[str]:
     site_l = site.strip().lower()
     if site_l == "bluerock":
         return BLUEROCK_WYZE_CAMERAS[:]
+    if site_l == "pryorfarm":
+        return PRYORFARM_WYZE_CAMERAS[:]
+    if site_l == "santateresa":
+        return SANTATERESA_WYZE_CAMERAS[:]
     return []
+
+
+def _canonical_wyze_camera(site: str, camera: str) -> str:
+    site_l = str(site).strip().lower()
+    aliases = WYZE_CAMERA_ALIAS_BY_SITE.get(site_l, {})
+    return str(aliases.get(str(camera), str(camera)))
+
+
+def _canonical_audio_source(site: str, audio_source: str, camera: str) -> str:
+    src = str(audio_source)
+    if src.startswith("wyze_"):
+        cam = _canonical_wyze_camera(site, camera)
+        return f"wyze_{_safe_name(cam)}"
+    return src
 
 
 def _convert_wyze_day(
@@ -1128,9 +1162,12 @@ def main() -> None:
         seg_df = pd.read_parquet(seg_manifest)
         if seg_df.empty:
             continue
+        canonical_source = _canonical_audio_source(sd.site, sd.audio_source, sd.camera)
+        canonical_camera = _canonical_wyze_camera(sd.site, sd.camera)
         seg_df["site"] = sd.site
-        seg_df["audio_source"] = sd.audio_source
+        seg_df["audio_source"] = canonical_source
         seg_df["camera"] = sd.camera
+        seg_df["camera_canonical"] = canonical_camera
         seg_df["day_utc"] = sd.day
         seg_rows.append(seg_df)
 
