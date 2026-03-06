@@ -25,6 +25,8 @@ def main() -> int:
 
     p.add_argument("--target-seconds", type=float, default=10.0)
     p.add_argument("--extract-batch-size", type=int, default=16)
+    p.add_argument("--extract-num-workers", type=int, default=0)
+    p.add_argument("--extract-log-every", type=int, default=0)
     p.add_argument("--random-state", type=int, default=42)
 
     p.add_argument("--frozen-hidden-sizes", default="256,128")
@@ -34,9 +36,11 @@ def main() -> int:
     p.add_argument("--run-partial-finetune", default="yes", choices=["yes", "no"])
     p.add_argument("--finetune-epochs", type=int, default=5)
     p.add_argument("--finetune-batch-size", type=int, default=8)
+    p.add_argument("--finetune-num-workers", type=int, default=0)
     p.add_argument("--finetune-lr-head", type=float, default=1e-3)
     p.add_argument("--finetune-lr-backbone", type=float, default=1e-5)
     p.add_argument("--finetune-unfreeze-modules", type=int, default=1)
+    p.add_argument("--finetune-amp", default="yes", choices=["yes", "no"])
 
     args = p.parse_args()
 
@@ -59,15 +63,19 @@ def main() -> int:
         random_state=int(args.random_state),
         target_seconds=float(args.target_seconds),
         extract_batch_size=int(args.extract_batch_size),
+        extract_num_workers=int(args.extract_num_workers),
+        extract_log_every=int(args.extract_log_every),
         frozen_hidden_sizes=str(args.frozen_hidden_sizes),
         frozen_max_iter=int(args.frozen_max_iter),
         frozen_alpha=float(args.frozen_alpha),
         run_partial_finetune=(str(args.run_partial_finetune) == "yes"),
         finetune_epochs=int(args.finetune_epochs),
         finetune_batch_size=int(args.finetune_batch_size),
+        finetune_num_workers=int(args.finetune_num_workers),
         finetune_lr_head=float(args.finetune_lr_head),
         finetune_lr_backbone=float(args.finetune_lr_backbone),
         finetune_unfreeze_modules=int(args.finetune_unfreeze_modules),
+        finetune_amp=(str(args.finetune_amp) == "yes"),
     )
 
     print(f"Metrics       -> {res.metrics_path}")

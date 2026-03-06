@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -169,19 +170,47 @@ def _extract_embeddings(
     paths: Sequence[str],
     batch_size: int,
     target_seconds: float,
+    num_workers: int = 0,
+    log_every: int = 0,
 ) -> np.ndarray:
-    waves: List[np.ndarray] = []
     out_chunks: List[np.ndarray] = []
-    for p in paths:
-        w = _load_waveform(Path(p), target_sr=backend.sample_rate, target_seconds=float(target_seconds))
-        waves.append(w)
-        if len(waves) >= int(batch_size):
-            wb = np.stack(waves, axis=0).astype(np.float32)
+    n_total = int(len(paths))
+    if n_total <= 0:
+        raise ValueError("No paths provided for embedding extraction")
+    bsz = max(1, int(batch_size))
+    n_batches = int(math.ceil(n_total / float(bsz)))
+    nw = max(0, int(num_workers))
+    log_n = max(0, int(log_every))
+
+    def _load_one(p: str) -> np.ndarray:
+        return _load_waveform(Path(p), target_sr=backend.sample_rate, target_seconds=float(target_seconds))
+
+    if nw <= 1:
+        for bi in range(n_batches):
+            i0 = bi * bsz
+            i1 = min(n_total, i0 + bsz)
+            batch_paths = paths[i0:i1]
+            waves = [_load_one(p) for p in batch_paths]
+            wb = np.stack(waves, axis=0).astype(np.float32, copy=False)
             out_chunks.append(backend.extract_embedding_np(wb))
-            waves = []
-    if waves:
-        wb = np.stack(waves, axis=0).astype(np.float32)
-        out_chunks.append(backend.extract_embedding_np(wb))
+            done = int(i1)
+            if log_n > 0 and (done % log_n == 0 or done == n_total):
+                print(f"[embed] extracted {done}/{n_total} clips", flush=True)
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=nw) as ex:
+            for bi in range(n_batches):
+                i0 = bi * bsz
+                i1 = min(n_total, i0 + bsz)
+                batch_paths = paths[i0:i1]
+                waves = list(ex.map(_load_one, batch_paths))
+                wb = np.stack(waves, axis=0).astype(np.float32, copy=False)
+                out_chunks.append(backend.extract_embedding_np(wb))
+                done = int(i1)
+                if log_n > 0 and (done % log_n == 0 or done == n_total):
+                    print(f"[embed] extracted {done}/{n_total} clips workers={nw}", flush=True)
+
     if not out_chunks:
         raise ValueError("No embeddings extracted. Verify audio paths.")
     emb = np.concatenate(out_chunks, axis=0)
@@ -245,15 +274,19 @@ def fit_audio_pretrained_embedding_experiment(
     random_state: int = 42,
     target_seconds: float = 10.0,
     extract_batch_size: int = 16,
+    extract_num_workers: int = 0,
+    extract_log_every: int = 0,
     frozen_hidden_sizes: str = "256,128",
     frozen_max_iter: int = 200,
     frozen_alpha: float = 1e-4,
     run_partial_finetune: bool = True,
     finetune_epochs: int = 5,
     finetune_batch_size: int = 8,
+    finetune_num_workers: int = 0,
     finetune_lr_head: float = 1e-3,
     finetune_lr_backbone: float = 1e-5,
     finetune_unfreeze_modules: int = 1,
+    finetune_amp: bool = True,
 ) -> AudioPretrainedEmbeddingResult:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -296,19 +329,29 @@ def fit_audio_pretrained_embedding_experiment(
     if backend_key != "panns":
         raise ValueError("Only backend='panns' is implemented in this harness version")
     backend = _PannsBackend(device="cuda")
+    print(
+        f"[backend] panns sample_rate={backend.sample_rate} "
+        f"extract_batch_size={int(extract_batch_size)} extract_num_workers={int(extract_num_workers)}",
+        flush=True,
+    )
 
     emb_cache = out_dir / "embeddings_panns.npz"
     if emb_cache.exists():
         z = np.load(str(emb_cache))
         X_emb = np.asarray(z["embeddings"], dtype=np.float32)
+        print(f"[embed] cache hit -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
     else:
+        print(f"[embed] cache miss -> extracting {len(path_ser)} clips", flush=True)
         X_emb = _extract_embeddings(
             backend=backend,
             paths=path_ser.tolist(),
             batch_size=int(extract_batch_size),
             target_seconds=float(target_seconds),
+            num_workers=int(extract_num_workers),
+            log_every=int(extract_log_every),
         )
         np.savez_compressed(str(emb_cache), embeddings=X_emb)
+        print(f"[embed] saved cache -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
 
     h = [int(x.strip()) for x in str(frozen_hidden_sizes).split(",") if x.strip()]
     scaler = StandardScaler()
@@ -444,6 +487,13 @@ def fit_audio_pretrained_embedding_experiment(
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model_backbone = model_backbone.to(device)
             head = head.to(device)
+            use_amp = bool(finetune_amp) and (device.type == "cuda")
+            scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+            print(
+                f"[finetune] device={device} amp={use_amp} "
+                f"batch_size={int(finetune_batch_size)} num_workers={int(finetune_num_workers)}",
+                flush=True,
+            )
 
             train_ds = _WaveDataset(
                 [path_ser.iloc[i] for i in idx_train],
@@ -464,9 +514,16 @@ def fit_audio_pretrained_embedding_experiment(
                 target_seconds=float(target_seconds),
             )
 
-            train_dl = DataLoader(_TorchWaveDataset(train_ds), batch_size=int(finetune_batch_size), shuffle=True)
-            test_dl = DataLoader(_TorchWaveDataset(test_ds), batch_size=int(finetune_batch_size), shuffle=False)
-            val_dl = DataLoader(_TorchWaveDataset(val_ds), batch_size=int(finetune_batch_size), shuffle=False)
+            dl_workers = max(0, int(finetune_num_workers))
+            dl_kwargs: Dict[str, Any] = {
+                "num_workers": dl_workers,
+                "pin_memory": (device.type == "cuda"),
+            }
+            if dl_workers > 0:
+                dl_kwargs["persistent_workers"] = True
+            train_dl = DataLoader(_TorchWaveDataset(train_ds), batch_size=int(finetune_batch_size), shuffle=True, **dl_kwargs)
+            test_dl = DataLoader(_TorchWaveDataset(test_ds), batch_size=int(finetune_batch_size), shuffle=False, **dl_kwargs)
+            val_dl = DataLoader(_TorchWaveDataset(val_ds), batch_size=int(finetune_batch_size), shuffle=False, **dl_kwargs)
 
             # Head gets higher LR; partially-unfrozen backbone gets low LR.
             bb_params = [p for p in model_backbone.parameters() if p.requires_grad]
@@ -494,15 +551,27 @@ def fit_audio_pretrained_embedding_experiment(
             for _ep in range(int(finetune_epochs)):
                 model_backbone.train()
                 head.train()
+                ep_loss_sum = 0.0
+                ep_rows = 0
                 for xb, yb in train_dl:
                     xb = xb.to(device, non_blocking=True)
                     yb = yb.to(device, non_blocking=True)
                     optim.zero_grad(set_to_none=True)
-                    emb = _forward_emb(xb)
-                    logits = head(emb)
-                    loss = criterion(logits, yb)
-                    loss.backward()
-                    optim.step()
+                    with torch.cuda.amp.autocast(enabled=use_amp):
+                        emb = _forward_emb(xb)
+                        logits = head(emb)
+                        loss = criterion(logits, yb)
+                    scaler.scale(loss).backward()
+                    scaler.step(optim)
+                    scaler.update()
+                    bsz = int(yb.shape[0])
+                    ep_loss_sum += float(loss.detach().cpu().item()) * bsz
+                    ep_rows += bsz
+                avg_loss = float(ep_loss_sum / max(1, ep_rows))
+                print(
+                    f"[finetune][epoch {_ep + 1:03d}/{int(finetune_epochs)}] loss={avg_loss:.6f}",
+                    flush=True,
+                )
 
             def _pred(dl) -> np.ndarray:
                 model_backbone.eval()

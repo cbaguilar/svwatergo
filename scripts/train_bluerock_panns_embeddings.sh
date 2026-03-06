@@ -14,13 +14,18 @@ TASK="${TASK:-multiclass}"
 TARGET_COL="${TARGET_COL:-primary_class}"
 AUDIO_PATH_COL="${AUDIO_PATH_COL:-segment_path}"
 TARGET_SECONDS="${TARGET_SECONDS:-10}"
+EXTRACT_BATCH_SIZE="${EXTRACT_BATCH_SIZE:-32}"
+EXTRACT_NUM_WORKERS="${EXTRACT_NUM_WORKERS:-8}"
+EXTRACT_LOG_EVERY="${EXTRACT_LOG_EVERY:-512}"
 
 RUN_PARTIAL_FINETUNE="${RUN_PARTIAL_FINETUNE:-yes}"
 FINETUNE_EPOCHS="${FINETUNE_EPOCHS:-5}"
 FINETUNE_BATCH_SIZE="${FINETUNE_BATCH_SIZE:-8}"
+FINETUNE_NUM_WORKERS="${FINETUNE_NUM_WORKERS:-8}"
 FINETUNE_LR_HEAD="${FINETUNE_LR_HEAD:-1e-3}"
 FINETUNE_LR_BACKBONE="${FINETUNE_LR_BACKBONE:-1e-5}"
 FINETUNE_UNFREEZE_MODULES="${FINETUNE_UNFREEZE_MODULES:-1}"
+FINETUNE_AMP="${FINETUNE_AMP:-yes}"
 
 cd "$REPO"
 mkdir -p "$OUT_DIR"
@@ -37,11 +42,16 @@ mkdir -p "$OUT_DIR"
   --task "$TASK" \
   --target-col "$TARGET_COL" \
   --target-seconds "$TARGET_SECONDS" \
+  --extract-batch-size "$EXTRACT_BATCH_SIZE" \
+  --extract-num-workers "$EXTRACT_NUM_WORKERS" \
+  --extract-log-every "$EXTRACT_LOG_EVERY" \
   --run-partial-finetune "$RUN_PARTIAL_FINETUNE" \
   --finetune-epochs "$FINETUNE_EPOCHS" \
   --finetune-batch-size "$FINETUNE_BATCH_SIZE" \
+  --finetune-num-workers "$FINETUNE_NUM_WORKERS" \
   --finetune-lr-head "$FINETUNE_LR_HEAD" \
   --finetune-lr-backbone "$FINETUNE_LR_BACKBONE" \
-  --finetune-unfreeze-modules "$FINETUNE_UNFREEZE_MODULES"
+  --finetune-unfreeze-modules "$FINETUNE_UNFREEZE_MODULES" \
+  --finetune-amp "$FINETUNE_AMP"
 
 echo "[OK] metrics -> $OUT_DIR/audio_pretrained_embedding_metrics.json"
