@@ -32,7 +32,7 @@ except Exception as e:
 class AudioTinyCNNResult:
     model_path: Path
     metrics_path: Path
-    projection_path: Path
+    projection_path: Optional[Path]
 
 
 def _require_torch():
@@ -800,6 +800,7 @@ def fit_audio_tiny_cnn(
     aux_pca_components: int = 8,
     aux_pca_variance_ratio: float = 0.0,
     aux_pca_weight: float = 0.1,
+    generate_projection: bool = False,
 ) -> AudioTinyCNNResult:
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
@@ -1414,52 +1415,54 @@ def fit_audio_tiny_cnn(
         score_all = np.concatenate(score_parts, axis=0)
         pred_all = score_all.astype("float32", copy=False)
 
-    # Add PCA coordinates (from flattened mel tensors) so the existing 4-panel
-    # renderer can plot tiny-CNN runs with the same schema.
-    X_flat = X_mel.reshape(X_mel.shape[0], -1).astype("float32", copy=False)
-    n_comp = int(min(3, X_flat.shape[0], X_flat.shape[1]))
-    if n_comp >= 1:
-        pca = PCA(n_components=n_comp, random_state=int(random_state))
-        Z = pca.fit_transform(X_flat)
-    else:
-        Z = np.zeros((X_flat.shape[0], 0), dtype="float32")
+    projection_path: Optional[Path] = None
+    if bool(generate_projection):
+        # Add PCA coordinates (from flattened mel tensors) so the existing 4-panel
+        # renderer can plot tiny-CNN runs with the same schema.
+        X_flat = X_mel.reshape(X_mel.shape[0], -1).astype("float32", copy=False)
+        n_comp = int(min(3, X_flat.shape[0], X_flat.shape[1]))
+        if n_comp >= 1:
+            pca = PCA(n_components=n_comp, random_state=int(random_state))
+            Z = pca.fit_transform(X_flat)
+        else:
+            Z = np.zeros((X_flat.shape[0], 0), dtype="float32")
 
-    proj_df = df.reset_index(drop=True).copy()
-    proj_df["pca1"] = Z[:, 0] if Z.shape[1] >= 1 else 0.0
-    proj_df["pca2"] = Z[:, 1] if Z.shape[1] >= 2 else 0.0
-    proj_df["pca3"] = Z[:, 2] if Z.shape[1] >= 3 else 0.0
-    proj_df["split"] = split_for_projection.reset_index(drop=True)
-    if task == "multilabel":
-        # Keep compatibility columns while exposing full multilabel outputs.
-        y_bin_all = (y >= multilabel_truth_threshold).astype("int64")
-        proj_df["y_true"] = y_bin_all[:, 0].astype("int64")
-        proj_df["y_pred"] = pred_all[:, 0].astype("int64")
-        for j, name in enumerate(list(y_meta.get("classes") or [])):
-            proj_df[f"duty_true_{name}"] = y[:, j].astype("float64")
-            proj_df[f"y_true_{name}"] = y_bin_all[:, j].astype("int64")
-            proj_df[f"y_pred_{name}"] = pred_all[:, j].astype("int64")
-            proj_df[f"score_{name}"] = score_all[:, j].astype("float64")
-    elif task == "multiregression":
-        classes = list(y_meta.get("classes") or [f"class_{i}" for i in range(int(pred_all.shape[1]))])
-        thresh = float(positive_threshold)
-        proj_df["y_true"] = (y[:, 0] >= thresh).astype("int64")
-        proj_df["y_pred"] = (pred_all[:, 0] >= thresh).astype("int64")
-        for j, name in enumerate(classes):
-            proj_df[f"duty_true_{name}"] = y[:, j].astype("float64")
-            proj_df[f"duty_pred_{name}"] = pred_all[:, j].astype("float64")
-            proj_df[f"score_{name}"] = pred_all[:, j].astype("float64")
-            proj_df[f"y_true_{name}"] = (y[:, j] >= thresh).astype("int64")
-            proj_df[f"y_pred_{name}"] = (pred_all[:, j] >= thresh).astype("int64")
-    else:
-        proj_df["y_true"] = y.astype("int64")
-        proj_df["y_pred"] = pred_all.astype("int64")
-    if task == "binary":
-        proj_df["score_positive"] = score_all.astype("float64")
-    elif task == "multiclass":
-        for j in range(prob_all.shape[1]):
-            proj_df[f"score_class_{j}"] = prob_all[:, j].astype("float64")
-    projection_path = out_dir / "train_projection.parquet"
-    proj_df.to_parquet(projection_path, index=False)
+        proj_df = df.reset_index(drop=True).copy()
+        proj_df["pca1"] = Z[:, 0] if Z.shape[1] >= 1 else 0.0
+        proj_df["pca2"] = Z[:, 1] if Z.shape[1] >= 2 else 0.0
+        proj_df["pca3"] = Z[:, 2] if Z.shape[1] >= 3 else 0.0
+        proj_df["split"] = split_for_projection.reset_index(drop=True)
+        if task == "multilabel":
+            # Keep compatibility columns while exposing full multilabel outputs.
+            y_bin_all = (y >= multilabel_truth_threshold).astype("int64")
+            proj_df["y_true"] = y_bin_all[:, 0].astype("int64")
+            proj_df["y_pred"] = pred_all[:, 0].astype("int64")
+            for j, name in enumerate(list(y_meta.get("classes") or [])):
+                proj_df[f"duty_true_{name}"] = y[:, j].astype("float64")
+                proj_df[f"y_true_{name}"] = y_bin_all[:, j].astype("int64")
+                proj_df[f"y_pred_{name}"] = pred_all[:, j].astype("int64")
+                proj_df[f"score_{name}"] = score_all[:, j].astype("float64")
+        elif task == "multiregression":
+            classes = list(y_meta.get("classes") or [f"class_{i}" for i in range(int(pred_all.shape[1]))])
+            thresh = float(positive_threshold)
+            proj_df["y_true"] = (y[:, 0] >= thresh).astype("int64")
+            proj_df["y_pred"] = (pred_all[:, 0] >= thresh).astype("int64")
+            for j, name in enumerate(classes):
+                proj_df[f"duty_true_{name}"] = y[:, j].astype("float64")
+                proj_df[f"duty_pred_{name}"] = pred_all[:, j].astype("float64")
+                proj_df[f"score_{name}"] = pred_all[:, j].astype("float64")
+                proj_df[f"y_true_{name}"] = (y[:, j] >= thresh).astype("int64")
+                proj_df[f"y_pred_{name}"] = (pred_all[:, j] >= thresh).astype("int64")
+        else:
+            proj_df["y_true"] = y.astype("int64")
+            proj_df["y_pred"] = pred_all.astype("int64")
+        if task == "binary":
+            proj_df["score_positive"] = score_all.astype("float64")
+        elif task == "multiclass":
+            for j in range(prob_all.shape[1]):
+                proj_df[f"score_class_{j}"] = prob_all[:, j].astype("float64")
+        projection_path = out_dir / "train_projection.parquet"
+        proj_df.to_parquet(projection_path, index=False)
 
     model_path = out_dir / "audio_tiny_cnn_model.pt"
     torch.save(
@@ -1812,6 +1815,7 @@ def fit_audio_tiny_cnn(
             "aux_pca_components": int(aux_pca_components),
             "aux_pca_variance_ratio": float(aux_pca_variance_ratio),
             "aux_pca_weight": float(aux_pca_weight),
+            "generate_projection": bool(generate_projection),
         },
     }
     metrics_path = out_dir / "audio_tiny_cnn_metrics.json"

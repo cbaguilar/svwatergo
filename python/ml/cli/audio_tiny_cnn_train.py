@@ -98,6 +98,12 @@ def main() -> int:
         default=0.1,
         help="Loss weight for auxiliary PCA regression head",
     )
+    p.add_argument(
+        "--generate-projection",
+        default="no",
+        choices=["yes", "no"],
+        help="Generate PCA projection parquet (off by default for faster production runs)",
+    )
 
     # Persisted mel settings used for wav inference.
     p.add_argument("--sample-rate", type=int, default=16000)
@@ -213,10 +219,11 @@ def main() -> int:
         aux_pca_components=int(args.aux_pca_components),
         aux_pca_variance_ratio=float(args.aux_pca_variance_ratio),
         aux_pca_weight=float(args.aux_pca_weight),
+        generate_projection=(str(args.generate_projection) == "yes"),
     )
     print(f"Model      -> {res.model_path}")
     print(f"Metrics    -> {res.metrics_path}")
-    print(f"Projection -> {res.projection_path}")
+    print(f"Projection -> {res.projection_path if res.projection_path else 'disabled'}")
     print(f"Mel config -> {json.dumps(mel_config, sort_keys=True)}")
     return 0
 

@@ -76,6 +76,7 @@ fi
   --lr-plateau-factor "$LR_PLATEAU_FACTOR" \
   --lr-plateau-patience "$LR_PLATEAU_PATIENCE" \
   --class-weight balanced \
+  --generate-projection yes \
   --sample-rate 16000 \
   --target-seconds 10 \
   --mel-normalization "$MEL_NORMALIZATION" \

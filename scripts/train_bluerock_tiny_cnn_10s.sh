@@ -55,6 +55,7 @@ fi
   --learning-rate "$LEARNING_RATE" \
   --weight-decay "$WEIGHT_DECAY" \
   --class-weight balanced \
+  --generate-projection yes \
   --sample-rate 16000 \
   --target-seconds 10 \
   "${extra_args[@]}"
