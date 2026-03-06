@@ -1049,7 +1049,7 @@ def fit_audio_tiny_cnn(
 
     loss_kwargs = _balanced_loss_kwargs(
         torch=torch,
-        y_train=y[idx_train],
+        y_train=y[idx_train_fit],
         task=task,
         class_weight=class_weight,
     )
@@ -1058,7 +1058,7 @@ def fit_audio_tiny_cnn(
         criterion = nn.BCEWithLogitsLoss(**loss_kwargs)
     elif task == "multilabel":
         if class_weight == "balanced":
-            y_tr = (y[idx_train] >= multilabel_truth_threshold).astype(np.float32)
+            y_tr = (y[idx_train_fit] >= multilabel_truth_threshold).astype(np.float32)
             pos = np.sum(y_tr, axis=0)
             neg = y_tr.shape[0] - pos
             pos_w = np.where(pos > 0, neg / np.maximum(pos, 1.0), 1.0).astype(np.float32)
