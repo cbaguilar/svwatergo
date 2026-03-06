@@ -74,6 +74,7 @@ UI_HTML = """<!doctype html>
 <body>
   <h2>Event Window Inspector</h2>
   <div id="summary" class="mono"></div>
+  <pre id="datasetStats" class="mono"></pre>
   <div style="margin:6px 0;">
     <a href="#" onclick="loadDir(''); return false;">Browse Raw Dataset</a>
     |
@@ -168,6 +169,8 @@ async function loadSummary() {
   const d = await jget('/api/summary');
   document.getElementById('summary').textContent =
     `rows=${d.n_rows} windows=${d.n_windows} splits=${JSON.stringify(d.by_split)} sites=${JSON.stringify(d.by_site || {})}`;
+  document.getElementById('datasetStats').textContent =
+    "datasets:\\n" + JSON.stringify(d.datasets || [], null, 2);
   window.__defaultBrowseRoot = d.dataset_root || '';
   const modelEl = document.getElementById('modelPath');
   if (modelEl && !modelEl.value.trim() && d.default_models) {
@@ -480,6 +483,24 @@ class AppState:
         by_split = self.df["split"].astype("string").value_counts(dropna=False).to_dict()
         by_class = self.df["primary_class"].astype("string").value_counts(dropna=False).to_dict()
         by_site = self.df["site"].astype("string").value_counts(dropna=False).to_dict()
+        datasets: List[Dict[str, Any]] = []
+        for src_path, dsi in self.df.groupby("__samples_path", dropna=False):
+            dsite = dsi["site"].astype("string").value_counts(dropna=False).to_dict()
+            dsplit = dsi["split"].astype("string").value_counts(dropna=False).to_dict()
+            dclass = dsi["primary_class"].astype("string").value_counts(dropna=False).to_dict()
+            dsource = dsi["audio_source"].astype("string").value_counts(dropna=False).to_dict()
+            datasets.append(
+                {
+                    "samples_parquet": str(src_path),
+                    "n_rows": int(len(dsi)),
+                    "n_windows": int(dsi["event_window_id"].nunique(dropna=True)),
+                    "by_site": {str(k): int(v) for k, v in dsite.items()},
+                    "by_split": {str(k): int(v) for k, v in dsplit.items()},
+                    "by_class": {str(k): int(v) for k, v in dclass.items()},
+                    "by_source": {str(k): int(v) for k, v in dsource.items()},
+                }
+            )
+        datasets = sorted(datasets, key=lambda x: str(x.get("samples_parquet", "")))
         derived_root = self.allowed_roots[0]
         svm_model = derived_root / "checkpoints" / "bluerock_10s_svm_ropumprun" / "audio_pca_svm_model.joblib"
         tiny_model = derived_root / "checkpoints" / "bluerock_10s_tiny_cnn_ropumprun" / "audio_tiny_cnn_model.pt"
@@ -492,6 +513,7 @@ class AppState:
             "by_split": {str(k): int(v) for k, v in by_split.items()},
             "by_class": {str(k): int(v) for k, v in by_class.items()},
             "by_site": {str(k): int(v) for k, v in by_site.items()},
+            "datasets": datasets,
             "default_models": {
                 "svm_path": str(svm_model),
                 "svm_exists": bool(svm_model.exists()),
