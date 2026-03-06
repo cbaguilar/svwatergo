@@ -161,7 +161,8 @@ def _coerce_multilabel_target(
     for c in target_cols:
         s = pd.to_numeric(out[c], errors="coerce")
         keep_mask &= s.notna().to_numpy()
-        y_cols.append((s.to_numpy(dtype=np.float32) > float(positive_threshold)).astype(np.float32))
+        # Use soft duty targets in [0,1] for multilabel BCE training.
+        y_cols.append(np.clip(s.to_numpy(dtype=np.float32), 0.0, 1.0))
     if int(keep_mask.sum()) <= 0:
         raise ValueError("No valid rows for multilabel target after coercion")
     out = out.loc[keep_mask].reset_index(drop=True)
@@ -169,7 +170,9 @@ def _coerce_multilabel_target(
     y_meta: Dict[str, Any] = {
         "task": "multilabel",
         "target_cols": [str(c) for c in target_cols],
-        "positive_rule": f"value > {float(positive_threshold)}",
+        "target_mode": "soft_duty",
+        "value_range": [0.0, 1.0],
+        "positive_rule_for_metrics": f"value >= {float(positive_threshold)}",
         "classes": [str(c) for c in target_cols],
     }
     return out, Y, y_meta
@@ -447,6 +450,7 @@ def fit_audio_tiny_cnn(
         raise ValueError("class_weight must be None or 'balanced'")
     df = _sample_rows(df, int(limit), str(sample_mode))
     task = str(task)
+    multilabel_truth_threshold = float(positive_threshold)
     if task == "multilabel":
         cols = list(target_cols) if target_cols else ["overlap_s_producing", "overlap_s_delivering"]
         df, y_ml, y_meta = _coerce_multilabel_target(df, target_cols=cols, positive_threshold=float(positive_threshold))
@@ -561,7 +565,7 @@ def fit_audio_tiny_cnn(
         criterion = nn.BCEWithLogitsLoss(**loss_kwargs)
     elif task == "multilabel":
         if class_weight == "balanced":
-            y_tr = y[idx_train].astype(np.float32)
+            y_tr = (y[idx_train] >= multilabel_truth_threshold).astype(np.float32)
             pos = np.sum(y_tr, axis=0)
             neg = y_tr.shape[0] - pos
             pos_w = np.where(pos > 0, neg / np.maximum(pos, 1.0), 1.0).astype(np.float32)
@@ -624,6 +628,12 @@ def fit_audio_tiny_cnn(
             y_score_np = None
         return y_true_np, y_pred_np, y_score_np
 
+    def _binarize_multilabel_truth(y_true_arr: np.ndarray) -> np.ndarray:
+        yt = np.asarray(y_true_arr, dtype=np.float64)
+        if yt.ndim != 2:
+            raise ValueError(f"Expected 2D multilabel truth, got {yt.shape}")
+        return (yt >= multilabel_truth_threshold).astype(np.int64)
+
     n_epochs = int(epochs)
     log_every = max(1, int(log_every))
     for ep in range(1, n_epochs + 1):
@@ -655,8 +665,14 @@ def fit_audio_tiny_cnn(
             y_train_true_ep, y_train_pred_ep, _ = _predict(train_dl)
             y_test_true_ep, y_test_pred_ep, _ = _predict(test_dl)
             if task == "multilabel":
-                train_acc = float(np.mean(np.all(y_train_true_ep == y_train_pred_ep, axis=1))) if len(y_train_true_ep) else 0.0
-                test_acc = float(np.mean(np.all(y_test_true_ep == y_test_pred_ep, axis=1))) if len(y_test_true_ep) else 0.0
+                y_train_true_bin_ep = _binarize_multilabel_truth(y_train_true_ep)
+                y_test_true_bin_ep = _binarize_multilabel_truth(y_test_true_ep)
+                train_acc = (
+                    float(np.mean(np.all(y_train_true_bin_ep == y_train_pred_ep, axis=1))) if len(y_train_true_ep) else 0.0
+                )
+                test_acc = (
+                    float(np.mean(np.all(y_test_true_bin_ep == y_test_pred_ep, axis=1))) if len(y_test_true_ep) else 0.0
+                )
             elif task == "multiregression":
                 train_acc = float(np.mean(np.abs(y_train_true_ep - y_train_pred_ep))) if len(y_train_true_ep) else 0.0
                 test_acc = float(np.mean(np.abs(y_test_true_ep - y_test_pred_ep))) if len(y_test_true_ep) else 0.0
@@ -703,6 +719,10 @@ def fit_audio_tiny_cnn(
     y_train_true, y_train_pred_raw, y_train_score = _predict(train_dl)
     y_test_true, y_test_pred_raw, y_test_score = _predict(test_dl)
     y_val_true, y_val_pred_raw, y_val_score = _predict(val_dl)
+    if task == "multilabel":
+        y_train_true_bin = _binarize_multilabel_truth(y_train_true)
+        y_test_true_bin = _binarize_multilabel_truth(y_test_true)
+        y_val_true_bin = _binarize_multilabel_truth(y_val_true) if len(y_val_true) else np.asarray([], dtype=np.int64)
 
     threshold_default = 0.5
     threshold_source = "default"
@@ -713,11 +733,11 @@ def fit_audio_tiny_cnn(
     }
     if task in ("binary", "multilabel"):
         if len(y_val_true) > 0 and y_val_score is not None:
-            y_ref_true = y_val_true
+            y_ref_true = y_val_true_bin if task == "multilabel" else y_val_true
             y_ref_score = y_val_score
             threshold_source = "val"
         elif len(y_test_true) > 0 and y_test_score is not None:
-            y_ref_true = y_test_true
+            y_ref_true = y_test_true_bin if task == "multilabel" else y_test_true
             y_ref_score = y_test_score
             threshold_source = "test_fallback"
         else:
@@ -773,9 +793,12 @@ def fit_audio_tiny_cnn(
         y_test_pred = _predict_from_scores(task=task, y_score=y_test_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
         y_val_pred = _predict_from_scores(task=task, y_score=y_val_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
         if not quiet:
-            train_acc_tuned = _exact_match_acc(y_train_true, y_train_pred, task=task)
-            test_acc_tuned = _exact_match_acc(y_test_true, y_test_pred, task=task)
-            val_acc_tuned = _exact_match_acc(y_val_true, y_val_pred, task=task) if len(y_val_true) else 0.0
+            y_train_acc_true = y_train_true_bin if task == "multilabel" else y_train_true
+            y_test_acc_true = y_test_true_bin if task == "multilabel" else y_test_true
+            y_val_acc_true = y_val_true_bin if task == "multilabel" else y_val_true
+            train_acc_tuned = _exact_match_acc(y_train_acc_true, y_train_pred, task=task)
+            test_acc_tuned = _exact_match_acc(y_test_acc_true, y_test_pred, task=task)
+            val_acc_tuned = _exact_match_acc(y_val_acc_true, y_val_pred, task=task) if len(y_val_true) else 0.0
             print(
                 "[threshold] "
                 f"source={threshold_report.get('source_split', 'default')} "
@@ -868,10 +891,12 @@ def fit_audio_tiny_cnn(
     proj_df["split"] = split_for_projection.reset_index(drop=True)
     if task == "multilabel":
         # Keep compatibility columns while exposing full multilabel outputs.
-        proj_df["y_true"] = y[:, 0].astype("int64")
+        y_bin_all = (y >= multilabel_truth_threshold).astype("int64")
+        proj_df["y_true"] = y_bin_all[:, 0].astype("int64")
         proj_df["y_pred"] = pred_all[:, 0].astype("int64")
         for j, name in enumerate(list(y_meta.get("classes") or [])):
-            proj_df[f"y_true_{name}"] = y[:, j].astype("int64")
+            proj_df[f"duty_true_{name}"] = y[:, j].astype("float64")
+            proj_df[f"y_true_{name}"] = y_bin_all[:, j].astype("int64")
             proj_df[f"y_pred_{name}"] = pred_all[:, j].astype("int64")
             proj_df[f"score_{name}"] = score_all[:, j].astype("float64")
     elif task == "multiregression":
@@ -905,6 +930,7 @@ def fit_audio_tiny_cnn(
             "target_col": target_col,
             "target_cols": (list(target_cols) if target_cols else None),
             "positive_threshold": float(positive_threshold),
+            "multilabel_truth_threshold": float(multilabel_truth_threshold) if task == "multilabel" else None,
             "inference_threshold_default": float(threshold_default),
             "inference_thresholds": [float(v) for v in tuned_thresholds],
             "threshold_tuning": threshold_report,
@@ -926,24 +952,24 @@ def fit_audio_tiny_cnn(
 
     if task == "multilabel":
         class_counts = {
-            str(name): int(np.sum(y[:, i]))
+            str(name): int(np.sum(y[:, i] >= multilabel_truth_threshold))
             for i, name in enumerate(list(y_meta.get("classes") or []))
         }
         train_metrics = _metrics_multilabel(
-            y_true=y_train_true.astype(np.int64),
+            y_true=y_train_true_bin.astype(np.int64),
             y_pred=y_train_pred.astype(np.int64),
             y_score=y_train_score.astype(np.float64) if y_train_score is not None else None,
             class_names=list(y_meta.get("classes") or []),
         )
         test_metrics = _metrics_multilabel(
-            y_true=y_test_true.astype(np.int64),
+            y_true=y_test_true_bin.astype(np.int64),
             y_pred=y_test_pred.astype(np.int64),
             y_score=y_test_score.astype(np.float64) if y_test_score is not None else None,
             class_names=list(y_meta.get("classes") or []),
         )
         val_metrics = (
             _metrics_multilabel(
-                y_true=y_val_true.astype(np.int64),
+                y_true=y_val_true_bin.astype(np.int64),
                 y_pred=y_val_pred.astype(np.int64),
                 y_score=y_val_score.astype(np.float64) if y_val_score is not None else None,
                 class_names=list(y_meta.get("classes") or []),
@@ -1009,7 +1035,7 @@ def fit_audio_tiny_cnn(
         "column": str(source_col) if source_col is not None else "unknown",
         "train": _metrics_by_source(
             task=task,
-            y_true_all=np.asarray(y),
+            y_true_all=(np.asarray(y) >= multilabel_truth_threshold).astype(np.int64) if task == "multilabel" else np.asarray(y),
             y_pred_all=np.asarray(pred_all),
             y_score_all=np.asarray(y_score_all_for_source) if y_score_all_for_source is not None else None,
             source_all=source_series.reset_index(drop=True),
@@ -1018,7 +1044,7 @@ def fit_audio_tiny_cnn(
         ),
         "test": _metrics_by_source(
             task=task,
-            y_true_all=np.asarray(y),
+            y_true_all=(np.asarray(y) >= multilabel_truth_threshold).astype(np.int64) if task == "multilabel" else np.asarray(y),
             y_pred_all=np.asarray(pred_all),
             y_score_all=np.asarray(y_score_all_for_source) if y_score_all_for_source is not None else None,
             source_all=source_series.reset_index(drop=True),
@@ -1027,7 +1053,7 @@ def fit_audio_tiny_cnn(
         ),
         "val": _metrics_by_source(
             task=task,
-            y_true_all=np.asarray(y),
+            y_true_all=(np.asarray(y) >= multilabel_truth_threshold).astype(np.int64) if task == "multilabel" else np.asarray(y),
             y_pred_all=np.asarray(pred_all),
             y_score_all=np.asarray(y_score_all_for_source) if y_score_all_for_source is not None else None,
             source_all=source_series.reset_index(drop=True),
@@ -1053,6 +1079,7 @@ def fit_audio_tiny_cnn(
         "target_col": target_col,
         "target_cols": (list(target_cols) if target_cols else None),
         "positive_threshold": float(positive_threshold),
+        "multilabel_truth_threshold": float(multilabel_truth_threshold) if task == "multilabel" else None,
         "inference_threshold_default": float(threshold_default),
         "inference_thresholds": [float(v) for v in tuned_thresholds] if task in ("binary", "multilabel", "multiregression") else None,
         "threshold_tuning": threshold_report if task in ("binary", "multilabel", "multiregression") else {},
