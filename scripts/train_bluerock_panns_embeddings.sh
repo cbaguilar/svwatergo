@@ -2,7 +2,9 @@
 set -euo pipefail
 
 PYTHON="${PYTHON:-python}"
-REPO="${REPO:-/home/cbaguilar/work/water/svwatergo}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DEFAULT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO="${REPO:-$REPO_DEFAULT}"
 
 DATASET="${DATASET:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet}"
 SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/split_manifest.parquet}"
