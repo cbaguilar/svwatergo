@@ -49,6 +49,7 @@ def main() -> int:
     )
     p.add_argument("--learning-rate", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
+    p.add_argument("--eval-every", type=int, default=5, help="Run test-set evaluation every N epochs (train eval remains final epoch)")
     p.add_argument("--lr-drop-epochs", default="", help="Comma-separated epochs to apply multiplicative LR drop (e.g. 10,15)")
     p.add_argument("--lr-drop-gamma", type=float, default=0.5, help="Multiplicative gamma for manual LR drops")
     p.add_argument("--lr-plateau", default="no", choices=["yes", "no"], help="Enable ReduceLROnPlateau on test accuracy")
@@ -181,6 +182,7 @@ def main() -> int:
         dataloader_persistent_workers=(str(args.dataloader_persistent_workers) == "yes"),
         learning_rate=float(args.learning_rate),
         weight_decay=float(args.weight_decay),
+        eval_every=int(args.eval_every),
         lr_drop_epochs=[int(x.strip()) for x in str(args.lr_drop_epochs).split(",") if x.strip()],
         lr_drop_gamma=float(args.lr_drop_gamma),
         lr_plateau=(str(args.lr_plateau) == "yes"),

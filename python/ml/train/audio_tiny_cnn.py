@@ -777,6 +777,7 @@ def fit_audio_tiny_cnn(
     weight_decay: float = 1e-4,
     class_weight: Optional[str] = None,
     log_every: int = 1,
+    eval_every: int = 5,
     quiet: bool = False,
     mel_config: Optional[Dict[str, Any]] = None,
     split_manifest_df: Optional[pd.DataFrame] = None,
@@ -1143,6 +1144,7 @@ def fit_audio_tiny_cnn(
 
     n_epochs = int(epochs)
     log_every = max(1, int(log_every))
+    eval_every = max(1, int(eval_every))
     for ep in range(1, n_epochs + 1):
         model.train()
         if aux_head is not None:
@@ -1187,24 +1189,30 @@ def fit_audio_tiny_cnn(
             n_samples += bsz
 
         avg_loss = (loss_sum / max(1, n_samples))
-        need_eval = bool(plateau_sched is not None) or (ep in drop_epochs) or ((not quiet) and (ep % log_every == 0 or ep == n_epochs))
+        need_eval = bool(plateau_sched is not None) or (ep in drop_epochs) or (ep % eval_every == 0) or (ep == n_epochs)
+        train_acc = float("nan")
+        test_acc = float("nan")
         if need_eval:
-            y_train_true_ep, y_train_pred_ep, _ = _predict(train_eval_dl)
             y_test_true_ep, y_test_pred_ep, _ = _predict(test_dl)
+            if ep == n_epochs:
+                y_train_true_ep, y_train_pred_ep, _ = _predict(train_eval_dl)
             if task == "multilabel":
-                y_train_true_bin_ep = _binarize_multilabel_truth(y_train_true_ep)
                 y_test_true_bin_ep = _binarize_multilabel_truth(y_test_true_ep)
-                train_acc = (
-                    float(np.mean(np.all(y_train_true_bin_ep == y_train_pred_ep, axis=1))) if len(y_train_true_ep) else 0.0
-                )
+                if ep == n_epochs:
+                    y_train_true_bin_ep = _binarize_multilabel_truth(y_train_true_ep)
+                    train_acc = (
+                        float(np.mean(np.all(y_train_true_bin_ep == y_train_pred_ep, axis=1))) if len(y_train_true_ep) else 0.0
+                    )
                 test_acc = (
                     float(np.mean(np.all(y_test_true_bin_ep == y_test_pred_ep, axis=1))) if len(y_test_true_ep) else 0.0
                 )
             elif task == "multiregression":
-                train_acc = float(np.mean(np.abs(y_train_true_ep - y_train_pred_ep))) if len(y_train_true_ep) else 0.0
+                if ep == n_epochs:
+                    train_acc = float(np.mean(np.abs(y_train_true_ep - y_train_pred_ep))) if len(y_train_true_ep) else 0.0
                 test_acc = float(np.mean(np.abs(y_test_true_ep - y_test_pred_ep))) if len(y_test_true_ep) else 0.0
             else:
-                train_acc = float((y_train_true_ep == y_train_pred_ep).mean()) if len(y_train_true_ep) else 0.0
+                if ep == n_epochs:
+                    train_acc = float((y_train_true_ep == y_train_pred_ep).mean()) if len(y_train_true_ep) else 0.0
                 test_acc = float((y_test_true_ep == y_test_pred_ep).mean()) if len(y_test_true_ep) else 0.0
             if ep in drop_epochs:
                 for pg in optim.param_groups:
@@ -1218,12 +1226,14 @@ def fit_audio_tiny_cnn(
                     metric_name = "test_mae" if task == "multiregression" else "test_acc"
                     print(f"[lr] epoch={ep} plateau_metric={metric_name} value={test_acc:.4f} lr={float(optim.param_groups[0]['lr']):.6g}", flush=True)
         if (not quiet) and (ep % log_every == 0 or ep == n_epochs):
+            train_txt = "NA" if not np.isfinite(float(train_acc)) else f"{float(train_acc):.4f}"
+            test_txt = "NA" if not np.isfinite(float(test_acc)) else f"{float(test_acc):.4f}"
             if task == "multilabel":
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
                     f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
-                    f"train_exact_match={train_acc:.4f} "
-                    f"test_exact_match={test_acc:.4f} "
+                    f"train_exact_match={train_txt} "
+                    f"test_exact_match={test_txt} "
                     f"lr={float(optim.param_groups[0]['lr']):.6g}",
                     flush=True,
                 )
@@ -1231,8 +1241,8 @@ def fit_audio_tiny_cnn(
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
                     f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
-                    f"train_mae={train_acc:.4f} "
-                    f"test_mae={test_acc:.4f} "
+                    f"train_mae={train_txt} "
+                    f"test_mae={test_txt} "
                     f"lr={float(optim.param_groups[0]['lr']):.6g}",
                     flush=True,
                 )
@@ -1240,8 +1250,8 @@ def fit_audio_tiny_cnn(
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
                     f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
-                    f"train_acc={train_acc:.4f} "
-                    f"test_acc={test_acc:.4f} "
+                    f"train_acc={train_txt} "
+                    f"test_acc={test_txt} "
                     f"lr={float(optim.param_groups[0]['lr']):.6g}",
                     flush=True,
                 )
@@ -1795,6 +1805,7 @@ def fit_audio_tiny_cnn(
             "limit": int(limit),
             "sample_mode": str(sample_mode),
             "log_every": int(log_every),
+            "eval_every": int(eval_every),
             "quiet": bool(quiet),
             "aux_target_pca_enabled": bool(aux_meta.get("enabled", False)),
             "aux_pca_feature_source": str(aux_feature_source),
