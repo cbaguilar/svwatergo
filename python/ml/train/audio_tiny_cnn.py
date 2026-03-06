@@ -246,6 +246,36 @@ def _coerce_multilabel_target(
     return out, Y, y_meta
 
 
+def _coerce_multiregression_target(
+    df: pd.DataFrame,
+    *,
+    target_cols: List[str],
+) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
+    out = df.copy()
+    if not target_cols:
+        raise ValueError("multiregression target_cols cannot be empty")
+    missing = [c for c in target_cols if c not in out.columns]
+    if missing:
+        raise ValueError(f"Missing multiregression target columns: {', '.join(missing)}")
+    y_cols: List[np.ndarray] = []
+    keep_mask = np.ones(len(out), dtype=bool)
+    for c in target_cols:
+        s = pd.to_numeric(out[c], errors="coerce")
+        keep_mask &= s.notna().to_numpy()
+        y_cols.append(np.clip(s.to_numpy(dtype=np.float32), 0.0, 1.0))
+    if int(keep_mask.sum()) <= 0:
+        raise ValueError("No valid rows for multiregression target after coercion")
+    out = out.loc[keep_mask].reset_index(drop=True)
+    Y = np.stack([col[keep_mask] for col in y_cols], axis=1).astype(np.float32)
+    y_meta: Dict[str, Any] = {
+        "task": "multiregression",
+        "target_cols": [str(c) for c in target_cols],
+        "classes": [str(c) for c in target_cols],
+        "value_range": [0.0, 1.0],
+    }
+    return out, Y, y_meta
+
+
 def _metrics_multilabel(
     *,
     y_true: np.ndarray,
@@ -272,6 +302,31 @@ def _metrics_multilabel(
     out["macro_precision"] = float(np.mean(prec_vals)) if prec_vals else 0.0
     out["macro_recall"] = float(np.mean(rec_vals)) if rec_vals else 0.0
     out["exact_match_accuracy"] = float(np.mean(np.all(y_true == y_pred, axis=1))) if len(y_true) else 0.0
+    return out
+
+
+def _metrics_multiregression(
+    *,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    class_names: List[str],
+) -> Dict[str, Any]:
+    yt = np.asarray(y_true, dtype=np.float64)
+    yp = np.asarray(y_pred, dtype=np.float64)
+    out: Dict[str, Any] = {}
+    per_target: Dict[str, Any] = {}
+    maes: List[float] = []
+    rmses: List[float] = []
+    for j, name in enumerate(class_names):
+        e = yp[:, j] - yt[:, j]
+        mae = float(np.mean(np.abs(e))) if len(e) else 0.0
+        rmse = float(np.sqrt(np.mean(np.square(e)))) if len(e) else 0.0
+        per_target[str(name)] = {"mae": mae, "rmse": rmse}
+        maes.append(mae)
+        rmses.append(rmse)
+    out["per_target"] = per_target
+    out["mae_mean"] = float(np.mean(maes)) if maes else 0.0
+    out["rmse_mean"] = float(np.mean(rmses)) if rmses else 0.0
     return out
 
 
@@ -403,6 +458,12 @@ def _metrics_by_source(
                 y_score=np.asarray(y_score, dtype=np.float64) if y_score is not None else None,
                 class_names=list(class_names or []),
             )
+        elif task == "multiregression":
+            metrics = _metrics_multiregression(
+                y_true=np.asarray(y_true, dtype=np.float64),
+                y_pred=np.asarray(y_pred, dtype=np.float64),
+                class_names=list(class_names or []),
+            )
         else:
             metrics = _metrics_dict(
                 np.asarray(y_true),
@@ -441,6 +502,11 @@ def fit_audio_tiny_cnn(
     dataset_id_col: str = "sample_id",
     split_manifest_id_col: str = "sample_id",
     model_arch: str = "tiny_cnn",
+    lr_drop_epochs: Optional[List[int]] = None,
+    lr_drop_gamma: float = 0.5,
+    lr_plateau: bool = False,
+    lr_plateau_factor: float = 0.5,
+    lr_plateau_patience: int = 2,
 ) -> AudioTinyCNNResult:
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
@@ -456,6 +522,10 @@ def fit_audio_tiny_cnn(
         cols = list(target_cols) if target_cols else ["overlap_s_producing", "overlap_s_delivering"]
         df, y_ml, y_meta = _coerce_multilabel_target(df, target_cols=cols, positive_threshold=float(positive_threshold))
         y = y_ml
+    elif task == "multiregression":
+        cols = list(target_cols) if target_cols else ["ropumprun_duty", "deliveryrun_duty"]
+        df, y_reg, y_meta = _coerce_multiregression_target(df, target_cols=cols)
+        y = y_reg
     else:
         df, y, y_meta = _coerce_target(df, target_col=target_col, task=task, positive_label=positive_label)
     df, split_ser, split_source = _attach_split_labels(
@@ -499,7 +569,7 @@ def fit_audio_tiny_cnn(
         if len(idx_train) < 2:
             raise ValueError("Need at least 2 train rows from provided splits.")
     else:
-        stratify = (y if (task != "multilabel" and len(np.unique(y)) > 1) else None)
+        stratify = (y if (task not in ("multilabel", "multiregression") and len(np.unique(y)) > 1) else None)
         idx_train, idx_test = train_test_split(
             idx,
             test_size=float(test_size),
@@ -516,17 +586,17 @@ def fit_audio_tiny_cnn(
         else pd.Series(["unknown"] * len(df), dtype="string")
     )
 
-    if task != "multilabel":
+    if task not in ("multilabel", "multiregression"):
         if len(np.unique(y[idx_train])) < 2:
             raise ValueError("Train split has only one class after filtering; cannot train classifier.")
     else:
-        if int(np.sum(y[idx_train], axis=0).max()) <= 0:
+        if task == "multilabel" and int(np.sum(y[idx_train], axis=0).max()) <= 0:
             raise ValueError("Train split has no positive multilabel targets.")
 
     X_train = torch.tensor(X[idx_train], dtype=torch.float32)
     X_test = torch.tensor(X[idx_test], dtype=torch.float32)
     X_val = torch.tensor(X[idx_val], dtype=torch.float32)
-    if task == "multilabel":
+    if task in ("multilabel", "multiregression"):
         y_train = torch.tensor(y[idx_train], dtype=torch.float32)
         y_test = torch.tensor(y[idx_test], dtype=torch.float32)
         y_val = torch.tensor(y[idx_val], dtype=torch.float32)
@@ -571,10 +641,23 @@ def fit_audio_tiny_cnn(
             )
         else:
             criterion = nn.BCEWithLogitsLoss()
+    elif task == "multiregression":
+        criterion = nn.SmoothL1Loss()
     else:
         criterion = nn.CrossEntropyLoss(**loss_kwargs)
 
     optim = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=float(weight_decay))
+    drop_epochs = set(int(e) for e in (lr_drop_epochs or []) if int(e) > 0)
+    plateau_sched = None
+    if bool(lr_plateau):
+        plateau_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optim,
+            mode="max",
+            factor=float(lr_plateau_factor),
+            patience=int(lr_plateau_patience),
+            threshold=1e-4,
+            min_lr=1e-6,
+        )
 
     def _predict(dl):
         model.eval()
@@ -595,6 +678,10 @@ def fit_audio_tiny_cnn(
                     pred = (score >= 0.5).float()
                     y_score.extend(score.cpu().numpy().tolist())
                     y_pred.extend(pred.cpu().numpy().tolist())
+                elif task == "multiregression":
+                    score = torch.sigmoid(logits)
+                    y_score.extend(score.cpu().numpy().tolist())
+                    y_pred.extend(score.cpu().numpy().tolist())
                 else:
                     prob = torch.softmax(logits, dim=1)
                     pred = torch.argmax(prob, dim=1)
@@ -602,7 +689,7 @@ def fit_audio_tiny_cnn(
                 y_true.extend(yb.cpu().numpy().tolist())
         y_true_np = np.asarray(y_true)
         y_pred_np = np.asarray(y_pred)
-        if task in ("binary", "multilabel"):
+        if task in ("binary", "multilabel", "multiregression"):
             y_score_np = np.asarray(y_score)
         else:
             y_score_np = None
@@ -623,6 +710,8 @@ def fit_audio_tiny_cnn(
                 loss = criterion(logits.view(-1), yb.float())
             elif task == "multilabel":
                 loss = criterion(logits, yb)
+            elif task == "multiregression":
+                loss = criterion(torch.sigmoid(logits), yb)
             else:
                 loss = criterion(logits, yb)
             loss.backward()
@@ -631,20 +720,56 @@ def fit_audio_tiny_cnn(
             loss_sum += float(loss.detach().cpu().item()) * bsz
             n_samples += bsz
 
-        if (not quiet) and (ep % log_every == 0 or ep == n_epochs):
-            avg_loss = (loss_sum / max(1, n_samples))
+        avg_loss = (loss_sum / max(1, n_samples))
+        need_eval = bool(plateau_sched is not None) or (ep in drop_epochs) or ((not quiet) and (ep % log_every == 0 or ep == n_epochs))
+        if need_eval:
             y_train_true_ep, y_train_pred_ep, _ = _predict(train_dl)
             y_test_true_ep, y_test_pred_ep, _ = _predict(test_dl)
             if task == "multilabel":
                 train_acc = float(np.mean(np.all(y_train_true_ep == y_train_pred_ep, axis=1))) if len(y_train_true_ep) else 0.0
                 test_acc = float(np.mean(np.all(y_test_true_ep == y_test_pred_ep, axis=1))) if len(y_test_true_ep) else 0.0
+            elif task == "multiregression":
+                train_acc = float(np.mean(np.abs(y_train_true_ep - y_train_pred_ep))) if len(y_train_true_ep) else 0.0
+                test_acc = float(np.mean(np.abs(y_test_true_ep - y_test_pred_ep))) if len(y_test_true_ep) else 0.0
             else:
                 train_acc = float((y_train_true_ep == y_train_pred_ep).mean()) if len(y_train_true_ep) else 0.0
                 test_acc = float((y_test_true_ep == y_test_pred_ep).mean()) if len(y_test_true_ep) else 0.0
-            print(
-                f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} train_acc={train_acc:.4f} test_acc={test_acc:.4f}",
-                flush=True,
-            )
+            if ep in drop_epochs:
+                for pg in optim.param_groups:
+                    pg["lr"] = max(1e-6, float(pg["lr"]) * float(lr_drop_gamma))
+                if not quiet:
+                    print(f"[lr] epoch={ep} manual_drop_gamma={float(lr_drop_gamma):.4f} lr={float(optim.param_groups[0]['lr']):.6g}", flush=True)
+            if plateau_sched is not None:
+                plateau_metric = -float(test_acc) if task == "multiregression" else float(test_acc)
+                plateau_sched.step(plateau_metric)
+                if not quiet:
+                    metric_name = "test_mae" if task == "multiregression" else "test_acc"
+                    print(f"[lr] epoch={ep} plateau_metric={metric_name} value={test_acc:.4f} lr={float(optim.param_groups[0]['lr']):.6g}", flush=True)
+        if (not quiet) and (ep % log_every == 0 or ep == n_epochs):
+            if task == "multilabel":
+                print(
+                    f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
+                    f"train_exact_match={train_acc:.4f} "
+                    f"test_exact_match={test_acc:.4f} "
+                    f"lr={float(optim.param_groups[0]['lr']):.6g}",
+                    flush=True,
+                )
+            elif task == "multiregression":
+                print(
+                    f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
+                    f"train_mae={train_acc:.4f} "
+                    f"test_mae={test_acc:.4f} "
+                    f"lr={float(optim.param_groups[0]['lr']):.6g}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
+                    f"train_acc={train_acc:.4f} "
+                    f"test_acc={test_acc:.4f} "
+                    f"lr={float(optim.param_groups[0]['lr']):.6g}",
+                    flush=True,
+                )
 
     y_train_true, y_train_pred_raw, y_train_score = _predict(train_dl)
     y_test_true, y_test_pred_raw, y_test_score = _predict(test_dl)
@@ -706,6 +831,13 @@ def fit_audio_tiny_cnn(
             if task == "multilabel":
                 tuned_thresholds = [float(threshold_default)] * int(y.shape[1])
             threshold_report["source_split"] = "default_no_scores"
+    elif task == "multiregression":
+        tuned_thresholds = [float(positive_threshold)] * int(y.shape[1])
+        threshold_report = {
+            "default_threshold": float(positive_threshold),
+            "source_split": "fixed_from_positive_threshold",
+            "mode": "multiregression",
+        }
 
     if task in ("binary", "multilabel"):
         y_train_pred = _predict_from_scores(task=task, y_score=y_train_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
@@ -762,7 +894,7 @@ def fit_audio_tiny_cnn(
                 pred_parts.append(pred)
         prob_all = np.concatenate(prob_parts, axis=0)
         pred_all = np.concatenate(pred_parts, axis=0)
-    else:
+    elif task == "multilabel":
         score_parts: List[np.ndarray] = []
         with torch.no_grad():
             for i0 in range(0, X.shape[0], int(batch_size)):
@@ -778,6 +910,17 @@ def fit_audio_tiny_cnn(
             thresholds=tuned_thresholds,
             default_threshold=threshold_default,
         )
+    else:  # multiregression
+        score_parts: List[np.ndarray] = []
+        with torch.no_grad():
+            for i0 in range(0, X.shape[0], int(batch_size)):
+                i1 = min(X.shape[0], i0 + int(batch_size))
+                xb = torch.tensor(X[i0:i1], dtype=torch.float32, device=device)
+                logits = model(xb)
+                score = torch.sigmoid(logits).cpu().numpy()
+                score_parts.append(score)
+        score_all = np.concatenate(score_parts, axis=0)
+        pred_all = score_all.astype("float32", copy=False)
 
     # Add PCA coordinates (from flattened mel tensors) so the existing 4-panel
     # renderer can plot tiny-CNN runs with the same schema.
@@ -802,6 +945,17 @@ def fit_audio_tiny_cnn(
             proj_df[f"y_true_{name}"] = y[:, j].astype("int64")
             proj_df[f"y_pred_{name}"] = pred_all[:, j].astype("int64")
             proj_df[f"score_{name}"] = score_all[:, j].astype("float64")
+    elif task == "multiregression":
+        classes = list(y_meta.get("classes") or [f"class_{i}" for i in range(int(pred_all.shape[1]))])
+        thresh = float(positive_threshold)
+        proj_df["y_true"] = (y[:, 0] >= thresh).astype("int64")
+        proj_df["y_pred"] = (pred_all[:, 0] >= thresh).astype("int64")
+        for j, name in enumerate(classes):
+            proj_df[f"duty_true_{name}"] = y[:, j].astype("float64")
+            proj_df[f"duty_pred_{name}"] = pred_all[:, j].astype("float64")
+            proj_df[f"score_{name}"] = pred_all[:, j].astype("float64")
+            proj_df[f"y_true_{name}"] = (y[:, j] >= thresh).astype("int64")
+            proj_df[f"y_pred_{name}"] = (pred_all[:, j] >= thresh).astype("int64")
     else:
         proj_df["y_true"] = y.astype("int64")
         proj_df["y_pred"] = pred_all.astype("int64")
@@ -868,13 +1022,57 @@ def fit_audio_tiny_cnn(
             if len(y_val_true)
             else {}
         )
+    elif task == "multiregression":
+        classes = list(y_meta.get("classes") or [])
+        class_counts = {
+            str(name): int(np.sum(y[:, i] >= float(positive_threshold)))
+            for i, name in enumerate(classes)
+        }
+        train_metrics = _metrics_multiregression(
+            y_true=np.asarray(y_train_true, dtype=np.float64),
+            y_pred=np.asarray(y_train_pred, dtype=np.float64),
+            class_names=classes,
+        )
+        test_metrics = _metrics_multiregression(
+            y_true=np.asarray(y_test_true, dtype=np.float64),
+            y_pred=np.asarray(y_test_pred, dtype=np.float64),
+            class_names=classes,
+        )
+        val_metrics = (
+            _metrics_multiregression(
+                y_true=np.asarray(y_val_true, dtype=np.float64),
+                y_pred=np.asarray(y_val_pred, dtype=np.float64),
+                class_names=classes,
+            )
+            if len(y_val_true)
+            else {}
+        )
+        train_metrics["thresholded"] = _metrics_multilabel(
+            y_true=(np.asarray(y_train_true, dtype=np.float64) >= float(positive_threshold)).astype(np.int64),
+            y_pred=(np.asarray(y_train_pred, dtype=np.float64) >= float(positive_threshold)).astype(np.int64),
+            y_score=np.asarray(y_train_pred, dtype=np.float64),
+            class_names=classes,
+        )
+        test_metrics["thresholded"] = _metrics_multilabel(
+            y_true=(np.asarray(y_test_true, dtype=np.float64) >= float(positive_threshold)).astype(np.int64),
+            y_pred=(np.asarray(y_test_pred, dtype=np.float64) >= float(positive_threshold)).astype(np.int64),
+            y_score=np.asarray(y_test_pred, dtype=np.float64),
+            class_names=classes,
+        )
+        if len(y_val_true):
+            val_metrics["thresholded"] = _metrics_multilabel(
+                y_true=(np.asarray(y_val_true, dtype=np.float64) >= float(positive_threshold)).astype(np.int64),
+                y_pred=(np.asarray(y_val_pred, dtype=np.float64) >= float(positive_threshold)).astype(np.int64),
+                y_score=np.asarray(y_val_pred, dtype=np.float64),
+                class_names=classes,
+            )
     else:
         class_counts = {str(int(k)): int(v) for k, v in pd.Series(y).value_counts().sort_index().items()}
         train_metrics = _metrics_dict(y_train_true, y_train_pred, y_train_score, task=task)
         test_metrics = _metrics_dict(y_test_true, y_test_pred, y_test_score, task=task)
         val_metrics = _metrics_dict(y_val_true, y_val_pred, y_val_score, task=task) if len(y_val_true) else {}
 
-    if task in ("binary", "multilabel"):
+    if task in ("binary", "multilabel", "multiregression"):
         y_score_all_for_source = score_all
     else:
         y_score_all_for_source = None
@@ -916,6 +1114,8 @@ def fit_audio_tiny_cnn(
             acc = m.get("exact_match_accuracy", m.get("accuracy", None))
             if acc is not None:
                 src_lines.append(f"{src}:{float(acc):.4f}")
+            elif "mae_mean" in m:
+                src_lines.append(f"{src}:mae={float(m['mae_mean']):.4f}")
         if src_lines:
             print("[by_source:test] " + " ".join(src_lines), flush=True)
 
@@ -925,8 +1125,8 @@ def fit_audio_tiny_cnn(
         "target_cols": (list(target_cols) if target_cols else None),
         "positive_threshold": float(positive_threshold),
         "inference_threshold_default": float(threshold_default),
-        "inference_thresholds": [float(v) for v in tuned_thresholds] if task in ("binary", "multilabel") else None,
-        "threshold_tuning": threshold_report if task in ("binary", "multilabel") else {},
+        "inference_thresholds": [float(v) for v in tuned_thresholds] if task in ("binary", "multilabel", "multiregression") else None,
+        "threshold_tuning": threshold_report if task in ("binary", "multilabel", "multiregression") else {},
         "y_meta": y_meta,
         "n_rows": int(len(df)),
         "n_train": int(len(idx_train)),
@@ -943,6 +1143,11 @@ def fit_audio_tiny_cnn(
             "epochs": int(epochs),
             "batch_size": int(batch_size),
             "learning_rate": float(learning_rate),
+            "lr_drop_epochs": sorted([int(e) for e in drop_epochs]),
+            "lr_drop_gamma": float(lr_drop_gamma),
+            "lr_plateau": bool(lr_plateau),
+            "lr_plateau_factor": float(lr_plateau_factor),
+            "lr_plateau_patience": int(lr_plateau_patience),
             "weight_decay": float(weight_decay),
             "class_weight": (str(class_weight) if class_weight else None),
             "limit": int(limit),
@@ -1080,6 +1285,25 @@ def predict_audio_tiny_cnn(
                 "classes": [str(c) for c in classes],
                 "scores_by_class": {str(classes[i]): float(prob[i]) for i in range(len(classes))},
                 "thresholds_by_class": {str(classes[i]): float(thr_list[i]) for i in range(len(classes))},
+                "predicted_labels": [str(classes[i]) for i in range(len(classes)) if int(pred[i]) == 1],
+                "mel_shape_used": [int(mel.shape[0]), int(mel.shape[1])],
+            }
+        elif task == "multiregression":
+            duty = torch.sigmoid(logits)[0].cpu().numpy()
+            classes = list((bundle.get("y_meta") or {}).get("classes") or [])
+            if not classes:
+                classes = [f"class_{i}" for i in range(int(duty.shape[0]))]
+            if len(thr_list) != len(classes):
+                thr_list = [float(default_thr)] * len(classes)
+            pred = (duty >= np.asarray(thr_list, dtype=np.float64)).astype("int64")
+            out = {
+                "bundle_type": "audio_tiny_cnn",
+                "task": "multiregression",
+                "classes": [str(c) for c in classes],
+                "duties": [float(v) for v in duty.tolist()],
+                "duties_by_class": {str(classes[i]): float(duty[i]) for i in range(len(classes))},
+                "thresholds_by_class": {str(classes[i]): float(thr_list[i]) for i in range(len(classes))},
+                "predicted_multi_hot": [int(v) for v in pred.tolist()],
                 "predicted_labels": [str(classes[i]) for i in range(len(classes)) if int(pred[i]) == 1],
                 "mel_shape_used": [int(mel.shape[0]), int(mel.shape[1])],
             }

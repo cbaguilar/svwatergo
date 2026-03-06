@@ -9,6 +9,7 @@ SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/si
 
 TARGET_COLS="${TARGET_COLS:-ropumprun_duty,deliveryrun_duty}"
 POSITIVE_THRESHOLD="${POSITIVE_THRESHOLD:-0.5}"
+TASK="${TASK:-multiregression}"
 MEL_NORMALIZATION="${MEL_NORMALIZATION:-log_db}"
 CMVN="${CMVN:-yes}"
 
@@ -20,6 +21,11 @@ EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 LEARNING_RATE="${LEARNING_RATE:-5e-4}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
+LR_DROP_EPOCHS="${LR_DROP_EPOCHS:-10,15}"
+LR_DROP_GAMMA="${LR_DROP_GAMMA:-0.5}"
+LR_PLATEAU="${LR_PLATEAU:-yes}"
+LR_PLATEAU_FACTOR="${LR_PLATEAU_FACTOR:-0.5}"
+LR_PLATEAU_PATIENCE="${LR_PLATEAU_PATIENCE:-2}"
 
 cd "$REPO"
 mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$OUT_DIR"
@@ -37,13 +43,18 @@ fi
   --split-col split \
   --out-dir "$OUT_DIR" \
   --model-arch resnet_small \
-  --task multilabel \
+  --task "$TASK" \
   --target-cols "$TARGET_COLS" \
   --positive-threshold "$POSITIVE_THRESHOLD" \
   --epochs "$EPOCHS" \
   --batch-size "$BATCH_SIZE" \
   --learning-rate "$LEARNING_RATE" \
   --weight-decay "$WEIGHT_DECAY" \
+  --lr-drop-epochs "$LR_DROP_EPOCHS" \
+  --lr-drop-gamma "$LR_DROP_GAMMA" \
+  --lr-plateau "$LR_PLATEAU" \
+  --lr-plateau-factor "$LR_PLATEAU_FACTOR" \
+  --lr-plateau-patience "$LR_PLATEAU_PATIENCE" \
   --class-weight balanced \
   --sample-rate 16000 \
   --target-seconds 10 \
@@ -55,7 +66,7 @@ fi
   --use-tuned-thresholds yes \
   --out-png "$PLOT_PNG" \
   --out-meta "$PLOT_META" \
-  --title "Audio ResNet Multilabel (bluerock 10s, ro+delivery)"
+  --title "Audio ResNet ${TASK} (bluerock 10s, ro+delivery)"
 
 echo "[OK] model -> $OUT_DIR/audio_tiny_cnn_model.pt"
 echo "[OK] plot  -> $PLOT_PNG"

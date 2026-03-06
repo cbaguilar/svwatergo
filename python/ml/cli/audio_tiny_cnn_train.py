@@ -23,7 +23,7 @@ def main() -> int:
         default="",
         help="Comma-separated target columns for multilabel task (default: overlap_s_producing,overlap_s_delivering)",
     )
-    p.add_argument("--task", choices=["binary", "multiclass", "multilabel"], default="binary")
+    p.add_argument("--task", choices=["binary", "multiclass", "multilabel", "multiregression"], default="binary")
     p.add_argument("--model-arch", choices=["tiny_cnn", "resnet_small"], default="tiny_cnn")
     p.add_argument("--positive-threshold", type=float, default=0.0, help="Positive threshold for numeric multilabel targets")
     p.add_argument("--positive-label", default="on", help="Binary positive class when target is string labels")
@@ -35,6 +35,11 @@ def main() -> int:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--learning-rate", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
+    p.add_argument("--lr-drop-epochs", default="", help="Comma-separated epochs to apply multiplicative LR drop (e.g. 10,15)")
+    p.add_argument("--lr-drop-gamma", type=float, default=0.5, help="Multiplicative gamma for manual LR drops")
+    p.add_argument("--lr-plateau", default="no", choices=["yes", "no"], help="Enable ReduceLROnPlateau on test accuracy")
+    p.add_argument("--lr-plateau-factor", type=float, default=0.5)
+    p.add_argument("--lr-plateau-patience", type=int, default=2)
     p.add_argument("--class-weight", choices=["balanced"], default=None, help="Optional class weighting for CNN loss")
 
     # Persisted mel settings used for wav inference.
@@ -99,6 +104,11 @@ def main() -> int:
         batch_size=int(args.batch_size),
         learning_rate=float(args.learning_rate),
         weight_decay=float(args.weight_decay),
+        lr_drop_epochs=[int(x.strip()) for x in str(args.lr_drop_epochs).split(",") if x.strip()],
+        lr_drop_gamma=float(args.lr_drop_gamma),
+        lr_plateau=(str(args.lr_plateau) == "yes"),
+        lr_plateau_factor=float(args.lr_plateau_factor),
+        lr_plateau_patience=int(args.lr_plateau_patience),
         class_weight=str(args.class_weight) if args.class_weight else None,
         mel_config=mel_config,
         split_manifest_df=split_manifest_df,
