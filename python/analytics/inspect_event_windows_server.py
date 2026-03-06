@@ -118,7 +118,7 @@ UI_HTML = """<!doctype html>
         <input id="modelPath" style="width:100%" placeholder="/mnt/d/.../audio_pca_svm_model.joblib or .../audio_tiny_cnn_model.pt" />
       </div>
       <div style="min-width:30%">
-        <label>checkpoint .pt</label>
+        <label>checkpoint</label>
         <select id="modelSelect" style="width:100%"></select>
       </div>
       <div><label>&nbsp;</label><button onclick="loadModels()">Refresh Models</button></div>
@@ -209,7 +209,14 @@ async function loadModels() {
     const v = (sel.value || '').trim();
     if (!v) return;
     modelEl.value = v;
-    document.getElementById('modelKind').value = 'tiny_cnn';
+    const vl = v.toLowerCase();
+    if (vl.endsWith('.pt') || vl.endsWith('.pth')) {
+      document.getElementById('modelKind').value = 'tiny_cnn';
+    } else if (vl.includes('frozen_mlp_head') || vl.endsWith('.joblib')) {
+      document.getElementById('modelKind').value = 'frozen_embed_panns';
+    } else {
+      document.getElementById('modelKind').value = 'pca_svm';
+    }
   };
 }
 function esc(x) { return String(x ?? ''); }
@@ -529,6 +536,8 @@ class AppState:
         if not root.exists():
             return {"root": str(root), "models": []}
         paths = [p for p in root.rglob("*.pt") if p.is_file()]
+        paths += [p for p in root.rglob("*.pth") if p.is_file()]
+        paths += [p for p in root.rglob("*.joblib") if p.is_file()]
         paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         models = [str(p) for p in paths[: max(1, min(int(limit), 5000))]]
         return {"root": str(root), "models": models}
