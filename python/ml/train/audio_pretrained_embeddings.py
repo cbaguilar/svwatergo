@@ -84,24 +84,42 @@ class _WaveDataset:
         return len(self.paths)
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        w = _load_waveform(
-            Path(self.paths[idx]),
-            target_sr=int(self.target_sr),
-            target_seconds=float(self.target_seconds),
-        )
+        path = Path(self.paths[idx])
+        try:
+            w = _load_waveform(
+                path,
+                target_sr=int(self.target_sr),
+                target_seconds=float(self.target_seconds),
+            )
+        except Exception as e:
+            n_target = int(round(float(self.target_seconds) * int(self.target_sr)))
+            w = np.zeros((max(1, n_target),), dtype=np.float32)
+            print(f"[warn] audio decode failed path={path} err={e}", flush=True)
         y = self.labels[idx]
         return w.astype(np.float32, copy=False), np.asarray(y)
 
 
 def _load_waveform(path: Path, *, target_sr: int, target_seconds: float) -> np.ndarray:
+    from ..storage.audio import read_audio_path_ffmpeg
+
     try:
         from scipy import signal  # type: ignore
         from scipy.io import wavfile  # type: ignore
     except Exception as e:
         raise RuntimeError("Missing scipy for audio loading. Install: pip install scipy") from e
 
-    sr, y = wavfile.read(str(path))
-    y = np.asarray(y)
+    y: np.ndarray
+    sr: int
+    # Prefer ffmpeg decoding for robustness across wav/webm/opus and malformed headers.
+    try:
+        y_ff, sr_ff, _ = read_audio_path_ffmpeg(path, sample_rate=int(target_sr), mono=True)
+        y = np.asarray(y_ff, dtype=np.float32)
+        sr = int(sr_ff)
+    except Exception:
+        sr_raw, y_raw = wavfile.read(str(path))
+        sr = int(sr_raw)
+        y = np.asarray(y_raw)
+
     if y.ndim == 2:
         y = y.mean(axis=1)
 
@@ -488,7 +506,10 @@ def fit_audio_pretrained_embedding_experiment(
             model_backbone = model_backbone.to(device)
             head = head.to(device)
             use_amp = bool(finetune_amp) and (device.type == "cuda")
-            scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+            if use_amp:
+                scaler = torch.amp.GradScaler("cuda", enabled=True)
+            else:
+                scaler = torch.amp.GradScaler("cuda", enabled=False)
             print(
                 f"[finetune] device={device} amp={use_amp} "
                 f"batch_size={int(finetune_batch_size)} num_workers={int(finetune_num_workers)}",
@@ -553,15 +574,23 @@ def fit_audio_pretrained_embedding_experiment(
                 head.train()
                 ep_loss_sum = 0.0
                 ep_rows = 0
+                n_skipped = 0
                 for xb, yb in train_dl:
                     xb = xb.to(device, non_blocking=True)
                     yb = yb.to(device, non_blocking=True)
                     optim.zero_grad(set_to_none=True)
-                    with torch.cuda.amp.autocast(enabled=use_amp):
+                    with torch.amp.autocast(device_type="cuda", enabled=use_amp):
                         emb = _forward_emb(xb)
                         logits = head(emb)
                         loss = criterion(logits, yb)
+                    if not torch.isfinite(loss):
+                        n_skipped += 1
+                        continue
                     scaler.scale(loss).backward()
+                    scaler.unscale_(optim)
+                    torch.nn.utils.clip_grad_norm_(head.parameters(), max_norm=1.0)
+                    if bb_params:
+                        torch.nn.utils.clip_grad_norm_(bb_params, max_norm=1.0)
                     scaler.step(optim)
                     scaler.update()
                     bsz = int(yb.shape[0])
@@ -569,7 +598,7 @@ def fit_audio_pretrained_embedding_experiment(
                     ep_rows += bsz
                 avg_loss = float(ep_loss_sum / max(1, ep_rows))
                 print(
-                    f"[finetune][epoch {_ep + 1:03d}/{int(finetune_epochs)}] loss={avg_loss:.6f}",
+                    f"[finetune][epoch {_ep + 1:03d}/{int(finetune_epochs)}] loss={avg_loss:.6f} skipped={n_skipped}",
                     flush=True,
                 )
 
