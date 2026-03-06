@@ -115,7 +115,7 @@ for SRC_RAW in "${SOURCES[@]}"; do
   echo "[SOURCE] ${SRC}"
   echo "============================================================"
 
-  if ! "$PYTHON" - "$DATASET" "$SRC" "$SRC_DATASET" "$SRC_STATS" "$TARGET_COLS" "$POSITIVE_THRESHOLD" "$MIN_ROWS_PER_SOURCE" "$MIN_POS_PER_TARGET" <<'PY'
+  "$PYTHON" - "$DATASET" "$SRC" "$SRC_DATASET" "$SRC_STATS" "$TARGET_COLS" "$POSITIVE_THRESHOLD" "$MIN_ROWS_PER_SOURCE" "$MIN_POS_PER_TARGET" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -166,8 +166,8 @@ Path(out_stats).write_text(json.dumps(stats, indent=2), encoding="utf-8")
 print(f"[OK] wrote {out_ds}")
 print(f"[OK] wrote {out_stats}")
 PY
-  then
-    rc=$?
+  rc=$?
+  if [[ $rc -ne 0 ]]; then
     if [[ $rc -eq 2 ]]; then
       echo "[SKIP] source ${SRC} did not meet row/class minimums"
       SKIP=$((SKIP + 1))
@@ -211,7 +211,7 @@ PY
     --checkpoint-dir "$SRC_OUT_DIR" \
     --out-png "$SRC_PLOT_PNG" \
     --out-meta "$SRC_PLOT_META" \
-    --title "Audio Tiny CNN Multilabel (bluerock 10s, source=${SRC})"; then
+    --title "Audio ${MODEL_ARCH} Multilabel (bluerock 10s, source=${SRC})"; then
     echo "[WARN] plot generation failed for source ${SRC}"
   fi
 
