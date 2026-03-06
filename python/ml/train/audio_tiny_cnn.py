@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -39,7 +40,7 @@ def _require_torch():
     try:
         import torch  # type: ignore
         import torch.nn as nn  # type: ignore
-        from torch.utils.data import DataLoader, TensorDataset  # type: ignore
+        from torch.utils.data import DataLoader, Dataset  # type: ignore
     except Exception as e:
         msg = str(e)
         if "cannot enable executable stack" in msg and "libtorch_cpu.so" in msg:
@@ -50,7 +51,7 @@ def _require_torch():
                 "`execstack -c $CONDA_PREFIX/lib/python*/site-packages/torch/lib/*.so`."
             ) from e
         raise RuntimeError(f"Torch import failed: {msg}") from e
-    return torch, nn, DataLoader, TensorDataset
+    return torch, nn, DataLoader, Dataset
 
 
 def _seed_torch(torch, seed: int) -> None:
@@ -108,20 +109,110 @@ def _move_loss_kwargs_to_device(loss_kwargs: Dict[str, Any], device) -> Dict[str
 
 
 def _load_mels_from_manifest_rows(df: pd.DataFrame) -> np.ndarray:
-    grouped = df.groupby("mel_shard_path", sort=False)
-    chunks = []
+    grouped = df.reset_index(drop=True).groupby("mel_shard_path", sort=False)
+    out: Optional[np.ndarray] = None
     for shard_path, g in grouped:
         z = np.load(str(shard_path))
         key = "mel" if "mel" in z.files else z.files[0]
         mel = z[key]
         idx = g["mel_shard_local_index"].astype(int).to_numpy()
-        chunks.append(mel[idx])
-    if not chunks:
+        chunk = np.asarray(mel[idx], dtype=np.float32)
+        if out is None:
+            out = np.empty((len(df), chunk.shape[1], chunk.shape[2]), dtype=np.float32)
+        row_idx = g.index.to_numpy(dtype=np.int64, copy=False)
+        out[row_idx] = chunk
+    if out is None:
         raise ValueError("No mel chunks loaded from dataset rows.")
-    X = np.concatenate(chunks, axis=0)
+    X = out
     if X.ndim != 3:
         raise ValueError(f"Expected 3D mel tensor, got {X.shape}")
     return X
+
+
+class _MelShardReader:
+    """
+    Lazily reads mel clips from manifest rows with a small shard LRU cache.
+    """
+
+    def __init__(self, df: pd.DataFrame, *, cache_size: int = 8):
+        if "mel_shard_path" not in df.columns or "mel_shard_local_index" not in df.columns:
+            raise ValueError("Dataset must include mel_shard_path and mel_shard_local_index columns")
+        self._paths = df["mel_shard_path"].astype(str).tolist()
+        self._local_idx = df["mel_shard_local_index"].astype(int).to_numpy(dtype=np.int64, copy=False)
+        self._cache_size = max(1, int(cache_size))
+        self._cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
+
+    def _load_shard(self, shard_path: str) -> np.ndarray:
+        z = np.load(str(shard_path))
+        key = "mel" if "mel" in z.files else z.files[0]
+        mel = z[key]
+        if mel.ndim != 3:
+            raise ValueError(f"Expected 3D mel tensor in shard {shard_path}, got {mel.shape}")
+        return mel
+
+    def get(self, row_idx: int) -> np.ndarray:
+        i = int(row_idx)
+        shard_path = self._paths[i]
+        mel_shard = self._cache.get(shard_path)
+        if mel_shard is None:
+            mel_shard = self._load_shard(shard_path)
+            self._cache[shard_path] = mel_shard
+            if len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+        else:
+            self._cache.move_to_end(shard_path)
+        local_i = int(self._local_idx[i])
+        return np.asarray(mel_shard[local_i], dtype=np.float32)
+
+
+def _transform_mel_clip(
+    mel: np.ndarray,
+    *,
+    use_cmvn: bool,
+    global_norm: Optional[Dict[str, Any]],
+) -> np.ndarray:
+    x = np.asarray(mel, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"Expected 2D mel clip, got {x.shape}")
+    if use_cmvn:
+        mu = x.mean(axis=1, keepdims=True)
+        sigma = x.std(axis=1, keepdims=True)
+        x = (x - mu) / (sigma + 1e-6)
+    if global_norm and bool(global_norm.get("enabled", False)):
+        mean = float(global_norm.get("mean", 0.0))
+        std = float(global_norm.get("std", 1.0))
+        eps = float(global_norm.get("eps", 1e-6))
+        if not np.isfinite(std) or std <= 0.0:
+            std = 1.0
+        x = (x - mean) / (std + eps)
+    return np.asarray(x, dtype=np.float32)
+
+
+def _compute_global_mel_norm_stats(
+    *,
+    reader: _MelShardReader,
+    indices: np.ndarray,
+    use_cmvn: bool,
+) -> Tuple[float, float]:
+    if len(indices) <= 0:
+        raise ValueError("Cannot compute global mel norm stats on empty index set")
+    total_sum = 0.0
+    total_sq = 0.0
+    total_n = 0
+    for i in np.asarray(indices, dtype=np.int64):
+        clip = _transform_mel_clip(reader.get(int(i)), use_cmvn=use_cmvn, global_norm=None)
+        arr = np.asarray(clip, dtype=np.float64)
+        total_sum += float(np.sum(arr))
+        total_sq += float(np.sum(arr * arr))
+        total_n += int(arr.size)
+    if total_n <= 0:
+        raise ValueError("No mel elements found while computing global norm stats")
+    mean = total_sum / float(total_n)
+    var = max(0.0, (total_sq / float(total_n)) - (mean * mean))
+    std = float(np.sqrt(var))
+    if not np.isfinite(std) or std <= 0.0:
+        std = 1.0
+    return float(mean), float(std)
 
 
 def _cmvn_per_clip_per_freq(X_mel: np.ndarray, *, eps: float = 1e-6) -> np.ndarray:
@@ -802,7 +893,7 @@ def fit_audio_tiny_cnn(
     aux_pca_weight: float = 0.1,
     generate_projection: bool = False,
 ) -> AudioTinyCNNResult:
-    torch, nn, DataLoader, TensorDataset = _require_torch()
+    torch, nn, DataLoader, Dataset = _require_torch()
     _seed_torch(torch, int(random_state))
     device = _select_device(torch)
     print(f"[device] audio_cnn using {device}", flush=True)
@@ -843,13 +934,13 @@ def fit_audio_tiny_cnn(
     if len(df) < 8:
         raise ValueError("Not enough labeled rows to train tiny CNN.")
 
-    X_mel = _load_mels_from_manifest_rows(df).astype("float32", copy=False)
+    mel_reader = _MelShardReader(df)
+    sample_mel = mel_reader.get(0)
+    if sample_mel.ndim != 2:
+        raise ValueError(f"Expected 2D mel clip, got {sample_mel.shape}")
+    n_mels = int(sample_mel.shape[0])
+    n_frames = int(sample_mel.shape[1])
     use_cmvn = bool((mel_config or {}).get("cmvn", False))
-    if use_cmvn:
-        X_mel = _cmvn_per_clip_per_freq(X_mel)
-    n_mels = int(X_mel.shape[1])
-    n_frames = int(X_mel.shape[2])
-    X = X_mel[:, None, :, :]  # (N,1,M,T)
 
     idx = np.arange(len(df), dtype=np.int64)
     idx_train: np.ndarray
@@ -863,8 +954,12 @@ def fit_audio_tiny_cnn(
             raise ValueError("No rows mapped to train/test/val from split source.")
         df = df.loc[keep_mask].reset_index(drop=True)
         y = y[np.asarray(keep_mask.to_numpy(), dtype=bool)]
-        X = X[np.asarray(keep_mask.to_numpy(), dtype=bool)]
-        X_mel = X_mel[np.asarray(keep_mask.to_numpy(), dtype=bool)]
+        mel_reader = _MelShardReader(df)
+        sample_mel = mel_reader.get(0)
+        if sample_mel.ndim != 2:
+            raise ValueError(f"Expected 2D mel clip, got {sample_mel.shape}")
+        n_mels = int(sample_mel.shape[0])
+        n_frames = int(sample_mel.shape[1])
         norm = norm.loc[keep_mask].reset_index(drop=True)
         split_for_projection = norm.astype("string")
         idx_all = np.arange(len(df), dtype=np.int64)
@@ -916,10 +1011,11 @@ def fit_audio_tiny_cnn(
     use_global_norm = bool((mel_config or {}).get("train_mel_global_norm", False))
     global_norm_eps = float((mel_config or {}).get("train_mel_global_norm_eps", 1e-6))
     if use_global_norm:
-        train_view = np.asarray(X_mel[idx_train], dtype=np.float32)
-        mean = float(np.mean(train_view, dtype=np.float64))
-        std = float(np.std(train_view, dtype=np.float64))
-        X_mel = _global_mel_norm(X_mel, mean=mean, std=std, eps=global_norm_eps)
+        mean, std = _compute_global_mel_norm_stats(
+            reader=mel_reader,
+            indices=np.asarray(idx_train, dtype=np.int64),
+            use_cmvn=bool(use_cmvn),
+        )
         mel_global_norm = {
             "enabled": True,
             "fit_split": "train",
@@ -934,11 +1030,29 @@ def fit_audio_tiny_cnn(
                 flush=True,
             )
 
+    X_mel_full: Optional[np.ndarray] = None
+
+    def _get_full_mels() -> np.ndarray:
+        nonlocal X_mel_full
+        if X_mel_full is None:
+            X_mel_full = _load_mels_from_manifest_rows(df).astype("float32", copy=False)
+            if bool(use_cmvn):
+                X_mel_full = _cmvn_per_clip_per_freq(X_mel_full)
+            if bool(mel_global_norm.get("enabled", False)):
+                X_mel_full = _global_mel_norm(
+                    X_mel_full,
+                    mean=float(mel_global_norm.get("mean", 0.0)),
+                    std=float(mel_global_norm.get("std", 1.0)),
+                    eps=float(mel_global_norm.get("eps", global_norm_eps)),
+                )
+        return X_mel_full
+
     aux_targets_all: Optional[np.ndarray] = None
     aux_meta: Dict[str, Any] = {"enabled": bool(aux_enabled)}
     if aux_enabled:
         if aux_feature_source == "mel_flat":
-            X_aux_features = X_mel.reshape(X_mel.shape[0], -1).astype(np.float32, copy=False)
+            X_mel_aux = _get_full_mels()
+            X_aux_features = X_mel_aux.reshape(X_mel_aux.shape[0], -1).astype(np.float32, copy=False)
             aux_feature_cols_used: List[str] = [f"mel_flat_{i}" for i in range(int(X_aux_features.shape[1]))]
         else:
             aux_feature_cols_used = _select_aux_window_feature_columns(
@@ -1006,20 +1120,10 @@ def fit_audio_tiny_cnn(
                 flush=True,
             )
 
-    X_train_fit = torch.from_numpy(np.asarray(X[idx_train_fit], dtype=np.float32))
-    X_train = torch.from_numpy(np.asarray(X[idx_train], dtype=np.float32))
-    X_test = torch.from_numpy(np.asarray(X[idx_test], dtype=np.float32))
-    X_val = torch.from_numpy(np.asarray(X[idx_val], dtype=np.float32))
     if task in ("multilabel", "multiregression"):
-        y_train_fit = torch.from_numpy(np.asarray(y[idx_train_fit], dtype=np.float32))
-        y_train = torch.from_numpy(np.asarray(y[idx_train], dtype=np.float32))
-        y_test = torch.from_numpy(np.asarray(y[idx_test], dtype=np.float32))
-        y_val = torch.from_numpy(np.asarray(y[idx_val], dtype=np.float32))
+        y_all_t = torch.from_numpy(np.asarray(y, dtype=np.float32))
     else:
-        y_train_fit = torch.from_numpy(np.asarray(y[idx_train_fit], dtype=np.int64))
-        y_train = torch.from_numpy(np.asarray(y[idx_train], dtype=np.int64))
-        y_test = torch.from_numpy(np.asarray(y[idx_test], dtype=np.int64))
-        y_val = torch.from_numpy(np.asarray(y[idx_val], dtype=np.int64))
+        y_all_t = torch.from_numpy(np.asarray(y, dtype=np.int64))
 
     dl_num_workers = max(0, int(dataloader_num_workers))
     dl_pin_memory = bool(dataloader_pin_memory) if dataloader_pin_memory is not None else (str(device) == "cuda")
@@ -1031,14 +1135,97 @@ def fit_audio_tiny_cnn(
     if dl_num_workers > 0:
         dl_kwargs["persistent_workers"] = bool(dl_persistent_workers)
 
+    class _IndexedMelDataset(Dataset):
+        def __init__(
+            self,
+            *,
+            reader_df: pd.DataFrame,
+            indices: np.ndarray,
+            y_all_tensor,
+            aux_all: Optional[np.ndarray],
+            include_aux: bool,
+            use_cmvn_flag: bool,
+            global_norm_cfg: Dict[str, Any],
+        ):
+            self.reader = _MelShardReader(reader_df)
+            self.indices = np.asarray(indices, dtype=np.int64)
+            self.y_all_tensor = y_all_tensor
+            self.use_cmvn_flag = bool(use_cmvn_flag)
+            self.global_norm_cfg = dict(global_norm_cfg)
+            self.include_aux = bool(include_aux)
+            if aux_all is not None:
+                self.aux_all_tensor = torch.from_numpy(np.asarray(aux_all, dtype=np.float32))
+            else:
+                self.aux_all_tensor = None
+
+        def __len__(self) -> int:
+            return int(self.indices.shape[0])
+
+        def __getitem__(self, k: int):
+            row_idx = int(self.indices[int(k)])
+            mel = _transform_mel_clip(
+                self.reader.get(row_idx),
+                use_cmvn=self.use_cmvn_flag,
+                global_norm=self.global_norm_cfg,
+            )
+            xb = torch.from_numpy(np.asarray(mel[None, :, :], dtype=np.float32))
+            yb = self.y_all_tensor[row_idx]
+            if self.include_aux and self.aux_all_tensor is not None:
+                y_auxb = self.aux_all_tensor[row_idx]
+                return xb, yb, y_auxb
+            return xb, yb
+
     if aux_targets_all is not None:
-        y_aux_train_fit = torch.from_numpy(np.asarray(aux_targets_all[idx_train_fit], dtype=np.float32))
-        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit, y_aux_train_fit), batch_size=int(batch_size), shuffle=True, **dl_kwargs)
+        train_ds = _IndexedMelDataset(
+            reader_df=df,
+            indices=idx_train_fit,
+            y_all_tensor=y_all_t,
+            aux_all=aux_targets_all,
+            include_aux=True,
+            use_cmvn_flag=bool(use_cmvn),
+            global_norm_cfg=mel_global_norm,
+        )
     else:
-        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit), batch_size=int(batch_size), shuffle=True, **dl_kwargs)
-    train_eval_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=False, **dl_kwargs)
-    test_dl = DataLoader(TensorDataset(X_test, y_test), batch_size=int(batch_size), shuffle=False, **dl_kwargs)
-    val_dl = DataLoader(TensorDataset(X_val, y_val), batch_size=int(batch_size), shuffle=False, **dl_kwargs)
+        train_ds = _IndexedMelDataset(
+            reader_df=df,
+            indices=idx_train_fit,
+            y_all_tensor=y_all_t,
+            aux_all=None,
+            include_aux=False,
+            use_cmvn_flag=bool(use_cmvn),
+            global_norm_cfg=mel_global_norm,
+        )
+    train_eval_ds = _IndexedMelDataset(
+        reader_df=df,
+        indices=idx_train,
+        y_all_tensor=y_all_t,
+        aux_all=None,
+        include_aux=False,
+        use_cmvn_flag=bool(use_cmvn),
+        global_norm_cfg=mel_global_norm,
+    )
+    test_ds = _IndexedMelDataset(
+        reader_df=df,
+        indices=idx_test,
+        y_all_tensor=y_all_t,
+        aux_all=None,
+        include_aux=False,
+        use_cmvn_flag=bool(use_cmvn),
+        global_norm_cfg=mel_global_norm,
+    )
+    val_ds = _IndexedMelDataset(
+        reader_df=df,
+        indices=idx_val,
+        y_all_tensor=y_all_t,
+        aux_all=None,
+        include_aux=False,
+        use_cmvn_flag=bool(use_cmvn),
+        global_norm_cfg=mel_global_norm,
+    )
+    train_dl = DataLoader(train_ds, batch_size=int(batch_size), shuffle=True, **dl_kwargs)
+    train_eval_dl = DataLoader(train_eval_ds, batch_size=int(batch_size), shuffle=False, **dl_kwargs)
+    test_dl = DataLoader(test_ds, batch_size=int(batch_size), shuffle=False, **dl_kwargs)
+    val_dl = DataLoader(val_ds, batch_size=int(batch_size), shuffle=False, **dl_kwargs)
 
     if task == "binary":
         n_classes = 2
@@ -1355,14 +1542,24 @@ def fit_audio_tiny_cnn(
         y_val_pred = y_val_pred_raw
 
     # Store a small "projection" parquet analogous to pca_svm train_projection.parquet.
-    # Run full-dataset inference in minibatches to avoid OOM on larger runs.
+    # Run full-dataset inference in minibatches from shard-backed dataset to avoid large RAM spikes.
     model.eval()
+    all_idx = np.arange(len(df), dtype=np.int64)
+    all_ds = _IndexedMelDataset(
+        reader_df=df,
+        indices=all_idx,
+        y_all_tensor=y_all_t,
+        aux_all=None,
+        include_aux=False,
+        use_cmvn_flag=bool(use_cmvn),
+        global_norm_cfg=mel_global_norm,
+    )
+    all_dl = DataLoader(all_ds, batch_size=int(batch_size), shuffle=False, **dl_kwargs)
     if task == "binary":
         score_parts: List[np.ndarray] = []
         with torch.no_grad():
-            for i0 in range(0, X.shape[0], int(batch_size)):
-                i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
+            for xb, _ in all_dl:
+                xb = xb.to(device, non_blocking=True)
                 logits = model(xb).view(-1)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1377,9 +1574,8 @@ def fit_audio_tiny_cnn(
         prob_parts: List[np.ndarray] = []
         pred_parts: List[np.ndarray] = []
         with torch.no_grad():
-            for i0 in range(0, X.shape[0], int(batch_size)):
-                i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
+            for xb, _ in all_dl:
+                xb = xb.to(device, non_blocking=True)
                 logits = model(xb)
                 prob = torch.softmax(logits, dim=1).cpu().numpy()
                 pred = np.argmax(prob, axis=1).astype("int64")
@@ -1390,9 +1586,8 @@ def fit_audio_tiny_cnn(
     elif task == "multilabel":
         score_parts: List[np.ndarray] = []
         with torch.no_grad():
-            for i0 in range(0, X.shape[0], int(batch_size)):
-                i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
+            for xb, _ in all_dl:
+                xb = xb.to(device, non_blocking=True)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1406,9 +1601,8 @@ def fit_audio_tiny_cnn(
     else:  # multiregression
         score_parts: List[np.ndarray] = []
         with torch.no_grad():
-            for i0 in range(0, X.shape[0], int(batch_size)):
-                i1 = min(X.shape[0], i0 + int(batch_size))
-                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
+            for xb, _ in all_dl:
+                xb = xb.to(device, non_blocking=True)
                 logits = model(xb)
                 score = torch.sigmoid(logits).cpu().numpy()
                 score_parts.append(score)
@@ -1417,6 +1611,7 @@ def fit_audio_tiny_cnn(
 
     projection_path: Optional[Path] = None
     if bool(generate_projection):
+        X_mel = _get_full_mels()
         # Add PCA coordinates (from flattened mel tensors) so the existing 4-panel
         # renderer can plot tiny-CNN runs with the same schema.
         X_flat = X_mel.reshape(X_mel.shape[0], -1).astype("float32", copy=False)
