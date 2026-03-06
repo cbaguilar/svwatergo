@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,7 @@ from .audio_model_resnet import build_small_resnet_model
 
 try:
     from sklearn.decomposition import PCA
+    from sklearn.metrics import confusion_matrix
     from sklearn.model_selection import train_test_split
 except Exception as e:
     raise SystemExit("Missing scikit-learn. Install: pip install scikit-learn") from e
@@ -384,6 +385,89 @@ def _binary_prf(yt: np.ndarray, yp: np.ndarray) -> Dict[str, float]:
     return {"precision": prec, "recall": rec, "f1": f1}
 
 
+def _normalize_primary_class_alias(v: str) -> str:
+    return str(v).strip()
+
+
+def _build_stratify_labels(
+    *,
+    df: pd.DataFrame,
+    y: np.ndarray,
+    task: str,
+    split_stratify_col: str,
+) -> Optional[np.ndarray]:
+    col = str(split_stratify_col or "").strip()
+    if col and col in df.columns:
+        s = df[col].astype("string")
+        if int(s.notna().sum()) == len(df):
+            vals = s.astype(str).to_numpy()
+            counts = pd.Series(vals).value_counts(dropna=False)
+            if len(counts) > 1 and int(counts.min()) >= 2:
+                return vals
+    if task in ("multilabel", "multiregression"):
+        return None
+    y_vals = np.asarray(y)
+    counts = pd.Series(y_vals).value_counts(dropna=False)
+    if len(counts) > 1 and int(counts.min()) >= 2:
+        return y_vals
+    return None
+
+
+def _oversample_train_indices(
+    *,
+    df: pd.DataFrame,
+    idx_train: np.ndarray,
+    oversample_class_col: str,
+    oversample_classes: Optional[Sequence[str]],
+    oversample_multiplier: int,
+    random_state: int,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    out: Dict[str, Any] = {
+        "enabled": False,
+        "class_col": str(oversample_class_col),
+        "classes": [],
+        "multiplier": int(oversample_multiplier),
+        "n_train_base": int(len(idx_train)),
+        "n_train_fit": int(len(idx_train)),
+        "n_added": 0,
+    }
+    if int(oversample_multiplier) <= 1 or not oversample_classes:
+        return idx_train, out
+
+    col = str(oversample_class_col).strip()
+    if not col:
+        raise ValueError("oversample_class_col cannot be empty when oversampling is enabled")
+    if col not in df.columns:
+        raise ValueError(f"Oversample class column not found: {col}")
+
+    classes_norm = [_normalize_primary_class_alias(c) for c in oversample_classes if str(c).strip()]
+    if not classes_norm:
+        return idx_train, out
+
+    s = df[col].astype("string").fillna("").astype(str)
+    train_class = s.iloc[idx_train].reset_index(drop=True)
+    add_idx: List[int] = []
+    for klass in classes_norm:
+        m = (train_class == str(klass)).to_numpy()
+        hit_idx = idx_train[m]
+        if len(hit_idx):
+            add_idx.extend(hit_idx.tolist() * (int(oversample_multiplier) - 1))
+
+    if not add_idx:
+        out["enabled"] = True
+        out["classes"] = classes_norm
+        return idx_train, out
+
+    fit_idx = np.concatenate([idx_train, np.asarray(add_idx, dtype=np.int64)], axis=0)
+    rng = np.random.default_rng(int(random_state))
+    rng.shuffle(fit_idx)
+    out["enabled"] = True
+    out["classes"] = classes_norm
+    out["n_train_fit"] = int(len(fit_idx))
+    out["n_added"] = int(len(fit_idx) - len(idx_train))
+    return fit_idx, out
+
+
 def _tune_binary_threshold(
     y_true: np.ndarray,
     y_score: np.ndarray,
@@ -513,6 +597,164 @@ def _metrics_by_source(
     return out
 
 
+def _confusion_counts(cm: np.ndarray) -> Dict[str, int]:
+    m = np.asarray(cm, dtype=np.int64)
+    total = int(np.sum(m))
+    if m.shape == (2, 2):
+        tn = int(m[0, 0])
+        fp = int(m[0, 1])
+        fn = int(m[1, 0])
+        tp = int(m[1, 1])
+        return {"tn": tn, "fp": fp, "fn": fn, "tp": tp, "total": total}
+    return {"total": total}
+
+
+def _plot_confusion_grid(
+    *,
+    entries: List[Tuple[str, np.ndarray, int]],
+    label_names: List[str],
+    title: str,
+    out_png: Path,
+) -> bool:
+    if not entries:
+        return False
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except Exception:
+        return False
+
+    n = len(entries)
+    ncols = 3 if n >= 3 else n
+    nrows = int(np.ceil(float(n) / float(max(1, ncols))))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.8 * ncols, 4.2 * nrows), dpi=130)
+    if not isinstance(axes, np.ndarray):
+        axes_arr = np.asarray([axes], dtype=object)
+    else:
+        axes_arr = axes.reshape(-1)
+
+    vmax = max(float(np.max(cm)) for _, cm, _ in entries) if entries else 1.0
+    vmax = max(vmax, 1.0)
+    for i, (src, cm, n_rows) in enumerate(entries):
+        ax = axes_arr[i]
+        mat = np.asarray(cm, dtype=np.int64)
+        ax.imshow(mat, cmap="Blues", vmin=0.0, vmax=vmax)
+        ax.set_title(f"{src}\nn={n_rows}", fontsize=9)
+        ax.set_xlabel("Pred")
+        ax.set_ylabel("True")
+        ticks = np.arange(len(label_names))
+        ax.set_xticks(ticks)
+        ax.set_yticks(ticks)
+        ax.set_xticklabels(label_names, rotation=45, ha="right", fontsize=8)
+        ax.set_yticklabels(label_names, fontsize=8)
+        for r in range(mat.shape[0]):
+            for c in range(mat.shape[1]):
+                v = int(mat[r, c])
+                color = "white" if v > (0.55 * vmax) else "black"
+                ax.text(c, r, str(v), ha="center", va="center", fontsize=8, color=color)
+    for j in range(len(entries), len(axes_arr)):
+        axes_arr[j].axis("off")
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png)
+    plt.close(fig)
+    return True
+
+
+def _build_confusion_by_source(
+    *,
+    task: str,
+    y_true_all: np.ndarray,
+    y_pred_all: np.ndarray,
+    source_all: pd.Series,
+    split_indices: Dict[str, np.ndarray],
+    class_names: List[str],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    src_all = source_all.astype(str).fillna("unknown").reset_index(drop=True)
+    for split_name, idx in split_indices.items():
+        split_out: Dict[str, Any] = {}
+        idx_use = np.asarray(idx, dtype=np.int64)
+        if idx_use.size == 0:
+            out[split_name] = split_out
+            continue
+        src_split = src_all.iloc[idx_use]
+        for src in sorted(src_split.unique().tolist()):
+            m = (src_split.to_numpy() == src)
+            if not np.any(m):
+                continue
+            yt = np.asarray(y_true_all[idx_use][m])
+            yp = np.asarray(y_pred_all[idx_use][m])
+            if task == "multilabel":
+                per_label: Dict[str, Any] = {}
+                for j, name in enumerate(class_names):
+                    cm = confusion_matrix(
+                        yt[:, j].astype(np.int64),
+                        yp[:, j].astype(np.int64),
+                        labels=[0, 1],
+                    ).astype(np.int64)
+                    per_label[str(name)] = {
+                        "labels": ["0", "1"],
+                        "matrix": cm.tolist(),
+                        "counts": _confusion_counts(cm),
+                    }
+                split_out[str(src)] = {"n_rows": int(np.sum(m)), "per_label": per_label}
+            else:
+                if task == "binary":
+                    labels = [0, 1]
+                    label_names = class_names if len(class_names) == 2 else ["0", "1"]
+                else:
+                    labels = list(range(max(1, len(class_names))))
+                    label_names = class_names if class_names else [str(v) for v in labels]
+                cm = confusion_matrix(
+                    yt.astype(np.int64),
+                    yp.astype(np.int64),
+                    labels=labels,
+                ).astype(np.int64)
+                split_out[str(src)] = {
+                    "n_rows": int(np.sum(m)),
+                    "labels": [str(x) for x in label_names],
+                    "matrix": cm.tolist(),
+                    "counts": _confusion_counts(cm),
+                }
+        out[split_name] = split_out
+    return out
+
+
+def _per_class_metrics_from_confusion(
+    *,
+    cm: np.ndarray,
+    label_names: List[str],
+) -> Dict[str, Any]:
+    m = np.asarray(cm, dtype=np.int64)
+    total = int(np.sum(m))
+    out: Dict[str, Any] = {}
+    for i, name in enumerate(label_names):
+        tp = int(m[i, i]) if i < m.shape[0] and i < m.shape[1] else 0
+        fn = int(np.sum(m[i, :]) - tp) if i < m.shape[0] else 0
+        fp = int(np.sum(m[:, i]) - tp) if i < m.shape[1] else 0
+        tn = int(total - tp - fn - fp)
+        precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+        recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+        f1 = float((2.0 * precision * recall) / (precision + recall)) if (precision + recall) > 0 else 0.0
+        accuracy = float((tp + tn) / total) if total > 0 else 0.0
+        out[str(name)] = {
+            "support": int(tp + fn),
+            "tp": int(tp),
+            "fp": int(fp),
+            "fn": int(fn),
+            "tn": int(tn),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "accuracy": float(accuracy),
+            # "success" here is class recall: correctly recovered examples of this class.
+            "success_rate": float(recall),
+        }
+    return out
+
+
 def fit_audio_tiny_cnn(
     df: pd.DataFrame,
     out_dir: Path,
@@ -538,7 +780,11 @@ def fit_audio_tiny_cnn(
     split_col: str = "split",
     dataset_id_col: str = "sample_id",
     split_manifest_id_col: str = "sample_id",
+    split_stratify_col: str = "",
     model_arch: str = "tiny_cnn",
+    oversample_class_col: str = "primary_class",
+    oversample_classes: Optional[Sequence[str]] = None,
+    oversample_multiplier: int = 1,
     lr_drop_epochs: Optional[List[int]] = None,
     lr_drop_gamma: float = 0.5,
     lr_plateau: bool = False,
@@ -623,7 +869,12 @@ def fit_audio_tiny_cnn(
         if len(idx_train) < 2:
             raise ValueError("Need at least 2 train rows from provided splits.")
     else:
-        stratify = (y if (task not in ("multilabel", "multiregression") and len(np.unique(y)) > 1) else None)
+        stratify = _build_stratify_labels(
+            df=df,
+            y=y,
+            task=task,
+            split_stratify_col=str(split_stratify_col),
+        )
         idx_train, idx_test = train_test_split(
             idx,
             test_size=float(test_size),
@@ -646,6 +897,15 @@ def fit_audio_tiny_cnn(
     else:
         if task == "multilabel" and int(np.sum(y[idx_train], axis=0).max()) <= 0:
             raise ValueError("Train split has no positive multilabel targets.")
+
+    idx_train_fit, oversample_meta = _oversample_train_indices(
+        df=df,
+        idx_train=idx_train,
+        oversample_class_col=str(oversample_class_col),
+        oversample_classes=list(oversample_classes) if oversample_classes else None,
+        oversample_multiplier=int(oversample_multiplier),
+        random_state=int(random_state),
+    )
 
     mel_global_norm: Dict[str, Any] = {"enabled": False}
     use_global_norm = bool((mel_config or {}).get("train_mel_global_norm", False))
@@ -741,23 +1001,26 @@ def fit_audio_tiny_cnn(
                 flush=True,
             )
 
+    X_train_fit = torch.tensor(X[idx_train_fit], dtype=torch.float32)
     X_train = torch.tensor(X[idx_train], dtype=torch.float32)
     X_test = torch.tensor(X[idx_test], dtype=torch.float32)
     X_val = torch.tensor(X[idx_val], dtype=torch.float32)
     if task in ("multilabel", "multiregression"):
+        y_train_fit = torch.tensor(y[idx_train_fit], dtype=torch.float32)
         y_train = torch.tensor(y[idx_train], dtype=torch.float32)
         y_test = torch.tensor(y[idx_test], dtype=torch.float32)
         y_val = torch.tensor(y[idx_val], dtype=torch.float32)
     else:
+        y_train_fit = torch.tensor(y[idx_train_fit], dtype=torch.long)
         y_train = torch.tensor(y[idx_train], dtype=torch.long)
         y_test = torch.tensor(y[idx_test], dtype=torch.long)
         y_val = torch.tensor(y[idx_val], dtype=torch.long)
 
     if aux_targets_all is not None:
-        y_aux_train = torch.tensor(aux_targets_all[idx_train], dtype=torch.float32)
-        train_dl = DataLoader(TensorDataset(X_train, y_train, y_aux_train), batch_size=int(batch_size), shuffle=True)
+        y_aux_train_fit = torch.tensor(aux_targets_all[idx_train_fit], dtype=torch.float32)
+        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit, y_aux_train_fit), batch_size=int(batch_size), shuffle=True)
     else:
-        train_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=True)
+        train_dl = DataLoader(TensorDataset(X_train_fit, y_train_fit), batch_size=int(batch_size), shuffle=True)
     train_eval_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=False)
     test_dl = DataLoader(TensorDataset(X_test, y_test), batch_size=int(batch_size), shuffle=False)
     val_dl = DataLoader(TensorDataset(X_val, y_val), batch_size=int(batch_size), shuffle=False)
@@ -1197,9 +1460,12 @@ def fit_audio_tiny_cnn(
             "mel_global_norm": mel_global_norm,
             "n_rows": int(len(df)),
             "train_idx": idx_train.tolist(),
+            "train_fit_idx": idx_train_fit.tolist(),
             "test_idx": idx_test.tolist(),
             "val_idx": idx_val.tolist(),
             "split_source": str(split_source),
+            "split_stratify_col": str(split_stratify_col),
+            "oversample": oversample_meta,
             "arch": {"kind": str(arch_kind)},
             "aux_target_pca": aux_meta,
         },
@@ -1330,6 +1596,146 @@ def fit_audio_tiny_cnn(
         if src_lines:
             print("[by_source:test] " + " ".join(src_lines), flush=True)
 
+    class_names_for_conf: List[str]
+    if task == "multilabel":
+        class_names_for_conf = list(y_meta.get("classes") or [f"class_{i}" for i in range(int(y.shape[1]))])
+    elif task == "binary":
+        class_names_for_conf = [str(v) for v in (y_meta.get("classes") or ["0", "1"])]
+        if len(class_names_for_conf) != 2:
+            class_names_for_conf = ["0", "1"]
+    elif task == "multiclass":
+        class_names_for_conf = [str(v) for v in (y_meta.get("classes") or [str(i) for i in range(int(n_classes))])]
+    else:
+        class_names_for_conf = []
+
+    y_true_all_for_source = (
+        (np.asarray(y) >= multilabel_truth_threshold).astype(np.int64)
+        if task == "multilabel"
+        else np.asarray(y)
+    )
+    confusions_by_source: Dict[str, Any] = {}
+    confusion_artifacts: Dict[str, Any] = {}
+    confusion_by_split: Dict[str, Any] = {}
+    if task in ("binary", "multiclass", "multilabel"):
+        confusions_by_source = _build_confusion_by_source(
+            task=task,
+            y_true_all=np.asarray(y_true_all_for_source),
+            y_pred_all=np.asarray(pred_all),
+            source_all=source_series.reset_index(drop=True),
+            split_indices={
+                "train": np.asarray(idx_train, dtype=np.int64),
+                "test": np.asarray(idx_test, dtype=np.int64),
+                "val": np.asarray(idx_val, dtype=np.int64),
+            },
+            class_names=class_names_for_conf,
+        )
+        conf_json_path = out_dir / "confusion_by_source.json"
+        conf_json_path.write_text(json.dumps(confusions_by_source, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        confusion_artifacts["json"] = str(conf_json_path)
+
+        conf_dir = out_dir / "confusion_by_source"
+        conf_dir.mkdir(parents=True, exist_ok=True)
+        atlas_paths: Dict[str, Any] = {}
+        if task == "multilabel":
+            for split_name, split_map in confusions_by_source.items():
+                if not isinstance(split_map, dict) or not split_map:
+                    continue
+                label_paths: Dict[str, str] = {}
+                for label_name in class_names_for_conf:
+                    entries: List[Tuple[str, np.ndarray, int]] = []
+                    for src, src_obj in split_map.items():
+                        per_label = src_obj.get("per_label", {})
+                        node = per_label.get(str(label_name), {})
+                        mat = np.asarray(node.get("matrix", [[0, 0], [0, 0]]), dtype=np.int64)
+                        n_rows = int(src_obj.get("n_rows", int(np.sum(mat))))
+                        entries.append((str(src), mat, n_rows))
+                    out_png = conf_dir / f"{split_name}_{label_name}_atlas.png"
+                    ok = _plot_confusion_grid(
+                        entries=entries,
+                        label_names=["0", "1"],
+                        title=f"{split_name} confusion by source ({label_name})",
+                        out_png=out_png,
+                    )
+                    if ok:
+                        label_paths[str(label_name)] = str(out_png)
+                if label_paths:
+                    atlas_paths[str(split_name)] = label_paths
+        else:
+            label_names = class_names_for_conf if class_names_for_conf else ["0", "1"]
+            for split_name, split_map in confusions_by_source.items():
+                if not isinstance(split_map, dict) or not split_map:
+                    continue
+                entries = [
+                    (str(src), np.asarray(src_obj.get("matrix", [[0, 0], [0, 0]]), dtype=np.int64), int(src_obj.get("n_rows", 0)))
+                    for src, src_obj in split_map.items()
+                ]
+                out_png = conf_dir / f"{split_name}_atlas.png"
+                ok = _plot_confusion_grid(
+                    entries=entries,
+                    label_names=[str(v) for v in label_names],
+                    title=f"{split_name} confusion by source",
+                    out_png=out_png,
+                )
+                if ok:
+                    atlas_paths[str(split_name)] = str(out_png)
+        if atlas_paths:
+            confusion_artifacts["atlases"] = atlas_paths
+            if not quiet:
+                print(f"[confusion_by_source] atlases={len(atlas_paths)} dir={conf_dir}", flush=True)
+
+    if task in ("binary", "multiclass"):
+        labels = [0, 1] if task == "binary" else list(range(max(1, len(class_names_for_conf))))
+        split_arrays = {
+            "train": (np.asarray(y_train_true, dtype=np.int64), np.asarray(y_train_pred, dtype=np.int64)),
+            "test": (np.asarray(y_test_true, dtype=np.int64), np.asarray(y_test_pred, dtype=np.int64)),
+            "val": (np.asarray(y_val_true, dtype=np.int64), np.asarray(y_val_pred, dtype=np.int64)),
+        }
+        conf_png_paths: Dict[str, str] = {}
+        for split_name, (yt, yp) in split_arrays.items():
+            if yt.size <= 0 or yp.size <= 0:
+                continue
+            cm = confusion_matrix(yt, yp, labels=labels).astype(np.int64)
+            per_class = _per_class_metrics_from_confusion(cm=cm, label_names=[str(v) for v in class_names_for_conf])
+            confusion_by_split[split_name] = {
+                "labels": [str(v) for v in class_names_for_conf],
+                "matrix": cm.tolist(),
+                "counts": _confusion_counts(cm),
+                "per_class": per_class,
+            }
+
+            out_png = out_dir / f"confusion_matrix_{split_name}.png"
+            ok = _plot_confusion_grid(
+                entries=[("all_sources", cm, int(yt.size))],
+                label_names=[str(v) for v in class_names_for_conf],
+                title=f"{split_name} confusion matrix",
+                out_png=out_png,
+            )
+            if ok:
+                conf_png_paths[split_name] = str(out_png)
+
+        if conf_png_paths:
+            confusion_artifacts["split_png"] = conf_png_paths
+
+        if not quiet and "test" in confusion_by_split:
+            t = confusion_by_split["test"]
+            print(
+                "[confusion:test] "
+                f"labels={t.get('labels', [])} "
+                f"matrix={t.get('matrix', [])}",
+                flush=True,
+            )
+            for name, m in t.get("per_class", {}).items():
+                print(
+                    "[per_class:test] "
+                    f"class={name} "
+                    f"success={float(m.get('success_rate', 0.0)):.4f} "
+                    f"precision={float(m.get('precision', 0.0)):.4f} "
+                    f"recall={float(m.get('recall', 0.0)):.4f} "
+                    f"f1={float(m.get('f1', 0.0)):.4f} "
+                    f"support={int(m.get('support', 0))}",
+                    flush=True,
+                )
+
     metrics = {
         "task": task,
         "target_col": target_col,
@@ -1342,14 +1748,20 @@ def fit_audio_tiny_cnn(
         "y_meta": y_meta,
         "n_rows": int(len(df)),
         "n_train": int(len(idx_train)),
+        "n_train_fit": int(len(idx_train_fit)),
         "n_test": int(len(idx_test)),
         "n_val": int(len(idx_val)),
         "split_source": str(split_source),
+        "split_stratify_col": str(split_stratify_col),
+        "oversample": oversample_meta,
         "class_counts": class_counts,
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,
         "val_metrics": val_metrics,
         "metrics_by_source": by_source,
+        "confusion_by_split": confusion_by_split,
+        "confusion_by_source": confusions_by_source,
+        "confusion_artifacts": confusion_artifacts,
         "aux_target_pca": aux_meta,
         "mel_global_norm": mel_global_norm,
         "train_params": {

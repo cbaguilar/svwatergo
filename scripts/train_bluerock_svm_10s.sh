@@ -9,6 +9,10 @@ SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/si
 
 # Binary ropumprun proxy from dataset builder output.
 TARGET_COL="${TARGET_COL:-overlap_s_producing}"
+SPLIT_STRATIFY_COL="${SPLIT_STRATIFY_COL:-}"
+OVERSAMPLE_CLASS_COL="${OVERSAMPLE_CLASS_COL:-primary_class}"
+OVERSAMPLE_CLASSES="${OVERSAMPLE_CLASSES:-}"
+OVERSAMPLE_MULTIPLIER="${OVERSAMPLE_MULTIPLIER:-1}"
 
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_svm_ropumprun}"
 PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_svm_ropumprun_4panel.png}"
@@ -17,6 +21,20 @@ INFER_JSON="${INFER_JSON:-/mnt/d/datasets/svwatergo/derived/inference/bluerock_1
 
 cd "$REPO"
 mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$(dirname "$INFER_JSON")" "$OUT_DIR"
+
+extra_args=()
+if [[ -n "$SPLIT_STRATIFY_COL" ]]; then
+  extra_args+=(--split-stratify-col "$SPLIT_STRATIFY_COL")
+fi
+if [[ -n "$OVERSAMPLE_CLASS_COL" ]]; then
+  extra_args+=(--oversample-class-col "$OVERSAMPLE_CLASS_COL")
+fi
+if [[ -n "$OVERSAMPLE_CLASSES" ]]; then
+  extra_args+=(--oversample-classes "$OVERSAMPLE_CLASSES")
+fi
+if [[ -n "$OVERSAMPLE_MULTIPLIER" ]]; then
+  extra_args+=(--oversample-multiplier "$OVERSAMPLE_MULTIPLIER")
+fi
 
 "$PYTHON" -m python.ml.cli.audio_pca_svm_train \
   --dataset "$DATASET" \
@@ -30,7 +48,8 @@ mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$(dirname "$INFER_J
   --n-components 8 \
   --svm-class-weight balanced \
   --sample-rate 16000 \
-  --target-seconds 10
+  --target-seconds 10 \
+  "${extra_args[@]}"
 
 "$PYTHON" -m python.ml.cli.audio_pca_svm_plot \
   --checkpoint-dir "$OUT_DIR" \

@@ -121,6 +121,86 @@ def _normalize_split_value(v: Any) -> str:
     return s
 
 
+def _normalize_primary_class_alias(v: str) -> str:
+    return str(v).strip()
+
+
+def _build_stratify_labels(
+    *,
+    df: pd.DataFrame,
+    y: np.ndarray,
+    split_stratify_col: str,
+) -> Optional[np.ndarray]:
+    col = str(split_stratify_col or "").strip()
+    if col and col in df.columns:
+        s = df[col].astype("string")
+        if int(s.notna().sum()) == len(df):
+            vals = s.astype(str).to_numpy()
+            counts = pd.Series(vals).value_counts(dropna=False)
+            if len(counts) > 1 and int(counts.min()) >= 2:
+                return vals
+    y_vals = np.asarray(y)
+    counts = pd.Series(y_vals).value_counts(dropna=False)
+    if len(counts) > 1 and int(counts.min()) >= 2:
+        return y_vals
+    return None
+
+
+def _oversample_train_indices(
+    *,
+    df: pd.DataFrame,
+    idx_train: np.ndarray,
+    oversample_class_col: str,
+    oversample_classes: Optional[Sequence[str]],
+    oversample_multiplier: int,
+    random_state: int,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    out: Dict[str, Any] = {
+        "enabled": False,
+        "class_col": str(oversample_class_col),
+        "classes": [],
+        "multiplier": int(oversample_multiplier),
+        "n_train_base": int(len(idx_train)),
+        "n_train_fit": int(len(idx_train)),
+        "n_added": 0,
+    }
+    if int(oversample_multiplier) <= 1 or not oversample_classes:
+        return idx_train, out
+
+    col = str(oversample_class_col).strip()
+    if not col:
+        raise ValueError("oversample_class_col cannot be empty when oversampling is enabled")
+    if col not in df.columns:
+        raise ValueError(f"Oversample class column not found: {col}")
+
+    classes_norm = [_normalize_primary_class_alias(c) for c in oversample_classes if str(c).strip()]
+    if not classes_norm:
+        return idx_train, out
+
+    s = df[col].astype("string").fillna("").astype(str)
+    train_class = s.iloc[idx_train].reset_index(drop=True)
+    add_idx: List[int] = []
+    for klass in classes_norm:
+        m = (train_class == str(klass)).to_numpy()
+        hit_idx = idx_train[m]
+        if len(hit_idx):
+            add_idx.extend(hit_idx.tolist() * (int(oversample_multiplier) - 1))
+
+    if not add_idx:
+        out["enabled"] = True
+        out["classes"] = classes_norm
+        return idx_train, out
+
+    fit_idx = np.concatenate([idx_train, np.asarray(add_idx, dtype=np.int64)], axis=0)
+    rng = np.random.default_rng(int(random_state))
+    rng.shuffle(fit_idx)
+    out["enabled"] = True
+    out["classes"] = classes_norm
+    out["n_train_fit"] = int(len(fit_idx))
+    out["n_added"] = int(len(fit_idx) - len(idx_train))
+    return fit_idx, out
+
+
 def _attach_split_labels(
     df: pd.DataFrame,
     *,
@@ -214,6 +294,10 @@ def fit_audio_pca_svm(
     split_col: str = "split",
     dataset_id_col: str = "sample_id",
     split_manifest_id_col: str = "sample_id",
+    split_stratify_col: str = "",
+    oversample_class_col: str = "primary_class",
+    oversample_classes: Optional[Sequence[str]] = None,
+    oversample_multiplier: int = 1,
 ) -> AudioPCASVMResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     df = _sample_rows(df, limit, sample_mode)
@@ -255,7 +339,11 @@ def fit_audio_pca_svm(
         if len(idx_train) < 2:
             raise ValueError("Need at least 2 train rows from provided splits.")
     else:
-        stratify = y if len(np.unique(y)) > 1 else None
+        stratify = _build_stratify_labels(
+            df=df,
+            y=y,
+            split_stratify_col=str(split_stratify_col),
+        )
         idx_train, idx_test = train_test_split(
             idx,
             test_size=float(test_size),
@@ -268,17 +356,27 @@ def fit_audio_pca_svm(
     if len(np.unique(y[idx_train])) < 2:
         raise ValueError("Train split has only one class after filtering; cannot train SVM classifier.")
 
+    idx_train_fit, oversample_meta = _oversample_train_indices(
+        df=df,
+        idx_train=idx_train,
+        oversample_class_col=str(oversample_class_col),
+        oversample_classes=list(oversample_classes) if oversample_classes else None,
+        oversample_multiplier=int(oversample_multiplier),
+        random_state=int(random_state),
+    )
+
     scaler = None
-    X_train = X[idx_train]
+    X_train_fit = X[idx_train_fit]
     if standardize:
         scaler = StandardScaler(with_mean=True, with_std=True)
-        X_train = scaler.fit_transform(X_train)
-    X_train_in = X_train
+        X_train_fit = scaler.fit_transform(X_train_fit)
+    X_train_fit_in = X_train_fit
     X_all_in = scaler.transform(X) if scaler is not None else X
 
     pca = PCA(n_components=int(n_components), random_state=int(random_state))
-    Z_train = pca.fit_transform(X_train_in)
+    Z_train_fit = pca.fit_transform(X_train_fit_in)
     Z_all = pca.transform(X_all_in)
+    Z_train = Z_all[idx_train]
     Z_test = Z_all[idx_test] if len(idx_test) else np.zeros((0, Z_all.shape[1]), dtype=np.float64)
     Z_val = Z_all[idx_val] if len(idx_val) else np.zeros((0, Z_all.shape[1]), dtype=np.float64)
 
@@ -290,7 +388,7 @@ def fit_audio_pca_svm(
         probability=True,
         random_state=int(random_state),
     )
-    svm.fit(Z_train, y[idx_train])
+    svm.fit(Z_train_fit, y[idx_train_fit])
 
     y_train_pred = svm.predict(Z_train)
     y_test_pred = svm.predict(Z_test) if len(idx_test) else np.asarray([], dtype=np.int64)
@@ -336,9 +434,12 @@ def fit_audio_pca_svm(
         "feature_dim": int(X.shape[1]),
         "n_rows": int(len(df)),
         "train_idx": idx_train.tolist(),
+        "train_fit_idx": idx_train_fit.tolist(),
         "test_idx": idx_test.tolist(),
         "val_idx": idx_val.tolist(),
         "split_source": str(split_source),
+        "split_stratify_col": str(split_stratify_col),
+        "oversample": oversample_meta,
     }
     joblib.dump(bundle, model_path)
 
@@ -348,9 +449,12 @@ def fit_audio_pca_svm(
         "y_meta": y_meta,
         "n_rows": int(len(df)),
         "n_train": int(len(idx_train)),
+        "n_train_fit": int(len(idx_train_fit)),
         "n_test": int(len(idx_test)),
         "n_val": int(len(idx_val)),
         "split_source": str(split_source),
+        "split_stratify_col": str(split_stratify_col),
+        "oversample": oversample_meta,
         "class_counts": {str(int(k)): int(v) for k, v in pd.Series(y).value_counts().sort_index().items()},
         "pca": {
             "n_components": int(pca.n_components_),

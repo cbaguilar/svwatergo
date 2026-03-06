@@ -7,20 +7,24 @@ REPO="${REPO:-/home/cbaguilar/svwatergo}"
 DATASET="${DATASET:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet}"
 SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/split_manifest.parquet}"
 
-TARGET_COLS="${TARGET_COLS:-ropumprun_duty,deliveryrun_duty}"
-POSITIVE_THRESHOLD="${POSITIVE_THRESHOLD:-0.5}"
-TASK="${TASK:-multiregression}"
+# Explicit 4-class target from dataset builder:
+#   not_producing|not_delivering
+#   not_producing|delivering
+#   producing|not_delivering
+#   producing|delivering
 TARGET_COL="${TARGET_COL:-primary_class}"
+TASK="${TASK:-multiclass}"
 MEL_NORMALIZATION="${MEL_NORMALIZATION:-log_db}"
 CMVN="${CMVN:-yes}"
-SPLIT_STRATIFY_COL="${SPLIT_STRATIFY_COL:-}"
+
+# Optional train-only oversampling knobs.
 OVERSAMPLE_CLASS_COL="${OVERSAMPLE_CLASS_COL:-primary_class}"
-OVERSAMPLE_CLASSES="${OVERSAMPLE_CLASSES:-}"
+OVERSAMPLE_CLASSES="${OVERSAMPLE_CLASSES:-not_producing|delivering,producing|delivering}"
 OVERSAMPLE_MULTIPLIER="${OVERSAMPLE_MULTIPLIER:-1}"
 
-OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_resnet_multilabel_ro_delivery}"
-PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multilabel_ro_delivery_5panel.png}"
-PLOT_META="${PLOT_META:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multilabel_ro_delivery_5panel.json}"
+OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_resnet_multiclass_primary_class}"
+PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multiclass_primary_class_5panel.png}"
+PLOT_META="${PLOT_META:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multiclass_primary_class_5panel.json}"
 
 EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
@@ -39,9 +43,6 @@ extra_args=()
 if [[ "$CMVN" == "yes" ]]; then
   extra_args+=(--cmvn)
 fi
-if [[ -n "$SPLIT_STRATIFY_COL" ]]; then
-  extra_args+=(--split-stratify-col "$SPLIT_STRATIFY_COL")
-fi
 if [[ -n "$OVERSAMPLE_CLASS_COL" ]]; then
   extra_args+=(--oversample-class-col "$OVERSAMPLE_CLASS_COL")
 fi
@@ -50,9 +51,6 @@ if [[ -n "$OVERSAMPLE_CLASSES" ]]; then
 fi
 if [[ -n "$OVERSAMPLE_MULTIPLIER" ]]; then
   extra_args+=(--oversample-multiplier "$OVERSAMPLE_MULTIPLIER")
-fi
-if [[ "$TASK" == "multiclass" || "$TASK" == "binary" ]]; then
-  extra_args+=(--target-col "$TARGET_COL")
 fi
 
 "$PYTHON" -m python.ml.cli.audio_tiny_cnn_train \
@@ -64,8 +62,7 @@ fi
   --out-dir "$OUT_DIR" \
   --model-arch resnet_small \
   --task "$TASK" \
-  --target-cols "$TARGET_COLS" \
-  --positive-threshold "$POSITIVE_THRESHOLD" \
+  --target-col "$TARGET_COL" \
   --epochs "$EPOCHS" \
   --batch-size "$BATCH_SIZE" \
   --learning-rate "$LEARNING_RATE" \
@@ -83,10 +80,10 @@ fi
 
 "$PYTHON" -m python.ml.cli.audio_pca_svm_plot \
   --checkpoint-dir "$OUT_DIR" \
-  --use-tuned-thresholds yes \
   --out-png "$PLOT_PNG" \
   --out-meta "$PLOT_META" \
-  --title "Audio ResNet ${TASK} (bluerock 10s, ro+delivery)"
+  --title "Audio ResNet Multiclass (bluerock 10s, primary_class)"
 
 echo "[OK] model -> $OUT_DIR/audio_tiny_cnn_model.pt"
 echo "[OK] plot  -> $PLOT_PNG"
+echo "[OK] metrics -> $OUT_DIR/audio_tiny_cnn_metrics.json"

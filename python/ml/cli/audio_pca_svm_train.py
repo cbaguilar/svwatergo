@@ -14,6 +14,7 @@ def main() -> int:
     p.add_argument("--dataset", nargs="+", required=True, help="Labeled dataset parquet path(s)")
     p.add_argument("--split-manifest", default="", help="Optional split manifest parquet (uses fixed splits instead of random split)")
     p.add_argument("--split-col", default="split", help="Split column name (default: split)")
+    p.add_argument("--split-stratify-col", default="", help="Optional dataset column to stratify random split assignment")
     p.add_argument("--dataset-id-col", default="sample_id", help="ID column in --dataset used to join split manifest")
     p.add_argument("--split-id-col", default="sample_id", help="ID column in --split-manifest used to join dataset")
     p.add_argument("--out-dir", required=True)
@@ -29,6 +30,13 @@ def main() -> int:
     p.add_argument("--svm-c", type=float, default=1.0)
     p.add_argument("--svm-gamma", default="scale")
     p.add_argument("--svm-class-weight", choices=["balanced"], default=None, help="Optional class weighting for SVM")
+    p.add_argument("--oversample-class-col", default="primary_class", help="Class column used to pick rows for train-only oversampling")
+    p.add_argument(
+        "--oversample-classes",
+        default="",
+        help="Comma-separated class labels to oversample in training set (e.g. not_producing|delivering,producing|delivering)",
+    )
+    p.add_argument("--oversample-multiplier", type=int, default=1, help="Integer multiplier for selected oversampled classes (1 disables)")
     p.add_argument("--no-standardize", action="store_true")
 
     # Persisted mel settings used for wav inference; defaults match current mel generator.
@@ -91,6 +99,14 @@ def main() -> int:
         split_col=str(args.split_col),
         dataset_id_col=str(args.dataset_id_col),
         split_manifest_id_col=str(args.split_id_col),
+        split_stratify_col=str(args.split_stratify_col),
+        oversample_class_col=str(args.oversample_class_col),
+        oversample_classes=(
+            [c.strip() for c in str(args.oversample_classes).split(",") if c.strip()]
+            if str(args.oversample_classes).strip()
+            else None
+        ),
+        oversample_multiplier=int(args.oversample_multiplier),
     )
     print(f"Model      -> {res.model_path}")
     print(f"Metrics    -> {res.metrics_path}")
