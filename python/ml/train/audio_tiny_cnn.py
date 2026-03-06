@@ -144,6 +144,73 @@ def _build_model(nn, *, out_dim: int, model_arch: str):
     raise ValueError(f"Unknown model_arch: {model_arch!r}")
 
 
+def _forward_logits_and_embedding(model, xb, *, arch_kind: str):
+    kind = str(arch_kind)
+    if kind == "tiny_cnn_v1":
+        emb = model[:-1](xb)
+        logits = model[-1](emb)
+        return logits, emb
+    if kind == "resnet_small_v1":
+        x = model.stem(xb)
+        x = model._run_block(model.b1, x)
+        x = model._run_block(model.b2, x)
+        x = model._run_block(model.b3, x)
+        emb = model.head[:-1](x)
+        logits = model.head[-1](emb)
+        return logits, emb
+    logits = model(xb)
+    return logits, None
+
+
+def _select_aux_window_feature_columns(
+    df: pd.DataFrame,
+    *,
+    target_col: str,
+    target_cols: Optional[List[str]],
+    split_col: str,
+    dataset_id_col: str,
+    split_manifest_id_col: str,
+    explicit_cols: Optional[List[str]],
+) -> List[str]:
+    if explicit_cols:
+        missing = [c for c in explicit_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"aux_pca_feature_cols missing columns: {', '.join(missing)}")
+        cols = list(explicit_cols)
+    else:
+        cols = []
+        excluded = {
+            str(target_col),
+            str(split_col),
+            str(dataset_id_col),
+            str(split_manifest_id_col),
+            "mel_shard_local_index",
+        }
+        excluded.update(str(c) for c in (target_cols or []))
+        for c in df.columns:
+            cs = str(c)
+            if cs in excluded:
+                continue
+            lc = cs.lower()
+            if "label" in lc or lc.endswith("_duty"):
+                continue
+            if pd.api.types.is_numeric_dtype(df[c]):
+                cols.append(cs)
+    if not cols:
+        raise ValueError("No numeric window feature columns available for aux PCA target.")
+    keep: List[str] = []
+    for c in cols:
+        s = pd.to_numeric(df[c], errors="coerce")
+        if int(s.notna().sum()) <= 0:
+            continue
+        if float(s.std(skipna=True)) <= 0.0:
+            continue
+        keep.append(str(c))
+    if not keep:
+        raise ValueError("All aux PCA feature columns were empty or constant.")
+    return keep
+
+
 def _coerce_multilabel_target(
     df: pd.DataFrame,
     *,
@@ -439,6 +506,12 @@ def fit_audio_tiny_cnn(
     lr_plateau: bool = False,
     lr_plateau_factor: float = 0.5,
     lr_plateau_patience: int = 2,
+    aux_target_pca: bool = False,
+    aux_pca_feature_source: str = "window_cols",
+    aux_pca_feature_cols: Optional[List[str]] = None,
+    aux_pca_components: int = 8,
+    aux_pca_variance_ratio: float = 0.0,
+    aux_pca_weight: float = 0.1,
 ) -> AudioTinyCNNResult:
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
@@ -448,6 +521,16 @@ def fit_audio_tiny_cnn(
 
     if class_weight not in (None, "balanced"):
         raise ValueError("class_weight must be None or 'balanced'")
+    aux_enabled = bool(aux_target_pca)
+    aux_feature_source = str(aux_pca_feature_source).strip().lower()
+    if aux_feature_source not in ("window_cols", "mel_flat"):
+        raise ValueError("aux_pca_feature_source must be 'window_cols' or 'mel_flat'")
+    if float(aux_pca_weight) < 0.0:
+        raise ValueError("aux_pca_weight must be >= 0")
+    if float(aux_pca_variance_ratio) < 0.0 or float(aux_pca_variance_ratio) > 1.0:
+        raise ValueError("aux_pca_variance_ratio must be in [0,1]")
+    if int(aux_pca_components) < 1:
+        raise ValueError("aux_pca_components must be >= 1")
     df = _sample_rows(df, int(limit), str(sample_mode))
     task = str(task)
     multilabel_truth_threshold = float(positive_threshold)
@@ -526,6 +609,78 @@ def fit_audio_tiny_cnn(
         if task == "multilabel" and int(np.sum(y[idx_train], axis=0).max()) <= 0:
             raise ValueError("Train split has no positive multilabel targets.")
 
+    aux_targets_all: Optional[np.ndarray] = None
+    aux_meta: Dict[str, Any] = {"enabled": bool(aux_enabled)}
+    if aux_enabled:
+        if aux_feature_source == "mel_flat":
+            X_aux_features = X_mel.reshape(X_mel.shape[0], -1).astype(np.float32, copy=False)
+            aux_feature_cols_used: List[str] = [f"mel_flat_{i}" for i in range(int(X_aux_features.shape[1]))]
+        else:
+            aux_feature_cols_used = _select_aux_window_feature_columns(
+                df,
+                target_col=str(target_col),
+                target_cols=list(target_cols) if target_cols else None,
+                split_col=str(split_col),
+                dataset_id_col=str(dataset_id_col),
+                split_manifest_id_col=str(split_manifest_id_col),
+                explicit_cols=list(aux_pca_feature_cols) if aux_pca_feature_cols else None,
+            )
+            feat_df = df[aux_feature_cols_used].apply(pd.to_numeric, errors="coerce")
+            train_means = feat_df.iloc[idx_train].mean(axis=0, skipna=True)
+            feat_df = feat_df.fillna(train_means)
+            X_aux_features = feat_df.to_numpy(dtype=np.float32)
+
+        if X_aux_features.shape[0] != len(df):
+            raise ValueError("Aux feature row count mismatch")
+        x_mean = np.mean(X_aux_features[idx_train], axis=0, dtype=np.float64)
+        x_std = np.std(X_aux_features[idx_train], axis=0, dtype=np.float64)
+        x_std = np.where(x_std > 1e-12, x_std, 1.0)
+        X_aux_norm = ((X_aux_features - x_mean.reshape(1, -1)) / x_std.reshape(1, -1)).astype(np.float32, copy=False)
+
+        var_ratio = float(aux_pca_variance_ratio)
+        if var_ratio > 0.0:
+            pca = PCA(n_components=float(var_ratio), svd_solver="full", random_state=int(random_state))
+        else:
+            n_max = int(min(int(aux_pca_components), X_aux_norm[idx_train].shape[0], X_aux_norm[idx_train].shape[1]))
+            if n_max < 1:
+                raise ValueError("Not enough train rows/features to fit aux PCA target.")
+            pca = PCA(n_components=n_max, random_state=int(random_state))
+        pca.fit(X_aux_norm[idx_train])
+        aux_targets_all = pca.transform(X_aux_norm).astype(np.float32, copy=False)
+
+        aux_pca_model_path = out_dir / "aux_target_pca_model.npz"
+        np.savez(
+            str(aux_pca_model_path),
+            mean=x_mean.astype(np.float32),
+            std=x_std.astype(np.float32),
+            components=np.asarray(pca.components_, dtype=np.float32),
+            explained_variance=np.asarray(getattr(pca, "explained_variance_", []), dtype=np.float32),
+            explained_variance_ratio=np.asarray(getattr(pca, "explained_variance_ratio_", []), dtype=np.float32),
+            feature_cols=np.asarray(aux_feature_cols_used, dtype=object),
+        )
+        aux_meta = {
+            "enabled": True,
+            "feature_source": str(aux_feature_source),
+            "feature_cols": aux_feature_cols_used,
+            "n_features": int(X_aux_features.shape[1]),
+            "n_components": int(aux_targets_all.shape[1]),
+            "variance_ratio_requested": float(var_ratio),
+            "variance_ratio_captured": float(np.sum(getattr(pca, "explained_variance_ratio_", np.asarray([], dtype=np.float64)))),
+            "weight": float(aux_pca_weight),
+            "artifact_path": str(aux_pca_model_path),
+            "fit_split": "train",
+        }
+        if not quiet:
+            print(
+                "[aux_pca] "
+                f"source={aux_meta['feature_source']} "
+                f"n_features={aux_meta['n_features']} "
+                f"n_components={aux_meta['n_components']} "
+                f"var={aux_meta['variance_ratio_captured']:.4f} "
+                f"weight={aux_meta['weight']:.4f}",
+                flush=True,
+            )
+
     X_train = torch.tensor(X[idx_train], dtype=torch.float32)
     X_test = torch.tensor(X[idx_test], dtype=torch.float32)
     X_val = torch.tensor(X[idx_val], dtype=torch.float32)
@@ -538,7 +693,12 @@ def fit_audio_tiny_cnn(
         y_test = torch.tensor(y[idx_test], dtype=torch.long)
         y_val = torch.tensor(y[idx_val], dtype=torch.long)
 
-    train_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=True)
+    if aux_targets_all is not None:
+        y_aux_train = torch.tensor(aux_targets_all[idx_train], dtype=torch.float32)
+        train_dl = DataLoader(TensorDataset(X_train, y_train, y_aux_train), batch_size=int(batch_size), shuffle=True)
+    else:
+        train_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=True)
+    train_eval_dl = DataLoader(TensorDataset(X_train, y_train), batch_size=int(batch_size), shuffle=False)
     test_dl = DataLoader(TensorDataset(X_test, y_test), batch_size=int(batch_size), shuffle=False)
     val_dl = DataLoader(TensorDataset(X_val, y_val), batch_size=int(batch_size), shuffle=False)
 
@@ -553,6 +713,16 @@ def fit_audio_tiny_cnn(
         out_dim = n_classes
     model, arch_kind = _build_model(nn, out_dim=out_dim, model_arch=str(model_arch))
     model = model.to(device)
+    aux_head = None
+    aux_criterion = None
+    if aux_targets_all is not None:
+        emb_probe = torch.zeros((1, 1, int(n_mels), int(n_frames)), dtype=torch.float32, device=device)
+        with torch.no_grad():
+            _, emb = _forward_logits_and_embedding(model, emb_probe, arch_kind=str(arch_kind))
+        if emb is None:
+            raise ValueError(f"Aux PCA target is enabled, but architecture {arch_kind} does not expose embeddings.")
+        aux_head = nn.Linear(int(emb.shape[1]), int(aux_targets_all.shape[1])).to(device)
+        aux_criterion = nn.SmoothL1Loss()
 
     loss_kwargs = _balanced_loss_kwargs(
         torch=torch,
@@ -579,7 +749,8 @@ def fit_audio_tiny_cnn(
     else:
         criterion = nn.CrossEntropyLoss(**loss_kwargs)
 
-    optim = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=float(weight_decay))
+    optim_params = list(model.parameters()) + (list(aux_head.parameters()) if aux_head is not None else [])
+    optim = torch.optim.AdamW(optim_params, lr=float(learning_rate), weight_decay=float(weight_decay))
     drop_epochs = set(int(e) for e in (lr_drop_epochs or []) if int(e) > 0)
     plateau_sched = None
     if bool(lr_plateau):
@@ -638,31 +809,51 @@ def fit_audio_tiny_cnn(
     log_every = max(1, int(log_every))
     for ep in range(1, n_epochs + 1):
         model.train()
+        if aux_head is not None:
+            aux_head.train()
         loss_sum = 0.0
+        aux_loss_sum = 0.0
         n_samples = 0
-        for xb, yb in train_dl:
+        for batch in train_dl:
+            if len(batch) == 3:
+                xb, yb, y_auxb = batch
+                y_auxb = y_auxb.to(device)
+            else:
+                xb, yb = batch
+                y_auxb = None
             xb = xb.to(device)
             yb = yb.to(device)
             optim.zero_grad(set_to_none=True)
-            logits = model(xb)
+            logits, emb = _forward_logits_and_embedding(model, xb, arch_kind=str(arch_kind))
             if task == "binary":
-                loss = criterion(logits.view(-1), yb.float())
+                main_loss = criterion(logits.view(-1), yb.float())
             elif task == "multilabel":
-                loss = criterion(logits, yb)
+                main_loss = criterion(logits, yb)
             elif task == "multiregression":
-                loss = criterion(torch.sigmoid(logits), yb)
+                main_loss = criterion(torch.sigmoid(logits), yb)
             else:
-                loss = criterion(logits, yb)
+                main_loss = criterion(logits, yb)
+            aux_loss = None
+            if aux_head is not None and aux_criterion is not None and y_auxb is not None:
+                if emb is None:
+                    raise RuntimeError("Embedding missing for aux head forward pass.")
+                aux_pred = aux_head(emb)
+                aux_loss = aux_criterion(aux_pred, y_auxb)
+                loss = main_loss + float(aux_pca_weight) * aux_loss
+            else:
+                loss = main_loss
             loss.backward()
             optim.step()
             bsz = int(yb.shape[0])
             loss_sum += float(loss.detach().cpu().item()) * bsz
+            if aux_loss is not None:
+                aux_loss_sum += float(aux_loss.detach().cpu().item()) * bsz
             n_samples += bsz
 
         avg_loss = (loss_sum / max(1, n_samples))
         need_eval = bool(plateau_sched is not None) or (ep in drop_epochs) or ((not quiet) and (ep % log_every == 0 or ep == n_epochs))
         if need_eval:
-            y_train_true_ep, y_train_pred_ep, _ = _predict(train_dl)
+            y_train_true_ep, y_train_pred_ep, _ = _predict(train_eval_dl)
             y_test_true_ep, y_test_pred_ep, _ = _predict(test_dl)
             if task == "multilabel":
                 y_train_true_bin_ep = _binarize_multilabel_truth(y_train_true_ep)
@@ -694,6 +885,7 @@ def fit_audio_tiny_cnn(
             if task == "multilabel":
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
+                    f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
                     f"train_exact_match={train_acc:.4f} "
                     f"test_exact_match={test_acc:.4f} "
                     f"lr={float(optim.param_groups[0]['lr']):.6g}",
@@ -702,6 +894,7 @@ def fit_audio_tiny_cnn(
             elif task == "multiregression":
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
+                    f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
                     f"train_mae={train_acc:.4f} "
                     f"test_mae={test_acc:.4f} "
                     f"lr={float(optim.param_groups[0]['lr']):.6g}",
@@ -710,13 +903,14 @@ def fit_audio_tiny_cnn(
             else:
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
+                    f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
                     f"train_acc={train_acc:.4f} "
                     f"test_acc={test_acc:.4f} "
                     f"lr={float(optim.param_groups[0]['lr']):.6g}",
                     flush=True,
                 )
 
-    y_train_true, y_train_pred_raw, y_train_score = _predict(train_dl)
+    y_train_true, y_train_pred_raw, y_train_score = _predict(train_eval_dl)
     y_test_true, y_test_pred_raw, y_test_score = _predict(test_dl)
     y_val_true, y_val_pred_raw, y_val_score = _predict(val_dl)
     if task == "multilabel":
@@ -946,6 +1140,7 @@ def fit_audio_tiny_cnn(
             "val_idx": idx_val.tolist(),
             "split_source": str(split_source),
             "arch": {"kind": str(arch_kind)},
+            "aux_target_pca": aux_meta,
         },
         model_path,
     )
@@ -1094,6 +1289,7 @@ def fit_audio_tiny_cnn(
         "test_metrics": test_metrics,
         "val_metrics": val_metrics,
         "metrics_by_source": by_source,
+        "aux_target_pca": aux_meta,
         "train_params": {
             "model_arch": str(arch_kind),
             "epochs": int(epochs),
@@ -1110,6 +1306,11 @@ def fit_audio_tiny_cnn(
             "sample_mode": str(sample_mode),
             "log_every": int(log_every),
             "quiet": bool(quiet),
+            "aux_target_pca_enabled": bool(aux_meta.get("enabled", False)),
+            "aux_pca_feature_source": str(aux_feature_source),
+            "aux_pca_components": int(aux_pca_components),
+            "aux_pca_variance_ratio": float(aux_pca_variance_ratio),
+            "aux_pca_weight": float(aux_pca_weight),
         },
     }
     metrics_path = out_dir / "audio_tiny_cnn_metrics.json"

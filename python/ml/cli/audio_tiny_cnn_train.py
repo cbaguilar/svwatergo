@@ -41,6 +41,41 @@ def main() -> int:
     p.add_argument("--lr-plateau-factor", type=float, default=0.5)
     p.add_argument("--lr-plateau-patience", type=int, default=2)
     p.add_argument("--class-weight", choices=["balanced"], default=None, help="Optional class weighting for CNN loss")
+    p.add_argument(
+        "--aux-target-pca",
+        default="no",
+        choices=["yes", "no"],
+        help="Enable auxiliary PCA regression target from window features",
+    )
+    p.add_argument(
+        "--aux-pca-feature-source",
+        default="window_cols",
+        choices=["window_cols", "mel_flat"],
+        help="Source used to derive PCA auxiliary target",
+    )
+    p.add_argument(
+        "--aux-pca-feature-cols",
+        default="",
+        help="Comma-separated numeric columns used when --aux-pca-feature-source=window_cols",
+    )
+    p.add_argument(
+        "--aux-pca-components",
+        type=int,
+        default=8,
+        help="Max PCA components for auxiliary target",
+    )
+    p.add_argument(
+        "--aux-pca-variance-ratio",
+        type=float,
+        default=0.0,
+        help="If >0 and <=1, choose #components by explained variance ratio on train split",
+    )
+    p.add_argument(
+        "--aux-pca-weight",
+        type=float,
+        default=0.1,
+        help="Loss weight for auxiliary PCA regression head",
+    )
 
     # Persisted mel settings used for wav inference.
     p.add_argument("--sample-rate", type=int, default=16000)
@@ -116,6 +151,16 @@ def main() -> int:
         dataset_id_col=str(args.dataset_id_col),
         split_manifest_id_col=str(args.split_id_col),
         model_arch=str(args.model_arch),
+        aux_target_pca=(str(args.aux_target_pca) == "yes"),
+        aux_pca_feature_source=str(args.aux_pca_feature_source),
+        aux_pca_feature_cols=(
+            [c.strip() for c in str(args.aux_pca_feature_cols).split(",") if c.strip()]
+            if str(args.aux_pca_feature_cols).strip()
+            else None
+        ),
+        aux_pca_components=int(args.aux_pca_components),
+        aux_pca_variance_ratio=float(args.aux_pca_variance_ratio),
+        aux_pca_weight=float(args.aux_pca_weight),
     )
     print(f"Model      -> {res.model_path}")
     print(f"Metrics    -> {res.metrics_path}")
