@@ -51,3 +51,50 @@ python -m python.ml.cli.audio_pca_svm_infer \
   --model data/checkpoints/ropumprun_on_pca_svm/audio_pca_svm_model.joblib \
   --wav /path/to/segment.wav
 ```
+
+## Tiny CNN (Ropumprun) on Existing 10s Mels
+Train tiny CNN (requires `torch` in your environment):
+
+```bash
+python -m python.ml.cli.audio_tiny_cnn_train \
+  --dataset data/derived/ropumprun_labeled_mels_camera_5_2026-03-01_10s.parquet \
+  --out-dir data/checkpoints/ropumprun_on_tiny_cnn_camera_5_2026-03-01_10s \
+  --task binary \
+  --target-col ropumprun_label \
+  --positive-label on \
+  --epochs 12 \
+  --target-seconds 10
+```
+
+Use unified inference CLI for either model type:
+
+```bash
+# PCA+SVM
+python -m python.ml.cli.audio_pca_svm_infer \
+  --model data/checkpoints/ropumprun_on_pca_svm_camera_5_2026-03-01_10s/audio_pca_svm_model.joblib \
+  --model-kind pca_svm \
+  --wav /path/to/new.wav
+
+# Tiny CNN
+python -m python.ml.cli.audio_pca_svm_infer \
+  --model data/checkpoints/ropumprun_on_tiny_cnn_camera_5_2026-03-01_10s/audio_tiny_cnn_model.pt \
+  --model-kind tiny_cnn \
+  --wav /path/to/new.wav
+
+# Tiny CNN 4-panel
+python -m python.ml.cli.audio_pca_svm_plot \
+  --checkpoint-dir data/checkpoints/ropumprun_on_tiny_cnn_camera_5_2026-03-01_10s \
+  --out-png data/plots/camera_5_2026-03-01_10s_tiny_cnn_4panel.png
+```
+
+One-shot script with existing `camera_5` data:
+
+```bash
+DATE=2026-03-01 PYTHON=python3 ./scripts/train_camera5_ropumprun_10s.sh
+```
+
+If torch is installed but import fails with `libtorch_cpu.so: cannot enable executable stack`:
+
+```bash
+execstack -c $CONDA_PREFIX/lib/python*/site-packages/torch/lib/*.so
+```
