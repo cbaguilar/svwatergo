@@ -128,6 +128,7 @@ UI_HTML = """<!doctype html>
           <option value="auto">auto</option>
           <option value="pca_svm">pca_svm</option>
           <option value="tiny_cnn">tiny_cnn</option>
+          <option value="frozen_embed_panns">frozen_embed_panns</option>
         </select>
       </div>
       <div><label>&nbsp;</label><button onclick="inferCurrent()">Infer Current</button></div>
@@ -656,15 +657,25 @@ class AppState:
             raise FileNotFoundError(str(model_p))
 
         kind = str(model_kind or "auto").strip().lower()
-        if kind not in {"auto", "pca_svm", "tiny_cnn"}:
-            raise ValueError("model_kind must be one of auto, pca_svm, tiny_cnn")
+        if kind not in {"auto", "pca_svm", "tiny_cnn", "frozen_embed_panns"}:
+            raise ValueError("model_kind must be one of auto, pca_svm, tiny_cnn, frozen_embed_panns")
         if kind == "auto":
-            kind = "tiny_cnn" if model_p.suffix.lower() == ".pt" else "pca_svm"
+            name_l = model_p.name.lower()
+            if model_p.suffix.lower() in (".pt", ".pth"):
+                kind = "tiny_cnn"
+            elif "frozen_mlp_head" in name_l:
+                kind = "frozen_embed_panns"
+            else:
+                kind = "pca_svm"
 
         if kind == "tiny_cnn":
             from python.ml.train.audio_tiny_cnn import predict_audio_tiny_cnn  # type: ignore
 
             pred = predict_audio_tiny_cnn(model_path=model_p, wav_path=wav_p)
+        elif kind == "frozen_embed_panns":
+            from python.ml.train.audio_pretrained_embeddings import predict_audio_pretrained_frozen_head  # type: ignore
+
+            pred = predict_audio_pretrained_frozen_head(model_path=model_p, wav_path=wav_p)
         else:
             from python.ml.train.audio_pca_svm import predict_audio_pca_svm  # type: ignore
 

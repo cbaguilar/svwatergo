@@ -27,6 +27,65 @@ class AudioPretrainedEmbeddingResult:
     finetuned_head_path: Optional[Path]
 
 
+def load_frozen_pretrained_embedding_head(model_path: Path) -> Dict[str, Any]:
+    try:
+        import joblib  # type: ignore
+    except Exception as e:
+        raise RuntimeError("Missing joblib. Install: pip install joblib") from e
+    obj = joblib.load(str(model_path))
+    if not isinstance(obj, dict):
+        raise ValueError("Invalid frozen embedding bundle format")
+    if str(obj.get("backend", "")).strip().lower() != "panns":
+        raise ValueError(f"Unsupported frozen embedding backend: {obj.get('backend')!r}")
+    if "scaler" not in obj or "classifier" not in obj:
+        raise ValueError("Invalid frozen embedding bundle: missing scaler/classifier")
+    return obj
+
+
+def predict_audio_pretrained_frozen_head(
+    model_path: Path,
+    *,
+    wav_path: Path,
+    device: str = "cuda",
+) -> Dict[str, Any]:
+    bundle = load_frozen_pretrained_embedding_head(model_path)
+    sr = int(bundle.get("sample_rate", 32000))
+    target_seconds = float(bundle.get("target_seconds", 10.0))
+    scaler = bundle["scaler"]
+    clf = bundle["classifier"]
+
+    y = _load_waveform(Path(wav_path), target_sr=sr, target_seconds=target_seconds)
+    backend = _PannsBackend(device=str(device))
+    emb = backend.extract_embedding_np(np.expand_dims(y, axis=0))
+    x = scaler.transform(np.asarray(emb, dtype=np.float32))
+    pred_idx = int(clf.predict(x)[0])
+
+    y_meta = bundle.get("y_meta", {}) or {}
+    classes = [str(c) for c in (y_meta.get("classes") or [])]
+    if hasattr(clf, "predict_proba"):
+        probs = np.asarray(clf.predict_proba(x)[0], dtype=np.float64)
+    else:
+        n = int(max(len(classes), pred_idx + 1, 1))
+        probs = np.zeros((n,), dtype=np.float64)
+        probs[pred_idx] = 1.0
+    if not classes:
+        classes = [str(i) for i in range(int(len(probs)))]
+
+    prob_dict = {classes[i] if i < len(classes) else str(i): float(probs[i]) for i in range(len(probs))}
+    pred_label = classes[pred_idx] if pred_idx < len(classes) else str(pred_idx)
+    return {
+        "bundle_type": "audio_pretrained_frozen_head",
+        "backend": "panns",
+        "task": bundle.get("task", "multiclass"),
+        "target_col": bundle.get("target_col", "primary_class"),
+        "sample_rate": int(sr),
+        "target_seconds": float(target_seconds),
+        "prediction_index": int(pred_idx),
+        "prediction_label": str(pred_label),
+        "probabilities": prob_dict,
+    }
+
+
 class _PannsBackend:
     """
     PANNs backend via `panns_inference`.
@@ -442,6 +501,8 @@ def fit_audio_pretrained_embedding_experiment(
                 "target_col": target_col,
                 "y_meta": y_meta,
                 "backend": "panns",
+                "sample_rate": int(backend.sample_rate),
+                "target_seconds": float(target_seconds),
                 "emb_cache": str(emb_cache),
             },
             str(frozen_head_path),
