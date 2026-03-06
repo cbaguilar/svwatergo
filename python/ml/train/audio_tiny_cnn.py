@@ -1006,6 +1006,15 @@ def fit_audio_tiny_cnn(
         oversample_multiplier=int(oversample_multiplier),
         random_state=int(random_state),
     )
+    class_weight_requested = str(class_weight) if class_weight else None
+    class_weight_effective = class_weight_requested
+    if class_weight_effective == "balanced" and int(oversample_meta.get("n_added", 0)) > 0:
+        class_weight_effective = None
+        if not quiet:
+            print(
+                "[class_weight] disabled balanced weighting because train oversampling is active",
+                flush=True,
+            )
 
     mel_global_norm: Dict[str, Any] = {"enabled": False}
     use_global_norm = bool((mel_config or {}).get("train_mel_global_norm", False))
@@ -1253,13 +1262,13 @@ def fit_audio_tiny_cnn(
         torch=torch,
         y_train=y[idx_train_fit],
         task=task,
-        class_weight=class_weight,
+        class_weight=class_weight_effective,
     )
     loss_kwargs = _move_loss_kwargs_to_device(loss_kwargs, device)
     if task == "binary":
         criterion = nn.BCEWithLogitsLoss(**loss_kwargs)
     elif task == "multilabel":
-        if class_weight == "balanced":
+        if class_weight_effective == "balanced":
             y_tr = (y[idx_train_fit] >= multilabel_truth_threshold).astype(np.float32)
             pos = np.sum(y_tr, axis=0)
             neg = y_tr.shape[0] - pos
@@ -1999,7 +2008,8 @@ def fit_audio_tiny_cnn(
             "lr_plateau_factor": float(lr_plateau_factor),
             "lr_plateau_patience": int(lr_plateau_patience),
             "weight_decay": float(weight_decay),
-            "class_weight": (str(class_weight) if class_weight else None),
+            "class_weight_requested": (str(class_weight_requested) if class_weight_requested else None),
+            "class_weight_effective": (str(class_weight_effective) if class_weight_effective else None),
             "limit": int(limit),
             "sample_mode": str(sample_mode),
             "log_every": int(log_every),

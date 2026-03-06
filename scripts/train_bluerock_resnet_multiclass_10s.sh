@@ -21,6 +21,15 @@ CMVN="${CMVN:-yes}"
 OVERSAMPLE_CLASS_COL="${OVERSAMPLE_CLASS_COL:-primary_class}"
 OVERSAMPLE_CLASSES="${OVERSAMPLE_CLASSES:-not_producing|delivering,producing|delivering}"
 OVERSAMPLE_MULTIPLIER="${OVERSAMPLE_MULTIPLIER:-1}"
+CLASS_WEIGHT="${CLASS_WEIGHT:-auto}"  # auto|balanced|none
+
+# Optional auxiliary PCA head settings.
+AUX_TARGET_PCA="${AUX_TARGET_PCA:-no}"
+AUX_PCA_FEATURE_SOURCE="${AUX_PCA_FEATURE_SOURCE:-window_cols}"
+AUX_PCA_FEATURE_COLS="${AUX_PCA_FEATURE_COLS:-}"
+AUX_PCA_COMPONENTS="${AUX_PCA_COMPONENTS:-8}"
+AUX_PCA_VARIANCE_RATIO="${AUX_PCA_VARIANCE_RATIO:-0.0}"
+AUX_PCA_WEIGHT="${AUX_PCA_WEIGHT:-0.1}"
 
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_resnet_multiclass_primary_class}"
 PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multiclass_primary_class_5panel.png}"
@@ -52,6 +61,27 @@ fi
 if [[ -n "$OVERSAMPLE_MULTIPLIER" ]]; then
   extra_args+=(--oversample-multiplier "$OVERSAMPLE_MULTIPLIER")
 fi
+if [[ "$AUX_TARGET_PCA" == "yes" ]]; then
+  extra_args+=(--aux-target-pca yes)
+  extra_args+=(--aux-pca-feature-source "$AUX_PCA_FEATURE_SOURCE")
+  extra_args+=(--aux-pca-components "$AUX_PCA_COMPONENTS")
+  extra_args+=(--aux-pca-variance-ratio "$AUX_PCA_VARIANCE_RATIO")
+  extra_args+=(--aux-pca-weight "$AUX_PCA_WEIGHT")
+  if [[ -n "$AUX_PCA_FEATURE_COLS" ]]; then
+    extra_args+=(--aux-pca-feature-cols "$AUX_PCA_FEATURE_COLS")
+  fi
+fi
+
+class_weight_args=()
+if [[ "$CLASS_WEIGHT" == "balanced" ]]; then
+  class_weight_args+=(--class-weight balanced)
+elif [[ "$CLASS_WEIGHT" == "auto" ]]; then
+  if [[ -n "$OVERSAMPLE_CLASSES" && "${OVERSAMPLE_MULTIPLIER:-1}" -gt 1 ]]; then
+    class_weight_args=()
+  else
+    class_weight_args+=(--class-weight balanced)
+  fi
+fi
 
 "$PYTHON" -m python.ml.cli.audio_tiny_cnn_train \
   --dataset "$DATASET" \
@@ -72,11 +102,11 @@ fi
   --lr-plateau "$LR_PLATEAU" \
   --lr-plateau-factor "$LR_PLATEAU_FACTOR" \
   --lr-plateau-patience "$LR_PLATEAU_PATIENCE" \
-  --class-weight balanced \
   --generate-projection yes \
   --sample-rate 16000 \
   --target-seconds 10 \
   --mel-normalization "$MEL_NORMALIZATION" \
+  "${class_weight_args[@]}" \
   "${extra_args[@]}"
 
 "$PYTHON" -m python.ml.cli.audio_pca_svm_plot \
