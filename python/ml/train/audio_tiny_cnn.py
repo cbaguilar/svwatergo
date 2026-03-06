@@ -1718,58 +1718,124 @@ def fit_audio_tiny_cnn(
             if not quiet:
                 print(f"[confusion_by_source] atlases={len(atlas_paths)} dir={conf_dir}", flush=True)
 
-    if task in ("binary", "multiclass"):
-        labels = [0, 1] if task == "binary" else list(range(max(1, len(class_names_for_conf))))
-        split_arrays = {
-            "train": (np.asarray(y_train_true, dtype=np.int64), np.asarray(y_train_pred, dtype=np.int64)),
-            "test": (np.asarray(y_test_true, dtype=np.int64), np.asarray(y_test_pred, dtype=np.int64)),
-            "val": (np.asarray(y_val_true, dtype=np.int64), np.asarray(y_val_pred, dtype=np.int64)),
-        }
-        conf_png_paths: Dict[str, str] = {}
-        for split_name, (yt, yp) in split_arrays.items():
-            if yt.size <= 0 or yp.size <= 0:
-                continue
-            cm = confusion_matrix(yt, yp, labels=labels).astype(np.int64)
-            per_class = _per_class_metrics_from_confusion(cm=cm, label_names=[str(v) for v in class_names_for_conf])
-            confusion_by_split[split_name] = {
-                "labels": [str(v) for v in class_names_for_conf],
-                "matrix": cm.tolist(),
-                "counts": _confusion_counts(cm),
-                "per_class": per_class,
+    if task in ("binary", "multiclass", "multilabel"):
+        conf_png_paths: Dict[str, Any] = {}
+        if task in ("binary", "multiclass"):
+            labels = [0, 1] if task == "binary" else list(range(max(1, len(class_names_for_conf))))
+            split_arrays = {
+                "train": (np.asarray(y_train_true, dtype=np.int64), np.asarray(y_train_pred, dtype=np.int64)),
+                "test": (np.asarray(y_test_true, dtype=np.int64), np.asarray(y_test_pred, dtype=np.int64)),
+                "val": (np.asarray(y_val_true, dtype=np.int64), np.asarray(y_val_pred, dtype=np.int64)),
             }
+            for split_name, (yt, yp) in split_arrays.items():
+                if yt.size <= 0 or yp.size <= 0:
+                    continue
+                cm = confusion_matrix(yt, yp, labels=labels).astype(np.int64)
+                per_class = _per_class_metrics_from_confusion(cm=cm, label_names=[str(v) for v in class_names_for_conf])
+                confusion_by_split[split_name] = {
+                    "labels": [str(v) for v in class_names_for_conf],
+                    "matrix": cm.tolist(),
+                    "counts": _confusion_counts(cm),
+                    "per_class": per_class,
+                }
 
-            out_png = out_dir / f"confusion_matrix_{split_name}.png"
-            ok = _plot_confusion_grid(
-                entries=[("all_sources", cm, int(yt.size))],
-                label_names=[str(v) for v in class_names_for_conf],
-                title=f"{split_name} confusion matrix",
-                out_png=out_png,
-            )
-            if ok:
-                conf_png_paths[split_name] = str(out_png)
+                out_png = out_dir / f"confusion_matrix_{split_name}.png"
+                ok = _plot_confusion_grid(
+                    entries=[("all_sources", cm, int(yt.size))],
+                    label_names=[str(v) for v in class_names_for_conf],
+                    title=f"{split_name} confusion matrix",
+                    out_png=out_png,
+                )
+                if ok:
+                    conf_png_paths[split_name] = str(out_png)
+
+            if not quiet and "test" in confusion_by_split:
+                t = confusion_by_split["test"]
+                print(
+                    "[confusion:test] "
+                    f"labels={t.get('labels', [])} "
+                    f"matrix={t.get('matrix', [])}",
+                    flush=True,
+                )
+                for name, m in t.get("per_class", {}).items():
+                    print(
+                        "[per_class:test] "
+                        f"class={name} "
+                        f"success={float(m.get('success_rate', 0.0)):.4f} "
+                        f"precision={float(m.get('precision', 0.0)):.4f} "
+                        f"recall={float(m.get('recall', 0.0)):.4f} "
+                        f"f1={float(m.get('f1', 0.0)):.4f} "
+                        f"support={int(m.get('support', 0))}",
+                        flush=True,
+                    )
+        else:
+            split_arrays_ml = {
+                "train": (np.asarray(y_train_true_bin, dtype=np.int64), np.asarray(y_train_pred, dtype=np.int64)),
+                "test": (np.asarray(y_test_true_bin, dtype=np.int64), np.asarray(y_test_pred, dtype=np.int64)),
+                "val": (np.asarray(y_val_true_bin, dtype=np.int64), np.asarray(y_val_pred, dtype=np.int64)),
+            }
+            label_names_ml = list(y_meta.get("classes") or [f"class_{i}" for i in range(int(y.shape[1]))])
+            for split_name, (yt, yp) in split_arrays_ml.items():
+                if yt.size <= 0 or yp.size <= 0:
+                    continue
+                per_label: Dict[str, Any] = {}
+                split_pngs: Dict[str, str] = {}
+                for j, label_name in enumerate(label_names_ml):
+                    yt_j = np.asarray(yt[:, j], dtype=np.int64)
+                    yp_j = np.asarray(yp[:, j], dtype=np.int64)
+                    cm = confusion_matrix(yt_j, yp_j, labels=[0, 1]).astype(np.int64)
+                    per_class_bin = _per_class_metrics_from_confusion(cm=cm, label_names=["0", "1"])
+                    pos = per_class_bin.get("1", {})
+                    per_label[str(label_name)] = {
+                        "labels": ["0", "1"],
+                        "matrix": cm.tolist(),
+                        "counts": _confusion_counts(cm),
+                        "per_class": per_class_bin,
+                        "metrics_positive": {
+                            "success_rate": float(pos.get("success_rate", 0.0)),
+                            "precision": float(pos.get("precision", 0.0)),
+                            "recall": float(pos.get("recall", 0.0)),
+                            "f1": float(pos.get("f1", 0.0)),
+                            "support": int(pos.get("support", 0)),
+                        },
+                    }
+                    out_png = out_dir / f"confusion_matrix_{split_name}_{label_name}.png"
+                    ok = _plot_confusion_grid(
+                        entries=[("all_sources", cm, int(yt_j.size))],
+                        label_names=["0", "1"],
+                        title=f"{split_name} confusion ({label_name})",
+                        out_png=out_png,
+                    )
+                    if ok:
+                        split_pngs[str(label_name)] = str(out_png)
+                confusion_by_split[split_name] = {"per_label": per_label}
+                if split_pngs:
+                    conf_png_paths[split_name] = split_pngs
+
+            if not quiet and "test" in confusion_by_split:
+                t = confusion_by_split["test"]
+                for label_name, node in t.get("per_label", {}).items():
+                    print(
+                        "[confusion:test] "
+                        f"label={label_name} "
+                        f"labels={node.get('labels', [])} "
+                        f"matrix={node.get('matrix', [])}",
+                        flush=True,
+                    )
+                    m = (node.get("metrics_positive") or {})
+                    print(
+                        "[per_label:test] "
+                        f"label={label_name} "
+                        f"success={float(m.get('success_rate', 0.0)):.4f} "
+                        f"precision={float(m.get('precision', 0.0)):.4f} "
+                        f"recall={float(m.get('recall', 0.0)):.4f} "
+                        f"f1={float(m.get('f1', 0.0)):.4f} "
+                        f"support={int(m.get('support', 0))}",
+                        flush=True,
+                    )
 
         if conf_png_paths:
             confusion_artifacts["split_png"] = conf_png_paths
-
-        if not quiet and "test" in confusion_by_split:
-            t = confusion_by_split["test"]
-            print(
-                "[confusion:test] "
-                f"labels={t.get('labels', [])} "
-                f"matrix={t.get('matrix', [])}",
-                flush=True,
-            )
-            for name, m in t.get("per_class", {}).items():
-                print(
-                    "[per_class:test] "
-                    f"class={name} "
-                    f"success={float(m.get('success_rate', 0.0)):.4f} "
-                    f"precision={float(m.get('precision', 0.0)):.4f} "
-                    f"recall={float(m.get('recall', 0.0)):.4f} "
-                    f"f1={float(m.get('f1', 0.0)):.4f} "
-                    f"support={int(m.get('support', 0))}",
-                    flush=True,
-                )
 
     metrics = {
         "task": task,
