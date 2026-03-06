@@ -26,6 +26,15 @@ def main() -> int:
     )
     p.add_argument("--metrics-path", default=None, help="Optional metrics JSON (used for tuned thresholds/class names)")
     p.add_argument("--use-tuned-thresholds", default="no", choices=["yes", "no"], help="For tiny-cnn multilabel, recompute y_pred_* from score_* using tuned thresholds")
+    p.add_argument("--feature-atlas", default="no", choices=["yes", "no"], help="Also render feature atlas plots colored by selected sensor columns")
+    p.add_argument(
+        "--feature-regex",
+        action="append",
+        default=[],
+        help="Regex for selecting feature atlas columns (repeatable). Default targets flow/pressure/conductivity/state/temperature",
+    )
+    p.add_argument("--feature-max-cols", type=int, default=48, help="Max number of feature atlas columns to render")
+    p.add_argument("--feature-pair", default="1:2", help="PCA pair used for feature atlas, e.g. '1:3'")
     args = p.parse_args()
 
     if bool(args.projection) == bool(args.checkpoint_dir):
@@ -80,6 +89,17 @@ def main() -> int:
     if not pc_pairs:
         pc_pairs = [(1, 2)]
 
+    s = str(args.feature_pair).strip()
+    if ":" not in s:
+        raise SystemExit(f"Invalid --feature-pair token {s!r}; expected 'A:B'")
+    a, b = s.split(":", 1)
+    try:
+        feature_pair = (int(a.strip()), int(b.strip()))
+    except Exception as exc:
+        raise SystemExit(f"Invalid --feature-pair token {s!r}; expected integer indices") from exc
+    if feature_pair[0] < 1 or feature_pair[1] < 1:
+        raise SystemExit(f"Invalid --feature-pair token {s!r}; PCA indices must be >= 1")
+
     res = render_audio_pca_svm_overview(
         projection_path=proj,
         out_png=Path(args.out_png) if args.out_png else None,
@@ -92,6 +112,10 @@ def main() -> int:
         class_names=class_names,
         tuned_thresholds_by_class=tuned_thresholds_by_class,
         pc_pairs=pc_pairs,
+        feature_atlas=(str(args.feature_atlas) == "yes"),
+        feature_regex=list(args.feature_regex or []),
+        feature_max_cols=int(args.feature_max_cols),
+        feature_pair=feature_pair,
     )
     print(f"Plot -> {res['plot_path']}")
     print(f"Meta -> {res['meta_path']}")

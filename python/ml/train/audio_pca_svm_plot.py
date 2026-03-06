@@ -1,11 +1,145 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+
+
+def _select_feature_atlas_columns(
+    df: pd.DataFrame,
+    *,
+    include_regex: Sequence[str],
+    max_cols: int,
+) -> list[str]:
+    regs = [re.compile(p, flags=re.IGNORECASE) for p in include_regex if str(p).strip()]
+    excluded_exact = {
+        "y_true",
+        "y_pred",
+        "true_label",
+        "pred_label",
+        "is_error",
+        "pred_confidence",
+        "split",
+        "source_label",
+    }
+    out: list[str] = []
+    for c in df.columns:
+        cs = str(c)
+        lc = cs.lower()
+        if cs in excluded_exact:
+            continue
+        if lc.startswith("pca"):
+            continue
+        if lc.startswith("score_"):
+            continue
+        if lc.startswith("duty_true_") or lc.startswith("duty_pred_"):
+            continue
+        if lc.startswith("y_true_") or lc.startswith("y_pred_"):
+            continue
+        if regs and not any(r.search(cs) for r in regs):
+            continue
+        s = df[cs]
+        if pd.api.types.is_bool_dtype(s) or pd.api.types.is_numeric_dtype(s):
+            out.append(cs)
+            continue
+        # Keep low-cardinality string/state labels.
+        nuniq = int(s.astype(str).fillna("nan").nunique(dropna=False))
+        if 2 <= nuniq <= 20:
+            out.append(cs)
+    # Stable deterministic order.
+    out = list(dict.fromkeys(out))
+    return out[: max(1, int(max_cols))]
+
+
+def _render_feature_atlas(
+    *,
+    plot_df: pd.DataFrame,
+    xcol: str,
+    ycol: str,
+    xname: str,
+    yname: str,
+    feature_cols: Sequence[str],
+    out_png: Path,
+    title: str,
+) -> Dict[str, Any]:
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except Exception as e:
+        raise SystemExit("Missing matplotlib. Install: pip install matplotlib") from e
+
+    n = int(len(feature_cols))
+    ncols = 4
+    nrows = int(math.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.0 * ncols, 4.2 * nrows), constrained_layout=True)
+    axes_flat = np.atleast_1d(axes).reshape(-1)
+
+    meta_features: Dict[str, Any] = {}
+    for i, feat in enumerate(feature_cols):
+        ax = axes_flat[i]
+        s = plot_df[feat]
+        feat_meta: Dict[str, Any] = {"dtype": str(s.dtype)}
+        if pd.api.types.is_bool_dtype(s) or pd.api.types.is_numeric_dtype(s):
+            v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+            finite = np.isfinite(v)
+            if finite.any():
+                lo = float(np.nanquantile(v[finite], 0.01))
+                hi = float(np.nanquantile(v[finite], 0.99))
+                if hi <= lo:
+                    lo = float(np.nanmin(v[finite]))
+                    hi = float(np.nanmax(v[finite]) + 1e-9)
+                vv = np.clip(v, lo, hi)
+                sc = ax.scatter(
+                    plot_df[xcol],
+                    plot_df[ycol],
+                    c=vv,
+                    s=8,
+                    alpha=0.55,
+                    cmap="viridis",
+                    vmin=lo,
+                    vmax=hi,
+                )
+                cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+                cbar.ax.tick_params(labelsize=7)
+                feat_meta["mode"] = "numeric"
+                feat_meta["q01"] = lo
+                feat_meta["q99"] = hi
+            else:
+                ax.scatter(plot_df[xcol], plot_df[ycol], s=8, alpha=0.35, c="#666666")
+                feat_meta["mode"] = "numeric_all_nan"
+        else:
+            cats = s.astype(str).fillna("nan")
+            labels = sorted(cats.unique().tolist())
+            palette = plt.cm.tab20(np.linspace(0, 1, max(1, len(labels))))
+            color_map = {lab: palette[j] for j, lab in enumerate(labels)}
+            for lab in labels:
+                m = cats == lab
+                if m.any():
+                    ax.scatter(plot_df.loc[m, xcol], plot_df.loc[m, ycol], s=8, alpha=0.5, c=[color_map[lab]], label=lab)
+            if len(labels) <= 8:
+                ax.legend(fontsize=7, loc="best")
+            feat_meta["mode"] = "categorical"
+            feat_meta["n_categories"] = int(len(labels))
+            feat_meta["categories"] = labels[:20]
+
+        ax.set_title(feat, fontsize=9)
+        ax.set_xlabel(xname)
+        ax.set_ylabel(yname)
+        ax.grid(alpha=0.2)
+        meta_features[str(feat)] = feat_meta
+
+    for ax in axes_flat[n:]:
+        ax.axis("off")
+
+    fig.suptitle(title, fontsize=13)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=160)
+    plt.close(fig)
+    return {"feature_count": n, "features": meta_features, "plot_path": str(out_png)}
 
 
 def render_audio_pca_svm_overview(
@@ -21,6 +155,10 @@ def render_audio_pca_svm_overview(
     class_names: Optional[Sequence[str]] = None,
     tuned_thresholds_by_class: Optional[Dict[str, float]] = None,
     pc_pairs: Optional[Sequence[Tuple[int, int]]] = None,
+    feature_atlas: bool = False,
+    feature_regex: Optional[Sequence[str]] = None,
+    feature_max_cols: int = 48,
+    feature_pair: Tuple[int, int] = (1, 2),
 ) -> Dict[str, Any]:
     try:
         import matplotlib.pyplot as plt  # type: ignore
@@ -249,5 +387,57 @@ def render_audio_pca_svm_overview(
         "applied_tuned_thresholds": applied_thresholds,
         "pc_pairs": [[int(a), int(b)] for a, b in pairs],
     }
+
+    if bool(feature_atlas):
+        feat_regex = list(feature_regex or [r"flow", r"press", r"conduct", r"state", r"temp", r"temperature"])
+        fp_x, fp_y = int(feature_pair[0]), int(feature_pair[1])
+        xcol = f"pca{fp_x}"
+        ycol = f"pca{fp_y}"
+        if xcol in plot_df.columns and ycol in plot_df.columns:
+            feat_cols = _select_feature_atlas_columns(
+                plot_df,
+                include_regex=feat_regex,
+                max_cols=int(feature_max_cols),
+            )
+            if feat_cols:
+                atlas_png = out_png.with_name(out_png.stem + "_feature_atlas.png")
+                atlas_res = _render_feature_atlas(
+                    plot_df=plot_df,
+                    xcol=xcol,
+                    ycol=ycol,
+                    xname=f"PC{fp_x}",
+                    yname=f"PC{fp_y}",
+                    feature_cols=feat_cols,
+                    out_png=atlas_png,
+                    title=f"{title} - Feature Atlas (PC{fp_x} vs PC{fp_y})",
+                )
+                meta["feature_atlas"] = {
+                    "enabled": True,
+                    "pair": [int(fp_x), int(fp_y)],
+                    "regex": feat_regex,
+                    "max_cols": int(feature_max_cols),
+                    "selected_cols": feat_cols,
+                    "plot_path": atlas_res["plot_path"],
+                    "feature_count": int(atlas_res["feature_count"]),
+                    "feature_meta": atlas_res["features"],
+                }
+            else:
+                meta["feature_atlas"] = {
+                    "enabled": True,
+                    "pair": [int(fp_x), int(fp_y)],
+                    "regex": feat_regex,
+                    "max_cols": int(feature_max_cols),
+                    "selected_cols": [],
+                    "message": "No matching feature columns found.",
+                }
+        else:
+            meta["feature_atlas"] = {
+                "enabled": True,
+                "pair": [int(fp_x), int(fp_y)],
+                "message": f"Missing columns for pair: {xcol}, {ycol}",
+            }
+    else:
+        meta["feature_atlas"] = {"enabled": False}
+
     out_meta.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {"plot_path": out_png, "meta_path": out_meta, "meta": meta}
