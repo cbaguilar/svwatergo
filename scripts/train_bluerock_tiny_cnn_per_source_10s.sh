@@ -16,8 +16,10 @@ set -u -o pipefail
 #   SOURCE_LIST="rpi_audio,wyze_Bluerock_Cam_1,wyze_Bluerock_Cam_2,wyze_camera_5" \
 #   bash scripts/train_bluerock_tiny_cnn_per_source_10s.sh
 
-PYTHON="${PYTHON:-/home/cbaguilar/miniforge3/envs/rapids-cu13/bin/python}"
-REPO="${REPO:-/home/cbaguilar/work/water/svwatergo}"
+PYTHON="${PYTHON:-python3}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DEFAULT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO="${REPO:-$REPO_DEFAULT}"
 
 DATASET="${DATASET:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet}"
 SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/split_manifest.parquet}"
@@ -56,6 +58,10 @@ if [[ ! -f "$SPLIT" ]]; then
 fi
 
 mkdir -p "$TMP_ROOT" "$OUT_ROOT" "$PLOT_ROOT"
+if [[ ! -d "$REPO" ]]; then
+  echo "[FATAL] REPO path does not exist: $REPO"
+  exit 1
+fi
 cd "$REPO" || exit 1
 
 extra_args=()
@@ -256,4 +262,3 @@ if [[ $FAIL -gt 0 ]]; then
   exit 1
 fi
 exit 0
-
