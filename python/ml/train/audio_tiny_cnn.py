@@ -172,7 +172,6 @@ def _select_aux_window_feature_columns(
     dataset_id_col: str,
     split_manifest_id_col: str,
     explicit_cols: Optional[List[str]],
-    train_idx: Optional[np.ndarray] = None,
 ) -> List[str]:
     # Mirror window_pca defaults for monotonic/counter-ish columns and extend
     # with time-like fields that can leak ordering/session position.
@@ -194,16 +193,6 @@ def _select_aux_window_feature_columns(
         r"(^|__)index($|__|_)",
     ]
     excl_regs = [re.compile(p, flags=re.IGNORECASE) for p in default_exclude_regex]
-
-    def _is_near_monotonic(x: np.ndarray, *, tol: float = 1e-8, frac: float = 0.995) -> bool:
-        if x.size < 8:
-            return False
-        d = np.diff(x.astype(np.float64, copy=False))
-        if d.size == 0:
-            return False
-        nondec = float(np.mean(d >= -tol))
-        noninc = float(np.mean(d <= tol))
-        return bool(nondec >= frac or noninc >= frac)
 
     if explicit_cols:
         missing = [c for c in explicit_cols if c not in df.columns]
@@ -234,19 +223,11 @@ def _select_aux_window_feature_columns(
     if not cols:
         raise ValueError("No numeric window feature columns available for aux PCA target.")
     keep: List[str] = []
-    drop_monotonic: List[str] = []
-    idx = np.asarray(train_idx, dtype=np.int64) if train_idx is not None and len(train_idx) else None
     for c in cols:
         s = pd.to_numeric(df[c], errors="coerce")
         if int(s.notna().sum()) <= 0:
             continue
         if float(s.std(skipna=True)) <= 0.0:
-            continue
-        s_chk = s.iloc[idx] if idx is not None else s
-        x = s_chk.to_numpy(dtype=np.float64)
-        x = x[np.isfinite(x)]
-        if _is_near_monotonic(x):
-            drop_monotonic.append(str(c))
             continue
         keep.append(str(c))
     if not keep:
@@ -667,7 +648,6 @@ def fit_audio_tiny_cnn(
                 dataset_id_col=str(dataset_id_col),
                 split_manifest_id_col=str(split_manifest_id_col),
                 explicit_cols=list(aux_pca_feature_cols) if aux_pca_feature_cols else None,
-                train_idx=idx_train,
             )
             feat_df = df[aux_feature_cols_used].apply(pd.to_numeric, errors="coerce")
             train_means = feat_df.iloc[idx_train].mean(axis=0, skipna=True)
