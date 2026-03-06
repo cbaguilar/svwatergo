@@ -202,7 +202,7 @@ def main() -> None:
             "plotter_result": res,
         },
     }
-    out_umap_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    out_umap_meta.write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
 
     print(f"[OK] wrote {out_projection}")
     print(f"[OK] wrote {out_png}")
