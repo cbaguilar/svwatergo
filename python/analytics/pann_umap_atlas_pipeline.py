@@ -46,6 +46,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--umap-metric", default="euclidean")
     p.add_argument("--umap-random-state", type=int, default=42)
     p.add_argument("--umap-max-fit-points", type=int, default=0, help="If >0, fit on subsample and transform all")
+    p.add_argument(
+        "--umap-backend",
+        default="auto",
+        choices=["auto", "cpu", "gpu"],
+        help="UMAP backend: cpu=umap-learn, gpu=RAPIDS cuML, auto=prefer gpu if available.",
+    )
 
     p.add_argument("--max-points-plot", type=int, default=12000)
     p.add_argument("--feature-atlas", default="yes", choices=["yes", "no"])
@@ -115,8 +121,8 @@ def main() -> None:
     if len(work) < 10:
         raise SystemExit("Not enough valid rows after filtering")
 
-    reducer = umap.UMAP(
-        n_components=2,
+    reducer, backend_used = _make_umap_reducer(
+        backend=str(args.umap_backend),
         n_neighbors=int(args.umap_n_neighbors),
         min_dist=float(args.umap_min_dist),
         metric=str(args.umap_metric),
@@ -130,6 +136,7 @@ def main() -> None:
         z = reducer.transform(x)
     else:
         z = reducer.fit_transform(x)
+    z = np.asarray(z, dtype=np.float32)
 
     proj = work.copy()
     proj["pca1"] = z[:, 0].astype("float64")
@@ -181,6 +188,7 @@ def main() -> None:
         "score_col": str(args.score_col),
         "positive_threshold": float(args.positive_threshold),
         "umap": {
+            "backend_used": backend_used,
             "n_neighbors": int(args.umap_n_neighbors),
             "min_dist": float(args.umap_min_dist),
             "metric": str(args.umap_metric),
@@ -202,6 +210,43 @@ def main() -> None:
     print(f"[OK] wrote {out_umap_meta}")
 
 
+def _make_umap_reducer(
+    *,
+    backend: str,
+    n_neighbors: int,
+    min_dist: float,
+    metric: str,
+    random_state: int,
+) -> tuple[Any, str]:
+    b = str(backend).strip().lower()
+    if b not in {"auto", "cpu", "gpu"}:
+        raise SystemExit(f"Unsupported --umap-backend={backend!r}")
+
+    if b in {"auto", "gpu"}:
+        try:
+            from cuml.manifold import UMAP as cuUMAP  # type: ignore
+
+            reducer = cuUMAP(
+                n_components=2,
+                n_neighbors=int(n_neighbors),
+                min_dist=float(min_dist),
+                metric=str(metric),
+                random_state=int(random_state),
+            )
+            return reducer, "gpu_cuml"
+        except Exception as e:
+            if b == "gpu":
+                raise SystemExit(f"Requested --umap-backend=gpu but RAPIDS cuML UMAP unavailable: {e}") from e
+
+    reducer = umap.UMAP(
+        n_components=2,
+        n_neighbors=int(n_neighbors),
+        min_dist=float(min_dist),
+        metric=str(metric),
+        random_state=int(random_state),
+    )
+    return reducer, "cpu_umap_learn"
+
+
 if __name__ == "__main__":
     main()
-
