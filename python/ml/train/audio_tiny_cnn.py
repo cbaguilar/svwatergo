@@ -120,6 +120,19 @@ def _load_mels_from_manifest_rows(df: pd.DataFrame) -> np.ndarray:
     return X
 
 
+def _cmvn_per_clip_per_freq(X_mel: np.ndarray, *, eps: float = 1e-6) -> np.ndarray:
+    """
+    CMVN over time per clip/frequency bin.
+    Input shape: (N, M, T)
+    """
+    X = np.asarray(X_mel, dtype=np.float32)
+    if X.ndim != 3:
+        raise ValueError(f"CMVN expects 3D mel tensor, got {X.shape}")
+    mu = X.mean(axis=2, keepdims=True)
+    sigma = X.std(axis=2, keepdims=True)
+    return ((X - mu) / (sigma + float(eps))).astype("float32", copy=False)
+
+
 class _TinyCNN:
     def __init__(self, nn, out_dim: int):
         self.model = nn.Sequential(
@@ -348,6 +361,60 @@ def _predict_from_scores(
     return None
 
 
+def _exact_match_acc(y_true: Optional[np.ndarray], y_pred: Optional[np.ndarray], *, task: str) -> float:
+    if y_true is None or y_pred is None:
+        return 0.0
+    yt = np.asarray(y_true)
+    yp = np.asarray(y_pred)
+    if yt.shape[0] == 0 or yp.shape[0] == 0:
+        return 0.0
+    if task == "multilabel":
+        return float(np.mean(np.all(yt == yp, axis=1)))
+    return float(np.mean(yt == yp))
+
+
+def _metrics_by_source(
+    *,
+    task: str,
+    y_true_all: np.ndarray,
+    y_pred_all: np.ndarray,
+    y_score_all: Optional[np.ndarray],
+    source_all: pd.Series,
+    idx: np.ndarray,
+    class_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    if idx is None or len(idx) == 0:
+        return out
+    src_split = source_all.iloc[idx].astype(str).fillna("unknown")
+    if src_split.empty:
+        return out
+    for src in sorted(src_split.unique().tolist()):
+        m = src_split.to_numpy() == src
+        if not np.any(m):
+            continue
+        y_true = y_true_all[idx][m]
+        y_pred = y_pred_all[idx][m]
+        y_score = y_score_all[idx][m] if y_score_all is not None else None
+        if task == "multilabel":
+            metrics = _metrics_multilabel(
+                y_true=np.asarray(y_true, dtype=np.int64),
+                y_pred=np.asarray(y_pred, dtype=np.int64),
+                y_score=np.asarray(y_score, dtype=np.float64) if y_score is not None else None,
+                class_names=list(class_names or []),
+            )
+        else:
+            metrics = _metrics_dict(
+                np.asarray(y_true),
+                np.asarray(y_pred),
+                np.asarray(y_score) if y_score is not None else None,
+                task=task,
+            )
+        metrics["n_rows"] = int(np.sum(m))
+        out[str(src)] = metrics
+    return out
+
+
 def fit_audio_tiny_cnn(
     df: pd.DataFrame,
     out_dir: Path,
@@ -402,6 +469,9 @@ def fit_audio_tiny_cnn(
         raise ValueError("Not enough labeled rows to train tiny CNN.")
 
     X_mel = _load_mels_from_manifest_rows(df).astype("float32", copy=False)
+    use_cmvn = bool((mel_config or {}).get("cmvn", False))
+    if use_cmvn:
+        X_mel = _cmvn_per_clip_per_freq(X_mel)
     n_mels = int(X_mel.shape[1])
     n_frames = int(X_mel.shape[2])
     X = X_mel[:, None, :, :]  # (N,1,M,T)
@@ -438,6 +508,13 @@ def fit_audio_tiny_cnn(
         )
         split_for_projection = pd.Series(["train"] * len(df), index=df.index, dtype="string")
         split_for_projection.iloc[idx_test] = "test"
+
+    source_col = next((c for c in ("audio_source", "source_name", "source") if c in df.columns), None)
+    source_series = (
+        df[source_col].astype("string").fillna("unknown")
+        if source_col is not None
+        else pd.Series(["unknown"] * len(df), dtype="string")
+    )
 
     if task != "multilabel":
         if len(np.unique(y[idx_train])) < 2:
@@ -634,6 +711,19 @@ def fit_audio_tiny_cnn(
         y_train_pred = _predict_from_scores(task=task, y_score=y_train_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
         y_test_pred = _predict_from_scores(task=task, y_score=y_test_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
         y_val_pred = _predict_from_scores(task=task, y_score=y_val_score, thresholds=tuned_thresholds, default_threshold=threshold_default)
+        if not quiet:
+            train_acc_tuned = _exact_match_acc(y_train_true, y_train_pred, task=task)
+            test_acc_tuned = _exact_match_acc(y_test_true, y_test_pred, task=task)
+            val_acc_tuned = _exact_match_acc(y_val_true, y_val_pred, task=task) if len(y_val_true) else 0.0
+            print(
+                "[threshold] "
+                f"source={threshold_report.get('source_split', 'default')} "
+                f"thresholds={','.join(f'{v:.4f}' for v in tuned_thresholds)} "
+                f"train_acc={train_acc_tuned:.4f} "
+                f"test_acc={test_acc_tuned:.4f} "
+                f"val_acc={val_acc_tuned:.4f}",
+                flush=True,
+            )
     else:
         y_train_pred = y_train_pred_raw
         y_test_pred = y_test_pred_raw
@@ -784,6 +874,51 @@ def fit_audio_tiny_cnn(
         test_metrics = _metrics_dict(y_test_true, y_test_pred, y_test_score, task=task)
         val_metrics = _metrics_dict(y_val_true, y_val_pred, y_val_score, task=task) if len(y_val_true) else {}
 
+    if task in ("binary", "multilabel"):
+        y_score_all_for_source = score_all
+    else:
+        y_score_all_for_source = None
+    by_source = {
+        "column": str(source_col) if source_col is not None else "unknown",
+        "train": _metrics_by_source(
+            task=task,
+            y_true_all=np.asarray(y),
+            y_pred_all=np.asarray(pred_all),
+            y_score_all=np.asarray(y_score_all_for_source) if y_score_all_for_source is not None else None,
+            source_all=source_series.reset_index(drop=True),
+            idx=idx_train,
+            class_names=list(y_meta.get("classes") or []),
+        ),
+        "test": _metrics_by_source(
+            task=task,
+            y_true_all=np.asarray(y),
+            y_pred_all=np.asarray(pred_all),
+            y_score_all=np.asarray(y_score_all_for_source) if y_score_all_for_source is not None else None,
+            source_all=source_series.reset_index(drop=True),
+            idx=idx_test,
+            class_names=list(y_meta.get("classes") or []),
+        ),
+        "val": _metrics_by_source(
+            task=task,
+            y_true_all=np.asarray(y),
+            y_pred_all=np.asarray(pred_all),
+            y_score_all=np.asarray(y_score_all_for_source) if y_score_all_for_source is not None else None,
+            source_all=source_series.reset_index(drop=True),
+            idx=idx_val,
+            class_names=list(y_meta.get("classes") or []),
+        )
+        if len(idx_val)
+        else {},
+    }
+    if not quiet and by_source.get("test"):
+        src_lines = []
+        for src, m in sorted(by_source["test"].items()):
+            acc = m.get("exact_match_accuracy", m.get("accuracy", None))
+            if acc is not None:
+                src_lines.append(f"{src}:{float(acc):.4f}")
+        if src_lines:
+            print("[by_source:test] " + " ".join(src_lines), flush=True)
+
     metrics = {
         "task": task,
         "target_col": target_col,
@@ -802,7 +937,8 @@ def fit_audio_tiny_cnn(
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,
         "val_metrics": val_metrics,
-            "train_params": {
+        "metrics_by_source": by_source,
+        "train_params": {
             "model_arch": str(arch_kind),
             "epochs": int(epochs),
             "batch_size": int(batch_size),
@@ -901,6 +1037,8 @@ def predict_audio_tiny_cnn(
         mel_npz_key=mel_npz_key,
         mel_npz_index=int(mel_npz_index),
     )
+    if bool((bundle.get("mel_config") or {}).get("cmvn", False)):
+        mel = _cmvn_per_clip_per_freq(mel[None, :, :])[0]
     x = torch.tensor(mel[None, None, :, :], dtype=torch.float32, device=device)
     model = bundle["_model"].to(device)
     model.eval()

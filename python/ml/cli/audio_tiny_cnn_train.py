@@ -55,6 +55,7 @@ def main() -> int:
         default="legacy",
         choices=["legacy", "none", "log_db", "log10", "log1p_zscore", "log10_median_sub"],
     )
+    p.add_argument("--cmvn", action="store_true", help="Apply per-clip per-frequency CMVN before training/inference")
     args = p.parse_args()
 
     dfs = [pd.read_parquet(pth) for pth in args.dataset]
@@ -75,6 +76,7 @@ def main() -> int:
         "log_eps": float(args.log_eps),
         "to_db": bool(args.to_db),
         "mel_normalization": str(args.mel_normalization),
+        "cmvn": bool(args.cmvn),
     }
 
     res = fit_audio_tiny_cnn(

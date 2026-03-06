@@ -10,6 +10,7 @@ SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/si
 TARGET_COLS="${TARGET_COLS:-ropumprun_duty,deliveryrun_duty}"
 POSITIVE_THRESHOLD="${POSITIVE_THRESHOLD:-0.5}"
 MEL_NORMALIZATION="${MEL_NORMALIZATION:-log_db}"
+CMVN="${CMVN:-yes}"
 
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_resnet_multilabel_ro_delivery}"
 PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multilabel_ro_delivery_5panel.png}"
@@ -22,6 +23,11 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
 
 cd "$REPO"
 mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$OUT_DIR"
+
+extra_args=()
+if [[ "$CMVN" == "yes" ]]; then
+  extra_args+=(--cmvn)
+fi
 
 "$PYTHON" -m python.ml.cli.audio_tiny_cnn_train \
   --dataset "$DATASET" \
@@ -41,7 +47,8 @@ mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$OUT_DIR"
   --class-weight balanced \
   --sample-rate 16000 \
   --target-seconds 10 \
-  --mel-normalization "$MEL_NORMALIZATION"
+  --mel-normalization "$MEL_NORMALIZATION" \
+  "${extra_args[@]}"
 
 "$PYTHON" -m python.ml.cli.audio_pca_svm_plot \
   --checkpoint-dir "$OUT_DIR" \
