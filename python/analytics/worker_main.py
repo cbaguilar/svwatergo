@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,6 +25,9 @@ from window_pca.loader import load_many
 from window_pca.model import fit_pca, transform_pca
 from window_pca.selection import select_pca_columns
 from audio_align_plc import align_audio_partition_to_plc_raw
+from python.ml.storage.s3 import split_s3_uri, get_s3_bytes
+from python.ml.train.audio_pca_svm import predict_audio_pca_svm
+from python.ml.train.audio_tiny_cnn import predict_audio_tiny_cnn
 
 
 def main() -> None:
@@ -55,6 +60,9 @@ def main() -> None:
         elif job_type == "audio_align_plc":
             align_req = spec.get("audio_align_plc") or {}
             payload, artifacts = run_audio_align_plc_job(align_req, artifacts_dir)
+        elif job_type == "audio_inference":
+            infer_req = spec.get("audio_inference") or {}
+            payload, artifacts = run_audio_inference_job(infer_req, artifacts_dir)
         else:
             raise ValueError(f"unsupported job_type: {job_type}")
 
@@ -289,6 +297,205 @@ def run_audio_align_plc_job(req: Dict[str, Any], artifacts_dir: Path) -> Tuple[D
             }
         )
     return res, arts
+
+
+def run_audio_inference_job(req: Dict[str, Any], artifacts_dir: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    model = req.get("model") or {}
+    model_id = str(model.get("model_id", "")).strip()
+    model_version = str(model.get("version", "")).strip()
+    model_kind = str(model.get("model_kind", "auto")).strip().lower() or "auto"
+    model_path = _resolve_audio_model_path(model)
+    if not model_path.exists():
+        raise ValueError(f"audio_inference model not found: {model_path}")
+    if model_kind == "auto":
+        model_kind = "tiny_cnn" if model_path.suffix.lower() in (".pt", ".pth") else "pca_svm"
+
+    outputs = req.get("outputs") or {}
+    want_predictions = bool(outputs.get("predictions", True))
+    want_embeddings = bool(outputs.get("embeddings", False))
+    want_metadata = bool(outputs.get("metadata", True))
+
+    inputs = list(req.get("inputs") or [])
+    if not inputs:
+        raise ValueError("audio_inference.inputs is required")
+
+    rows: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    input_cache_dir = artifacts_dir / "input_cache"
+    input_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, item in enumerate(inputs):
+        input_id = str(item.get("input_id", "")).strip() or f"input_{i:04d}"
+        src_type = str(item.get("type", "")).strip().lower()
+        t_item0 = time.time()
+        row: Dict[str, Any] = {
+            "input_id": input_id,
+            "type": src_type,
+            "model_id": model_id,
+            "model_version": model_version,
+            "model_path": str(model_path),
+            "model_kind": model_kind,
+            "status": "ok",
+            "error": "",
+        }
+
+        wav_path: Path | None = None
+        if src_type == "local_path":
+            p = Path(str(item.get("path", "")).strip())
+            row["resolved_uri"] = str(p)
+            if not str(p):
+                row["status"] = "error"
+                row["error"] = "missing local path"
+            elif not p.exists():
+                row["status"] = "error"
+                row["error"] = "local path not found"
+            elif not p.is_file():
+                row["status"] = "error"
+                row["error"] = "local path is not a file"
+            else:
+                wav_path = p
+        elif src_type == "staged_ref":
+            staged_ref = str(item.get("staged_ref", "")).strip()
+            row["resolved_uri"] = staged_ref
+            if not staged_ref:
+                row["status"] = "error"
+                row["error"] = "missing staged_ref"
+            else:
+                p = Path(staged_ref)
+                if not p.is_absolute():
+                    p = (artifacts_dir / "staged" / staged_ref).resolve()
+                if not p.exists() or not p.is_file():
+                    row["status"] = "error"
+                    row["error"] = "staged_ref path not found"
+                else:
+                    wav_path = p
+        elif src_type == "s3_uri":
+            uri = str(item.get("uri", "")).strip()
+            row["resolved_uri"] = uri
+            if not uri.startswith("s3://"):
+                row["status"] = "error"
+                row["error"] = "bad s3 uri"
+            else:
+                try:
+                    b, k = split_s3_uri(uri)
+                    ext = Path(k).suffix or ".wav"
+                    dig = hashlib.sha1(uri.encode("utf-8")).hexdigest()[:16]
+                    lp = input_cache_dir / f"{input_id}_{dig}{ext}"
+                    if not lp.exists():
+                        lp.write_bytes(get_s3_bytes(b, k))
+                    wav_path = lp
+                except Exception as e:
+                    row["status"] = "error"
+                    row["error"] = f"s3 fetch failed: {e}"
+        elif src_type == "upload":
+            staged_ref = str(item.get("staged_ref", "")).strip()
+            row["resolved_uri"] = staged_ref
+            if not staged_ref:
+                row["status"] = "error"
+                row["error"] = "upload requires staged_ref"
+            else:
+                p = Path(staged_ref)
+                if not p.is_absolute():
+                    p = (artifacts_dir / "staged" / staged_ref).resolve()
+                if not p.exists() or not p.is_file():
+                    row["status"] = "error"
+                    row["error"] = "upload staged_ref path not found"
+                else:
+                    wav_path = p
+        else:
+            row["status"] = "error"
+            row["error"] = f"unsupported input type: {src_type}"
+
+        if row["status"] == "ok" and wav_path is not None:
+            try:
+                pred = _run_audio_inference_one(
+                    model_path=model_path,
+                    model_kind=model_kind,
+                    wav_path=wav_path,
+                )
+                if want_predictions:
+                    row["predictions"] = pred
+                if want_embeddings:
+                    row["embedding"] = _extract_embedding(pred)
+                if want_metadata:
+                    st = wav_path.stat()
+                    row["metadata"] = {
+                        "size_bytes": int(st.st_size),
+                        "path": str(wav_path),
+                        "mel_shape_used": pred.get("mel_shape_used"),
+                    }
+            except Exception as e:
+                row["status"] = "error"
+                row["error"] = f"inference failed: {e}"
+
+        row["timing_ms"] = int(round((time.time() - t_item0) * 1000.0))
+        if row["status"] != "ok":
+            errors.append({"input_id": input_id, "error": row["error"]})
+        rows.append(row)
+
+    out_csv = artifacts_dir / "audio_inference_results.csv"
+    pd.DataFrame(rows).to_csv(out_csv, index=False)
+    out_json = artifacts_dir / "audio_inference_results.json"
+    write_json(out_json, {"results": rows, "errors": errors})
+
+    payload = {
+        "summary": {
+            "model_id": model_id,
+            "model_version": model_version,
+            "model_path": str(model_path),
+            "model_kind": model_kind,
+            "n_inputs": int(len(rows)),
+            "n_ok": int(sum(1 for r in rows if r.get("status") == "ok")),
+            "n_error": int(sum(1 for r in rows if r.get("status") != "ok")),
+        },
+        "results": rows,
+        "errors": errors,
+    }
+    arts = [
+        artifact_dict(out_csv, "text/csv"),
+        artifact_dict(out_json, "application/json"),
+    ]
+    return payload, arts
+
+
+def _resolve_audio_model_path(model: Dict[str, Any]) -> Path:
+    explicit = str(model.get("model_path", "") or model.get("model_uri", "")).strip()
+    if explicit:
+        return Path(explicit)
+    model_id = str(model.get("model_id", "")).strip()
+    if not model_id:
+        raise ValueError("audio_inference.model.model_id or model_path/model_uri required")
+    reg_path = str(os.environ.get("ANALYTICS_AUDIO_MODEL_REGISTRY", "")).strip()
+    if not reg_path:
+        raise ValueError("model_path/model_uri not provided and ANALYTICS_AUDIO_MODEL_REGISTRY not set")
+    reg = read_json(Path(reg_path))
+    models = reg.get("models") if isinstance(reg, dict) else None
+    if not isinstance(models, dict):
+        raise ValueError("invalid model registry format: missing models object")
+    item = models.get(model_id)
+    if isinstance(item, str):
+        return Path(item)
+    if isinstance(item, dict):
+        p = str(item.get("model_path", "") or item.get("model_uri", "")).strip()
+        if p:
+            return Path(p)
+    raise ValueError(f"model_id not found in registry: {model_id}")
+
+
+def _run_audio_inference_one(*, model_path: Path, model_kind: str, wav_path: Path) -> Dict[str, Any]:
+    kind = str(model_kind).strip().lower()
+    if kind == "tiny_cnn":
+        return predict_audio_tiny_cnn(model_path=model_path, wav_path=wav_path)
+    if kind == "pca_svm":
+        return predict_audio_pca_svm(model_path=model_path, wav_path=wav_path)
+    raise ValueError(f"unsupported model_kind: {model_kind}")
+
+
+def _extract_embedding(pred: Dict[str, Any]) -> Dict[str, Any]:
+    if "pca_projection" in pred and isinstance(pred.get("pca_projection"), list):
+        vec = [float(v) for v in (pred.get("pca_projection") or [])]
+        return {"dim": int(len(vec)), "vector": vec}
+    return {"dim": 0, "vector": []}
 
 
 def artifact_dict(path: Path, content_type: str) -> Dict[str, Any]:

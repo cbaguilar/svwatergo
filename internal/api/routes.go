@@ -65,7 +65,8 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	audioAPI := NewAudioAPI(audioStore)
 	usersAPI := NewUsersAPI(usersStore)
 	analyticsStore := analytics.NewStore()
-	analyticsAPI := NewAnalyticsAPI(analyticsStore)
+	analyticsRunner := analytics.NewRunner(analyticsStore)
+	analyticsAPI := NewAnalyticsAPI(analyticsStore, analyticsRunner)
 	eventsAPI := NewEventsAPI()
 	authAPI := NewAuthAPI(authn)
 	ingestion.OnIngest = liveState.NotifySiteUpdated
@@ -90,6 +91,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		analyticsGroup.POST("/feature-runs", analyticsAPI.CreateFeatureRun)
 		analyticsGroup.POST("/pca-runs", analyticsAPI.CreatePCARun)
 		registerAudioAlignRoute(analyticsGroup, analyticsAPI)
+		registerAudioInferenceRoute(analyticsGroup, analyticsAPI)
 		analyticsGroup.GET("/jobs", analyticsAPI.ListJobs)
 		analyticsGroup.GET("/jobs/:id", analyticsAPI.GetJob)
 
@@ -192,5 +194,20 @@ func registerAudioAlignRoute(group *gin.RouterGroup, analyticsAPI *AnalyticsAPI)
 	}
 	if h, ok := any(analyticsAPI).(audioAlignCreator); ok {
 		group.POST("/audio-align-runs", h.CreateAudioAlignPLCRun)
+	}
+}
+
+func registerAudioInferenceRoute(group *gin.RouterGroup, analyticsAPI *AnalyticsAPI) {
+	type audioInferenceCreator interface {
+		CreateAudioInferenceRun(*gin.Context)
+	}
+	if h, ok := any(analyticsAPI).(audioInferenceCreator); ok {
+		group.POST("/audio-inference-runs", h.CreateAudioInferenceRun)
+	}
+	type audioInferenceStager interface {
+		CreateAudioInferenceStage(*gin.Context)
+	}
+	if h, ok := any(analyticsAPI).(audioInferenceStager); ok {
+		group.POST("/audio-inference-stage", h.CreateAudioInferenceStage)
 	}
 }

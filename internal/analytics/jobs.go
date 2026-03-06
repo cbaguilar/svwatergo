@@ -16,6 +16,8 @@ type JobType string
 const (
 	JobTypeFeatureEngineering JobType = "feature_engineering"
 	JobTypePCA                JobType = "pca"
+	JobTypeAudioAlignPLC      JobType = "audio_align_plc"
+	JobTypeAudioInference     JobType = "audio_inference"
 )
 
 type JobStatus string
@@ -78,6 +80,22 @@ type PCARunRequest struct {
 	Tags              map[string]string `json:"tags,omitempty"`
 }
 
+type AudioAlignPLCRunRequest struct {
+	Site              string            `json:"site"`
+	Date              string            `json:"date"` // UTC day partition (audio_start day)
+	AudioBucket       string            `json:"audio_bucket,omitempty"`
+	AudioPrefix       string            `json:"audio_prefix,omitempty"` // partition prefix for the target day
+	PLCBucket         string            `json:"plc_bucket,omitempty"`
+	PLCPrefix         string            `json:"plc_prefix,omitempty"`
+	TimestampCol      string            `json:"timestamp_col,omitempty"`
+	AlignmentOffsetMS float64           `json:"alignment_offset_ms,omitempty"`
+	PLCCols           []string          `json:"plc_cols,omitempty"`
+	Storage           *StorageTarget    `json:"storage,omitempty"`
+	OutS3Bucket       string            `json:"out_s3_bucket,omitempty"`
+	OutS3Prefix       string            `json:"out_s3_prefix,omitempty"`
+	Tags              map[string]string `json:"tags,omitempty"`
+}
+
 type Job struct {
 	ID          string          `json:"id"`
 	Type        JobType         `json:"type"`
@@ -123,13 +141,78 @@ func (s *Store) CreateJob(ctx context.Context, jobType JobType, site, createdBy 
 		Site:        strings.ToLower(strings.TrimSpace(site)),
 		CreatedBy:   strings.TrimSpace(createdBy),
 		RequestJSON: raw,
-		Result: map[string]any{
-			"note": "job accepted; worker execution not implemented yet",
-		},
+		Result:      map[string]any{},
 	}
 	s.mu.Lock()
 	s.jobs[id] = job
 	s.mu.Unlock()
+	return job, nil
+}
+
+func (s *Store) MarkRunning(ctx context.Context, id string) (Job, error) {
+	_ = ctx
+	if s == nil {
+		return Job{}, fmt.Errorf("analytics store not configured")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return Job{}, fmt.Errorf("job not found: %s", id)
+	}
+	now := time.Now().UTC()
+	job.Status = JobStatusRunning
+	job.UpdatedAt = now
+	job.StartedAt = &now
+	s.jobs[id] = job
+	return job, nil
+}
+
+func (s *Store) MarkSucceeded(ctx context.Context, id string, result map[string]any) (Job, error) {
+	_ = ctx
+	if s == nil {
+		return Job{}, fmt.Errorf("analytics store not configured")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return Job{}, fmt.Errorf("job not found: %s", id)
+	}
+	now := time.Now().UTC()
+	job.Status = JobStatusSucceeded
+	job.UpdatedAt = now
+	job.FinishedAt = &now
+	job.Error = ""
+	if result != nil {
+		job.Result = result
+	}
+	s.jobs[id] = job
+	return job, nil
+}
+
+func (s *Store) MarkFailed(ctx context.Context, id string, err error, partialResult map[string]any) (Job, error) {
+	_ = ctx
+	if s == nil {
+		return Job{}, fmt.Errorf("analytics store not configured")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return Job{}, fmt.Errorf("job not found: %s", id)
+	}
+	now := time.Now().UTC()
+	job.Status = JobStatusFailed
+	job.UpdatedAt = now
+	job.FinishedAt = &now
+	if err != nil {
+		job.Error = err.Error()
+	}
+	if partialResult != nil {
+		job.Result = partialResult
+	}
+	s.jobs[id] = job
 	return job, nil
 }
 
