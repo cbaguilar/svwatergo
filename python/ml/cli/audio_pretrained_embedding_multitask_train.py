@@ -18,6 +18,8 @@ def main() -> int:
     p.add_argument("--dataset-id-col", default="sample_id")
     p.add_argument("--split-id-col", default="sample_id")
     p.add_argument("--audio-path-col", default="segment_path")
+    p.add_argument("--source-filter-col", default="audio_source")
+    p.add_argument("--source-filter-values", default="", help="Optional comma-separated source values to keep")
 
     p.add_argument("--out-dir", required=True)
     p.add_argument("--task-mode", default="multiclass", choices=["multiclass", "multilabel", "plc_pca_encoder"])
@@ -73,6 +75,8 @@ def main() -> int:
         dataset_id_col=str(args.dataset_id_col),
         split_manifest_id_col=str(args.split_id_col),
         audio_path_col=str(args.audio_path_col),
+        source_filter_col=str(args.source_filter_col),
+        source_filter_values=[c.strip() for c in str(args.source_filter_values).split(",") if c.strip()],
         random_state=int(args.random_state),
         target_seconds=float(args.target_seconds),
         extract_batch_size=int(args.extract_batch_size),

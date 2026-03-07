@@ -7,6 +7,9 @@ REPO="${REPO:-$HOME/svwatergo}"
 DATASET="${DATASET:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet}"
 SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/split_manifest.parquet}"
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_panns_plc_pca_encoder}"
+# Optional source filter (for example: rpi_audio).
+AUDIO_SOURCE_FILTER="${AUDIO_SOURCE_FILTER:-}"
+AUDIO_SOURCE_COL="${AUDIO_SOURCE_COL:-audio_source}"
 
 TARGET_SECONDS="${TARGET_SECONDS:-10}"
 EXTRACT_BATCH_SIZE="${EXTRACT_BATCH_SIZE:-32}"
@@ -49,6 +52,7 @@ args=(
   --dataset-id-col sample_id
   --split-id-col sample_id
   --audio-path-col segment_path
+  --source-filter-col "$AUDIO_SOURCE_COL"
   --out-dir "$OUT_DIR"
   --task-mode "$TASK_MODE"
   --target-col "$TARGET_COL"
@@ -79,6 +83,9 @@ args=(
 
 if [[ -n "$AUX_PLC_FEATURE_COLS" ]]; then
   args+=(--aux-plc-feature-cols "$AUX_PLC_FEATURE_COLS")
+fi
+if [[ -n "$AUDIO_SOURCE_FILTER" ]]; then
+  args+=(--source-filter-values "$AUDIO_SOURCE_FILTER")
 fi
 
 "$PYTHON" "${args[@]}"

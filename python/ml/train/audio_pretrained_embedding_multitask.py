@@ -338,8 +338,36 @@ def fit_audio_pretrained_embedding_multitask(
     pann_pca_weight: float = 1.0,
     best_model_metric: str = "auto",
     best_model_split: str = "val",
+    source_filter_col: str = "",
+    source_filter_values: Optional[Sequence[str]] = None,
 ) -> AudioPretrainedEmbeddingMultitaskResult:
     out_dir.mkdir(parents=True, exist_ok=True)
+    src_filter_vals = [str(v).strip() for v in (source_filter_values or []) if str(v).strip()]
+    src_filter_col = str(source_filter_col or "").strip()
+    if src_filter_vals:
+        if not src_filter_col:
+            raise ValueError("source_filter_col must be set when source_filter_values are provided")
+        if src_filter_col not in df.columns:
+            raise ValueError(f"Missing source_filter_col in dataset: {src_filter_col}")
+        before_n = int(len(df))
+        mask = df[src_filter_col].astype(str).isin(src_filter_vals)
+        df = df.loc[mask].reset_index(drop=True)
+        if len(df) <= 0:
+            raise ValueError(f"No rows found for {src_filter_col} in [{', '.join(src_filter_vals)}]")
+        if split_manifest_df is not None:
+            if str(dataset_id_col) not in df.columns:
+                raise ValueError(f"Missing dataset_id_col in filtered dataset: {dataset_id_col}")
+            if str(split_manifest_id_col) not in split_manifest_df.columns:
+                raise ValueError(f"Missing split_manifest_id_col in split manifest: {split_manifest_id_col}")
+            keep_ids = set(df[str(dataset_id_col)].astype(str).tolist())
+            split_manifest_df = split_manifest_df.loc[
+                split_manifest_df[str(split_manifest_id_col)].astype(str).isin(keep_ids)
+            ].reset_index(drop=True)
+        print(
+            f"[source_filter] col={src_filter_col} values={src_filter_vals} rows={len(df)}/{before_n}",
+            flush=True,
+        )
+
     mode = str(task_mode).strip().lower()
     if mode not in ("multiclass", "multilabel", "plc_pca_encoder"):
         raise ValueError("task_mode must be one of: multiclass, multilabel, plc_pca_encoder")
@@ -1170,6 +1198,8 @@ def fit_audio_pretrained_embedding_multitask(
             "main_task_weight": float(main_w),
             "best_model_metric": str(metric_mode),
             "best_model_split": str(split_mode),
+            "source_filter_col": (src_filter_col if src_filter_vals else None),
+            "source_filter_values": (src_filter_vals if src_filter_vals else []),
         },
         "best_model": {
             "path": str(best_ckpt_path) if best_ckpt_path.exists() else None,
