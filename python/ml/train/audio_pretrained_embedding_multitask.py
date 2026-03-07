@@ -437,6 +437,78 @@ def fit_audio_pretrained_embedding_multitask(
     yte_t, yte_p = _predict(test_dl)
     yva_t, yva_p = _predict(val_dl) if len(idx_val) else (np.zeros((0, Y.shape[1])), np.zeros((0, Y.shape[1])))
 
+    # Export PANN-PCA true vs inferred embeddings (PC1/PC2) for visualization.
+    model.eval()
+    z_pred_parts: List[np.ndarray] = []
+    with torch.no_grad():
+        for i0 in range(0, Xt.shape[0], int(batch_size)):
+            i1 = min(int(Xt.shape[0]), i0 + int(batch_size))
+            xb = Xt[i0:i1].to(device)
+            _logits, zhat, _plc = model(xb)
+            z_pred_parts.append(zhat.cpu().numpy().astype(np.float32, copy=False))
+    Z_pann_pred = np.concatenate(z_pred_parts, axis=0) if z_pred_parts else np.zeros_like(Z_pann)
+
+    pann_proj_path = out_dir / "pann_pca_true_vs_pred.parquet"
+    pann_proj_df = df2.reset_index(drop=True).copy()
+    pann_proj_df["split"] = split2.reset_index(drop=True)
+    for j in range(int(Z_pann.shape[1])):
+        jj = int(j + 1)
+        pann_proj_df[f"pann_true_pc{jj}"] = Z_pann[:, j].astype("float64")
+        pann_proj_df[f"pann_pred_pc{jj}"] = Z_pann_pred[:, j].astype("float64")
+    pann_proj_df.to_parquet(pann_proj_path, index=False)
+
+    pann_plot_path: Optional[Path] = None
+    if int(Z_pann.shape[1]) >= 2:
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+
+            fig, axes = plt.subplots(1, 2, figsize=(10.8, 4.4), constrained_layout=True)
+            src_vals = src_series.astype(str).fillna("unknown").to_numpy()
+            src_labels = sorted(set(src_vals.tolist()))
+            palette = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(src_labels))))
+            src_color = {lab: palette[i] for i, lab in enumerate(src_labels)}
+
+            for lab in src_labels:
+                m = src_vals == lab
+                if int(np.sum(m)) <= 0:
+                    continue
+                axes[0].scatter(
+                    Z_pann[m, 0],
+                    Z_pann[m, 1],
+                    s=8,
+                    alpha=0.4,
+                    c=[src_color[lab]],
+                    label=str(lab),
+                )
+            axes[0].set_title("PANN PCA True (PC1 vs PC2)")
+            axes[0].set_xlabel("true_pc1")
+            axes[0].set_ylabel("true_pc2")
+            axes[0].grid(alpha=0.2)
+
+            for lab in src_labels:
+                m = src_vals == lab
+                if int(np.sum(m)) <= 0:
+                    continue
+                axes[1].scatter(
+                    Z_pann_pred[m, 0],
+                    Z_pann_pred[m, 1],
+                    s=8,
+                    alpha=0.4,
+                    c=[src_color[lab]],
+                    label=str(lab),
+                )
+            axes[1].set_title("PANN PCA Pred (PC1 vs PC2)")
+            axes[1].set_xlabel("pred_pc1")
+            axes[1].set_ylabel("pred_pc2")
+            axes[1].grid(alpha=0.2)
+            axes[1].legend(fontsize=8, loc="best")
+
+            pann_plot_path = out_dir / "pann_pca_true_vs_pred_pc12.png"
+            fig.savefig(pann_plot_path, dpi=160)
+            plt.close(fig)
+        except Exception:
+            pann_plot_path = None
+
     def _split_metrics(yt: np.ndarray, yp: np.ndarray) -> Dict[str, Any]:
         if len(yt) <= 0:
             return {}
@@ -504,6 +576,8 @@ def fit_audio_pretrained_embedding_multitask(
             "embedding_cache": str(emb_cache),
             "pann_pca_model": str(out_dir / "pann_embedding_pca_model.npz"),
             "plc_aux_pca_model": (str(out_dir / "plc_aux_pca_model.npz") if bool(aux_plc_pca) else None),
+            "pann_true_vs_pred_parquet": str(pann_proj_path),
+            "pann_true_vs_pred_plot_pc12": (str(pann_plot_path) if pann_plot_path is not None else None),
         },
     }
     metrics_path = out_dir / "audio_pretrained_embedding_multitask_metrics.json"

@@ -1442,6 +1442,8 @@ def fit_audio_tiny_cnn(
         pred_all = score_all.astype("float32", copy=False)
 
     projection_path: Optional[Path] = None
+    aux_projection_path: Optional[Path] = None
+    aux_projection_plot_path: Optional[Path] = None
     if bool(generate_projection):
         # Add PCA coordinates (from flattened mel tensors) so the existing 4-panel
         # renderer can plot tiny-CNN runs with the same schema.
@@ -1489,6 +1491,84 @@ def fit_audio_tiny_cnn(
                 proj_df[f"score_class_{j}"] = prob_all[:, j].astype("float64")
         projection_path = out_dir / "train_projection.parquet"
         proj_df.to_parquet(projection_path, index=False)
+
+    if aux_targets_all is not None and aux_head is not None:
+        aux_head.eval()
+        aux_pred_parts: List[np.ndarray] = []
+        with torch.no_grad():
+            for i0 in range(0, X.shape[0], int(batch_size)):
+                i1 = min(X.shape[0], i0 + int(batch_size))
+                xb = torch.from_numpy(np.asarray(X[i0:i1], dtype=np.float32)).to(device, non_blocking=True)
+                _logits, emb = _forward_logits_and_embedding(model, xb, arch_kind=str(arch_kind))
+                if emb is None:
+                    raise RuntimeError("Embedding missing while exporting aux PCA predictions.")
+                aux_pred = aux_head(emb).cpu().numpy().astype(np.float32, copy=False)
+                aux_pred_parts.append(aux_pred)
+        aux_pred_all = np.concatenate(aux_pred_parts, axis=0) if aux_pred_parts else np.zeros_like(aux_targets_all)
+        aux_df = df.reset_index(drop=True).copy()
+        aux_df["split"] = split_for_projection.reset_index(drop=True)
+        for j in range(int(aux_targets_all.shape[1])):
+            jj = int(j + 1)
+            aux_df[f"aux_true_pc{jj}"] = aux_targets_all[:, j].astype("float64")
+            aux_df[f"aux_pred_pc{jj}"] = aux_pred_all[:, j].astype("float64")
+        aux_projection_path = out_dir / "aux_pca_true_vs_pred.parquet"
+        aux_df.to_parquet(aux_projection_path, index=False)
+
+        if int(aux_targets_all.shape[1]) >= 2:
+            try:
+                import matplotlib.pyplot as plt  # type: ignore
+
+                fig, axes = plt.subplots(1, 2, figsize=(10.8, 4.4), constrained_layout=True)
+                src_col = next((c for c in ("audio_source", "source_name", "source") if c in aux_df.columns), None)
+                if src_col is not None:
+                    src_vals = aux_df[src_col].astype(str).fillna("unknown").to_numpy()
+                    src_labels = sorted(set(src_vals.tolist()))
+                else:
+                    src_vals = np.asarray(["all_sources"] * int(aux_targets_all.shape[0]), dtype=object)
+                    src_labels = ["all_sources"]
+                palette = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(src_labels))))
+                src_color = {lab: palette[i] for i, lab in enumerate(src_labels)}
+
+                for lab in src_labels:
+                    m = src_vals == lab
+                    if int(np.sum(m)) <= 0:
+                        continue
+                    axes[0].scatter(
+                        aux_targets_all[m, 0],
+                        aux_targets_all[m, 1],
+                        s=8,
+                        alpha=0.4,
+                        c=[src_color[lab]],
+                        label=str(lab),
+                    )
+                axes[0].set_title("Aux PCA True (PC1 vs PC2)")
+                axes[0].set_xlabel("true_pc1")
+                axes[0].set_ylabel("true_pc2")
+                axes[0].grid(alpha=0.2)
+
+                for lab in src_labels:
+                    m = src_vals == lab
+                    if int(np.sum(m)) <= 0:
+                        continue
+                    axes[1].scatter(
+                        aux_pred_all[m, 0],
+                        aux_pred_all[m, 1],
+                        s=8,
+                        alpha=0.4,
+                        c=[src_color[lab]],
+                        label=str(lab),
+                    )
+                axes[1].set_title("Aux PCA Pred (PC1 vs PC2)")
+                axes[1].set_xlabel("pred_pc1")
+                axes[1].set_ylabel("pred_pc2")
+                axes[1].grid(alpha=0.2)
+                axes[1].legend(fontsize=8, loc="best")
+
+                aux_projection_plot_path = out_dir / "aux_pca_true_vs_pred_pc12.png"
+                fig.savefig(aux_projection_plot_path, dpi=160)
+                plt.close(fig)
+            except Exception:
+                aux_projection_plot_path = None
 
     model_path = out_dir / "audio_tiny_cnn_model.pt"
     torch.save(
@@ -1909,6 +1989,10 @@ def fit_audio_tiny_cnn(
             "aux_pca_variance_ratio": float(aux_pca_variance_ratio),
             "aux_pca_weight": float(aux_pca_weight),
             "generate_projection": bool(generate_projection),
+        },
+        "aux_projection_artifacts": {
+            "parquet": (str(aux_projection_path) if aux_projection_path is not None else None),
+            "plot_pc12": (str(aux_projection_plot_path) if aux_projection_plot_path is not None else None),
         },
         "epoch_history_metric_name": (
             "exact_match"
