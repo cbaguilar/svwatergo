@@ -10,7 +10,7 @@ from ..train.audio_pretrained_embedding_multitask import fit_audio_pretrained_em
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="Train multitask model on PANN embeddings: 2-hot pump state + aux PLC/PCA targets"
+        description="Train multitask model on PANN embeddings: multiclass or multilabel main task + aux PLC/PCA targets"
     )
     p.add_argument("--dataset", nargs="+", required=True, help="Labeled dataset parquet path(s)")
     p.add_argument("--split-manifest", default="", help="Optional split manifest parquet path")
@@ -20,6 +20,8 @@ def main() -> int:
     p.add_argument("--audio-path-col", default="segment_path")
 
     p.add_argument("--out-dir", required=True)
+    p.add_argument("--task-mode", default="multiclass", choices=["multiclass", "multilabel"])
+    p.add_argument("--target-col", default="primary_class")
     p.add_argument("--target-cols", default="ropumprun_duty,deliveryrun_duty")
     p.add_argument("--positive-threshold", type=float, default=0.5)
     p.add_argument("--positive-label", default="on")
@@ -58,6 +60,8 @@ def main() -> int:
     res = fit_audio_pretrained_embedding_multitask(
         df,
         Path(args.out_dir),
+        task_mode=str(args.task_mode),
+        target_col=str(args.target_col),
         target_cols=[c.strip() for c in str(args.target_cols).split(",") if c.strip()],
         positive_threshold=float(args.positive_threshold),
         positive_label=str(args.positive_label),

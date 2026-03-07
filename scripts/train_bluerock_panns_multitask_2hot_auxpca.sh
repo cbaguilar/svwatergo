@@ -7,8 +7,10 @@ REPO="${REPO:-$HOME/svwatergo}"
 DATASET="${DATASET:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet}"
 SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/split_manifest.parquet}"
 
-OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_panns_multitask_2hot_auxpca}"
+OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_panns_multitask_multiclass_auxpca}"
 
+TASK_MODE="${TASK_MODE:-multiclass}"
+TARGET_COL="${TARGET_COL:-primary_class}"
 TARGET_COLS="${TARGET_COLS:-ropumprun_duty,deliveryrun_duty}"
 POSITIVE_THRESHOLD="${POSITIVE_THRESHOLD:-0.5}"
 POSITIVE_LABEL="${POSITIVE_LABEL:-on}"
@@ -51,6 +53,8 @@ args=(
   --split-id-col sample_id
   --audio-path-col segment_path
   --out-dir "$OUT_DIR"
+  --task-mode "$TASK_MODE"
+  --target-col "$TARGET_COL"
   --target-cols "$TARGET_COLS"
   --positive-threshold "$POSITIVE_THRESHOLD"
   --positive-label "$POSITIVE_LABEL"
