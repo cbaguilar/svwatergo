@@ -458,6 +458,7 @@ def fit_audio_pretrained_embedding_multitask(
     pann_proj_df.to_parquet(pann_proj_path, index=False)
 
     pann_plot_path: Optional[Path] = None
+    pann_plot_multicolor_path: Optional[Path] = None
     if int(Z_pann.shape[1]) >= 2:
         try:
             import matplotlib.pyplot as plt  # type: ignore
@@ -506,8 +507,79 @@ def fit_audio_pretrained_embedding_multitask(
             pann_plot_path = out_dir / "pann_pca_true_vs_pred_pc12.png"
             fig.savefig(pann_plot_path, dpi=160)
             plt.close(fig)
+
+            # Additional grid with different color modes: source/state/duties.
+            color_specs: List[Tuple[str, str, str]] = []
+            color_specs.append(("source", "__source__", "categorical"))
+            state_col = next(
+                (c for c in ("state_mode", "primary_class", "state", "mode") if c in pann_proj_df.columns),
+                None,
+            )
+            if state_col is not None:
+                color_specs.append(("state", str(state_col), "categorical"))
+            if "ropumprun_duty" in pann_proj_df.columns:
+                color_specs.append(("ropumprun_duty", "ropumprun_duty", "numeric"))
+            if "deliveryrun_duty" in pann_proj_df.columns:
+                color_specs.append(("deliveryrun_duty", "deliveryrun_duty", "numeric"))
+
+            ncols = max(1, int(len(color_specs)))
+            fig2, axes2 = plt.subplots(2, ncols, figsize=(4.8 * ncols, 8.0), constrained_layout=True)
+            if ncols == 1:
+                axes2 = np.asarray(axes2).reshape(2, 1)
+
+            def _plot_panel(ax, *, x: np.ndarray, y: np.ndarray, spec: Tuple[str, str, str], title_prefix: str) -> None:
+                label, col, mode = spec
+                if col == "__source__":
+                    s = src_series.astype(str).fillna("unknown")
+                else:
+                    s = pann_proj_df[col]
+
+                if mode == "categorical":
+                    cats = s.astype(str).fillna("unknown")
+                    labs = sorted(cats.unique().tolist())
+                    pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
+                    cmap = {lab: pal[i] for i, lab in enumerate(labs)}
+                    for lab in labs:
+                        m = (cats.to_numpy() == lab)
+                        if int(np.sum(m)) <= 0:
+                            continue
+                        ax.scatter(x[m], y[m], s=8, alpha=0.4, c=[cmap[lab]], label=str(lab))
+                    if len(labs) <= 12:
+                        ax.legend(fontsize=7, loc="best")
+                else:
+                    v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+                    finite = np.isfinite(v)
+                    if finite.any():
+                        lo = float(np.nanquantile(v[finite], 0.01))
+                        hi = float(np.nanquantile(v[finite], 0.99))
+                        if hi <= lo:
+                            lo = float(np.nanmin(v[finite]))
+                            hi = float(np.nanmax(v[finite]) + 1e-9)
+                        vv = np.clip(v, lo, hi)
+                        sc = ax.scatter(x, y, c=vv, s=8, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                        cb = fig2.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+                        cb.ax.tick_params(labelsize=7)
+                    else:
+                        ax.scatter(x, y, s=8, alpha=0.35, c="#777777")
+                ax.set_title(f"{title_prefix} colored by {label}")
+                ax.grid(alpha=0.2)
+
+            for j, spec in enumerate(color_specs):
+                ax_t = axes2[0, j]
+                ax_p = axes2[1, j]
+                _plot_panel(ax_t, x=Z_pann[:, 0], y=Z_pann[:, 1], spec=spec, title_prefix="True")
+                _plot_panel(ax_p, x=Z_pann_pred[:, 0], y=Z_pann_pred[:, 1], spec=spec, title_prefix="Pred")
+                ax_t.set_xlabel("true_pc1")
+                ax_t.set_ylabel("true_pc2")
+                ax_p.set_xlabel("pred_pc1")
+                ax_p.set_ylabel("pred_pc2")
+
+            pann_plot_multicolor_path = out_dir / "pann_pca_true_vs_pred_pc12_multicolor.png"
+            fig2.savefig(pann_plot_multicolor_path, dpi=160)
+            plt.close(fig2)
         except Exception:
             pann_plot_path = None
+            pann_plot_multicolor_path = None
 
     def _split_metrics(yt: np.ndarray, yp: np.ndarray) -> Dict[str, Any]:
         if len(yt) <= 0:
@@ -578,6 +650,9 @@ def fit_audio_pretrained_embedding_multitask(
             "plc_aux_pca_model": (str(out_dir / "plc_aux_pca_model.npz") if bool(aux_plc_pca) else None),
             "pann_true_vs_pred_parquet": str(pann_proj_path),
             "pann_true_vs_pred_plot_pc12": (str(pann_plot_path) if pann_plot_path is not None else None),
+            "pann_true_vs_pred_plot_pc12_multicolor": (
+                str(pann_plot_multicolor_path) if pann_plot_multicolor_path is not None else None
+            ),
         },
     }
     metrics_path = out_dir / "audio_pretrained_embedding_multitask_metrics.json"
