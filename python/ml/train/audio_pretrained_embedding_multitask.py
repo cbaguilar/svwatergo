@@ -341,8 +341,9 @@ def fit_audio_pretrained_embedding_multitask(
 ) -> AudioPretrainedEmbeddingMultitaskResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     mode = str(task_mode).strip().lower()
-    if mode not in ("multiclass", "multilabel"):
-        raise ValueError("task_mode must be one of: multiclass, multilabel")
+    if mode not in ("multiclass", "multilabel", "plc_pca_encoder"):
+        raise ValueError("task_mode must be one of: multiclass, multilabel, plc_pca_encoder")
+    is_plc_encoder = mode == "plc_pca_encoder"
     if mode == "multiclass":
         df0, y_raw, y_meta = _coerce_target(
             df,
@@ -351,7 +352,7 @@ def fit_audio_pretrained_embedding_multitask(
             positive_label=str(positive_label),
         )
         y_all = np.asarray(y_raw, dtype=np.int64)
-    else:
+    elif mode == "multilabel":
         cols = list(target_cols or [])
         if not cols:
             cols = ["ropumprun_duty", "deliveryrun_duty"]
@@ -363,6 +364,10 @@ def fit_audio_pretrained_embedding_multitask(
         )
         df0 = df.copy()
         y_all = np.asarray(y_raw, dtype=np.float32)
+    else:
+        df0 = df.copy()
+        y_meta = {"task": "plc_pca_encoder", "target_cols": []}
+        y_all = np.zeros((len(df0), 1), dtype=np.float32)
     df1, split_ser, split_source = _attach_split_labels(
         df0,
         split_manifest_df=split_manifest_df,
@@ -439,7 +444,7 @@ def fit_audio_pretrained_embedding_multitask(
     if bool(aux_plc_pca):
         plc_cols = _select_plc_feature_columns(
             df2,
-            target_cols=(list(y_meta.get("target_cols") or []) if mode == "multilabel" else [str(target_col)]),
+            target_cols=([] if is_plc_encoder else (list(y_meta.get("target_cols") or []) if mode == "multilabel" else [str(target_col)])),
             split_col=str(split_col),
             dataset_id_col=str(dataset_id_col),
             split_manifest_id_col=str(split_manifest_id_col),
@@ -489,20 +494,25 @@ def fit_audio_pretrained_embedding_multitask(
                 d = int(h)
             self.encoder = nn.Sequential(*layers) if layers else nn.Identity()
             self.z = nn.Linear(d, int(z_dim))
-            self.cls = nn.Linear(int(z_dim), int(y_dim))
+            self.cls = nn.Linear(int(z_dim), int(y_dim)) if int(y_dim) > 0 else None
             self.plc = nn.Linear(int(z_dim), int(plc_dim)) if int(plc_dim) > 0 else None
 
         def forward(self, x):
             h = self.encoder(x)
             z = self.z(h)
-            y = self.cls(z)
+            y = self.cls(z) if self.cls is not None else None
             p = self.plc(z) if self.plc is not None else None
             return y, z, p
 
     hidden = [int(x.strip()) for x in str(encoder_hidden).split(",") if x.strip()]
     z_dim = int(Z_pann.shape[1])
     plc_dim = int(Z_plc.shape[1]) if Z_plc is not None else 0
-    y_dim = int(len(np.unique(Y))) if mode == "multiclass" else int(Y.shape[1])
+    if mode == "multiclass":
+        y_dim = int(len(np.unique(Y)))
+    elif mode == "multilabel":
+        y_dim = int(Y.shape[1])
+    else:
+        y_dim = 0
     model = _Model(X_emb.shape[1], hidden, z_dim, y_dim, plc_dim, float(encoder_dropout))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -571,7 +581,7 @@ def fit_audio_pretrained_embedding_multitask(
                     yp = torch.argmax(logits, dim=1).long()
                     y_true.append(yb.numpy().astype(np.int64))
                     y_pred.append(yp.cpu().numpy().astype(np.int64))
-                else:
+                elif mode == "multilabel":
                     yp = (torch.sigmoid(logits) >= 0.5).float()
                     y_true.append(yb.numpy())
                     y_pred.append(yp.cpu().numpy())
@@ -582,9 +592,12 @@ def fit_audio_pretrained_embedding_multitask(
             if mode == "multiclass":
                 yt0 = np.zeros((0,), dtype=np.int64)
                 yp0 = np.zeros((0,), dtype=np.int64)
-            else:
+            elif mode == "multilabel":
                 yt0 = np.zeros((0, Y.shape[1]), dtype=np.float32)
                 yp0 = np.zeros((0, Y.shape[1]), dtype=np.float32)
+            else:
+                yt0 = np.zeros((0,), dtype=np.float32)
+                yp0 = np.zeros((0,), dtype=np.float32)
             zt0 = np.zeros((0, 0), dtype=np.float32)
             zp0 = np.zeros((0, 0), dtype=np.float32)
             return yt0, yp0, zt0, zp0
@@ -631,8 +644,10 @@ def fit_audio_pretrained_embedding_multitask(
             logits, zhat, plc_pred = model(xb)
             if mode == "multiclass":
                 l_cls = ce(logits, yb.long())
-            else:
+            elif mode == "multilabel":
                 l_cls = bce(logits, yb)
+            else:
+                l_cls = torch.tensor(0.0, device=device)
             l_pann = huber(zhat, zpb)
             if zlb is not None and plc_pred is not None:
                 l_plc = huber(plc_pred, zlb)
@@ -654,16 +669,20 @@ def fit_audio_pretrained_embedding_multitask(
             ytt, ypt, ztt, zpt = _predict(test_dl)
             if mode == "multiclass":
                 test_metric = float(np.mean(ytt == ypt)) if len(ytt) else 0.0
-            else:
+            elif mode == "multilabel":
                 test_metric = float(np.mean(np.all(ytt == ypt, axis=1))) if len(ytt) else 0.0
+            else:
+                test_metric = None
             if ztt.size > 0 and zpt.size > 0:
                 test_plc_r2 = _r2_payload(ztt, zpt).get("r2_mean")
             if len(idx_val) > 0:
                 ytv, ypv, ztv, zpv = _predict(val_dl)
                 if mode == "multiclass":
                     val_metric = float(np.mean(ytv == ypv)) if len(ytv) else 0.0
-                else:
+                elif mode == "multilabel":
                     val_metric = float(np.mean(np.all(ytv == ypv, axis=1))) if len(ytv) else 0.0
+                else:
+                    val_metric = None
                 if ztv.size > 0 and zpv.size > 0:
                     val_plc_r2 = _r2_payload(ztv, zpv).get("r2_mean")
 
@@ -683,9 +702,9 @@ def fit_audio_pretrained_embedding_multitask(
                             "input_dim": int(X_emb.shape[1]),
                             "hidden": hidden,
                             "z_dim": int(z_dim),
-                            "n_targets": (int(y_dim) if mode == "multiclass" else int(Y.shape[1])),
+                            "n_targets": int(y_dim) if mode == "multiclass" else (int(Y.shape[1]) if mode == "multilabel" else 0),
                             "target_col": (str(target_col) if mode == "multiclass" else None),
-                            "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else None),
+                            "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
                             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
                             "pann_pca_weight": float(pann_pca_weight),
                             "aux_plc_weight": float(aux_plc_weight),
@@ -706,8 +725,8 @@ def fit_audio_pretrained_embedding_multitask(
                                 "hidden": hidden,
                                 "z_dim": int(z_dim),
                                 "task_mode": str(mode),
-                                "target_col": str(target_col),
-                                "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else None),
+                                "target_col": (str(target_col) if mode == "multiclass" else None),
+                                "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
                                 "main_task_weight": float(main_w),
                                 "pann_pca_weight": float(pann_pca_weight),
                                 "aux_plc_weight": float(aux_plc_weight),
@@ -729,9 +748,19 @@ def fit_audio_pretrained_embedding_multitask(
                 "lr": float(optim.param_groups[0]["lr"]),
             }
         )
-        ttxt = "NA" if test_metric is None else f"{test_metric:.4f}"
-        metric_name = "test_acc" if mode == "multiclass" else "test_exact_match"
-        print(f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} {metric_name}={ttxt} lr={float(optim.param_groups[0]['lr']):.6g}", flush=True)
+        if is_plc_encoder:
+            rtxt = "NA" if test_plc_r2 is None else f"{float(test_plc_r2):.4f}"
+            print(
+                f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} test_plc_r2={rtxt} lr={float(optim.param_groups[0]['lr']):.6g}",
+                flush=True,
+            )
+        else:
+            ttxt = "NA" if test_metric is None else f"{test_metric:.4f}"
+            metric_name = "test_acc" if mode == "multiclass" else "test_exact_match"
+            print(
+                f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} {metric_name}={ttxt} lr={float(optim.param_groups[0]['lr']):.6g}",
+                flush=True,
+            )
 
     ytr_t, ytr_p, _ztr_t, _ztr_p = _predict(
         DataLoader(TensorDataset(Xt[idx_train], Yt[idx_train], Zpann_t[idx_train]), batch_size=int(batch_size))
@@ -742,8 +771,10 @@ def fit_audio_pretrained_embedding_multitask(
     else:
         if mode == "multiclass":
             yva_t, yva_p = np.zeros((0,), dtype=np.int64), np.zeros((0,), dtype=np.int64)
-        else:
+        elif mode == "multilabel":
             yva_t, yva_p = np.zeros((0, Y.shape[1]), dtype=np.float32), np.zeros((0, Y.shape[1]), dtype=np.float32)
+        else:
+            yva_t, yva_p = np.zeros((0,), dtype=np.float32), np.zeros((0,), dtype=np.float32)
 
     # Export PANN-PCA true vs inferred embeddings (PC1/PC2) for visualization.
     model.eval()
@@ -894,6 +925,8 @@ def fit_audio_pretrained_embedding_multitask(
             pann_plot_multicolor_path = None
 
     def _split_metrics(yt: np.ndarray, yp: np.ndarray) -> Dict[str, Any]:
+        if is_plc_encoder:
+            return {}
         if len(yt) <= 0:
             return {}
         if mode == "multiclass":
@@ -918,9 +951,20 @@ def fit_audio_pretrained_embedding_multitask(
             m = src == s
             if int(np.sum(m)) <= 0:
                 continue
-            by_source_test[str(s)] = _split_metrics(yte_t[m], yte_p[m])
+            if is_plc_encoder:
+                if Z_plc is not None and Z_plc_pred is not None:
+                    zr = _r2_payload(Z_plc[idx_test][m], Z_plc_pred[idx_test][m])
+                    by_source_test[str(s)] = {
+                        "plc_pca_r2_mean": zr.get("r2_mean"),
+                        "plc_pca_r2_per_component": zr.get("r2_per_component"),
+                        "n_rows": int(np.sum(m)),
+                    }
+            else:
+                by_source_test[str(s)] = _split_metrics(yte_t[m], yte_p[m])
 
-    if mode == "multiclass":
+    if is_plc_encoder:
+        confusion_by_split = {"train": {}, "test": {}, "val": {}}
+    elif mode == "multiclass":
         class_labels = list(y_meta.get("classes") or [])
         label_ids = list(range(len(class_labels)))
         def _cm_mc(yt, yp):
@@ -940,7 +984,7 @@ def fit_audio_pretrained_embedding_multitask(
             "val": (_build_confusion_payload(yva_t, yva_p, target_cols=y_meta["target_cols"]) if len(idx_val) else {}),
         }
     confusion_by_source_test: Dict[str, Any] = {}
-    if len(idx_test) > 0:
+    if (not is_plc_encoder) and len(idx_test) > 0:
         src = src_series.iloc[idx_test].astype(str).fillna("unknown").to_numpy()
         for s in sorted(set(src.tolist())):
             m = src == s
@@ -961,31 +1005,32 @@ def fit_audio_pretrained_embedding_multitask(
                 )
 
     conf_artifacts: Dict[str, Any] = {}
-    conf_dir = out_dir / "confusion_multitask"
-    test_conf = confusion_by_split.get("test") or {}
-    if test_conf.get("labels"):
-        out_png = conf_dir / "confusion_test_multiclass_exact.png"
-        if _plot_confusion_png(
-            labels=list(test_conf["labels"]),
-            matrix=list(test_conf["matrix"]),
-            title=("Test Confusion (multiclass)" if mode == "multiclass" else "Test Confusion (2-hot exact class)"),
-            out_png=out_png,
-        ):
-            conf_artifacts["test_multiclass_exact_png"] = str(out_png)
-    by_src_png: Dict[str, str] = {}
-    for src_name, node in confusion_by_source_test.items():
-        if not node.get("labels"):
-            continue
-        out_png = conf_dir / f"confusion_test_source_{src_name}.png"
-        if _plot_confusion_png(
-            labels=list(node["labels"]),
-            matrix=list(node["matrix"]),
-            title=f"Test Confusion (source={src_name})",
-            out_png=out_png,
-        ):
-            by_src_png[str(src_name)] = str(out_png)
-    if by_src_png:
-        conf_artifacts["test_by_source_multiclass_exact_png"] = by_src_png
+    if not is_plc_encoder:
+        conf_dir = out_dir / "confusion_multitask"
+        test_conf = confusion_by_split.get("test") or {}
+        if test_conf.get("labels"):
+            out_png = conf_dir / "confusion_test_multiclass_exact.png"
+            if _plot_confusion_png(
+                labels=list(test_conf["labels"]),
+                matrix=list(test_conf["matrix"]),
+                title=("Test Confusion (multiclass)" if mode == "multiclass" else "Test Confusion (2-hot exact class)"),
+                out_png=out_png,
+            ):
+                conf_artifacts["test_multiclass_exact_png"] = str(out_png)
+        by_src_png: Dict[str, str] = {}
+        for src_name, node in confusion_by_source_test.items():
+            if not node.get("labels"):
+                continue
+            out_png = conf_dir / f"confusion_test_source_{src_name}.png"
+            if _plot_confusion_png(
+                labels=list(node["labels"]),
+                matrix=list(node["matrix"]),
+                title=f"Test Confusion (source={src_name})",
+                out_png=out_png,
+            ):
+                by_src_png[str(src_name)] = str(out_png)
+        if by_src_png:
+            conf_artifacts["test_by_source_multiclass_exact_png"] = by_src_png
 
     model_path = out_dir / "audio_pretrained_embedding_multitask.pt"
     torch.save(
@@ -995,9 +1040,9 @@ def fit_audio_pretrained_embedding_multitask(
             "input_dim": int(X_emb.shape[1]),
             "hidden": hidden,
             "z_dim": int(z_dim),
-            "n_targets": (int(y_dim) if mode == "multiclass" else int(Y.shape[1])),
+            "n_targets": int(y_dim) if mode == "multiclass" else (int(Y.shape[1]) if mode == "multilabel" else 0),
             "target_col": (str(target_col) if mode == "multiclass" else None),
-            "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else None),
+            "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
             "pann_pca_weight": float(pann_pca_weight),
             "aux_plc_weight": float(aux_plc_weight),
@@ -1017,8 +1062,8 @@ def fit_audio_pretrained_embedding_multitask(
                 "hidden": hidden,
                 "z_dim": int(z_dim),
                 "task_mode": str(mode),
-                "target_col": str(target_col),
-                "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else None),
+                "target_col": (str(target_col) if mode == "multiclass" else None),
+                "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
                 "main_task_weight": float(main_w),
                 "pann_pca_weight": float(pann_pca_weight),
                 "aux_plc_weight": float(aux_plc_weight),
@@ -1027,7 +1072,7 @@ def fit_audio_pretrained_embedding_multitask(
         )
 
     metrics = {
-        "task": ("multitask_multiclass" if mode == "multiclass" else "multitask_2hot"),
+        "task": ("multitask_multiclass" if mode == "multiclass" else ("multitask_2hot" if mode == "multilabel" else "plc_pca_encoder")),
         "target_meta": y_meta,
         "backend": "panns_embeddings",
         "split_source": split_source,

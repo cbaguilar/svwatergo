@@ -22,7 +22,7 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
 EVAL_EVERY="${EVAL_EVERY:-5}"
 
 # Explicit PCA-encoder objective: frozen embeddings -> PLC PCA.
-TASK_MODE="${TASK_MODE:-multiclass}"
+TASK_MODE="${TASK_MODE:-plc_pca_encoder}"
 TARGET_COL="${TARGET_COL:-primary_class}"
 TARGET_COLS="${TARGET_COLS:-ropumprun_duty,deliveryrun_duty}"
 MAIN_TASK_WEIGHT="${MAIN_TASK_WEIGHT:-0.0}"
