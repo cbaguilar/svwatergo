@@ -800,6 +800,70 @@ def fit_audio_pretrained_embedding_multitask(
         pann_proj_df[f"pann_pred_pc{jj}"] = Z_pann_pred[:, j].astype("float64")
     pann_proj_df.to_parquet(pann_proj_path, index=False)
 
+    plc_proj_path: Optional[Path] = None
+    plc_plot_3d_path: Optional[Path] = None
+    if Z_plc is not None and Z_plc_pred is not None:
+        plc_proj_path = out_dir / "plc_pca_true_vs_pred.parquet"
+        plc_proj_df = df2.reset_index(drop=True).copy()
+        plc_proj_df["split"] = split2.reset_index(drop=True)
+        for j in range(int(Z_plc.shape[1])):
+            jj = int(j + 1)
+            plc_proj_df[f"plc_true_pc{jj}"] = Z_plc[:, j].astype("float64")
+            plc_proj_df[f"plc_pred_pc{jj}"] = Z_plc_pred[:, j].astype("float64")
+        plc_proj_df.to_parquet(plc_proj_path, index=False)
+
+        if int(Z_plc.shape[1]) >= 3:
+            try:
+                import matplotlib.pyplot as plt  # type: ignore
+
+                src_vals = src_series.astype(str).fillna("unknown").to_numpy()
+                src_labels = sorted(set(src_vals.tolist()))
+                palette = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(src_labels))))
+                src_color = {lab: palette[i] for i, lab in enumerate(src_labels)}
+
+                fig = plt.figure(figsize=(12.2, 5.2), constrained_layout=True)
+                ax_t = fig.add_subplot(1, 2, 1, projection="3d")
+                ax_p = fig.add_subplot(1, 2, 2, projection="3d")
+
+                for lab in src_labels:
+                    m = src_vals == lab
+                    if int(np.sum(m)) <= 0:
+                        continue
+                    ax_t.scatter(
+                        Z_plc[m, 0],
+                        Z_plc[m, 1],
+                        Z_plc[m, 2],
+                        s=7,
+                        alpha=0.38,
+                        c=[src_color[lab]],
+                        label=str(lab),
+                    )
+                    ax_p.scatter(
+                        Z_plc_pred[m, 0],
+                        Z_plc_pred[m, 1],
+                        Z_plc_pred[m, 2],
+                        s=7,
+                        alpha=0.38,
+                        c=[src_color[lab]],
+                        label=str(lab),
+                    )
+
+                ax_t.set_title("PLC PCA True (PC1/PC2/PC3)")
+                ax_t.set_xlabel("true_pc1")
+                ax_t.set_ylabel("true_pc2")
+                ax_t.set_zlabel("true_pc3")
+                ax_p.set_title("PLC PCA Pred (PC1/PC2/PC3)")
+                ax_p.set_xlabel("pred_pc1")
+                ax_p.set_ylabel("pred_pc2")
+                ax_p.set_zlabel("pred_pc3")
+                ax_p.legend(fontsize=8, loc="best")
+
+                plc_plot_3d_path = out_dir / "plc_pca_true_vs_pred_pc123_3d.png"
+                fig.savefig(plc_plot_3d_path, dpi=170)
+                plt.close(fig)
+            except Exception:
+                plc_plot_3d_path = None
+
     pann_plot_path: Optional[Path] = None
     pann_plot_multicolor_path: Optional[Path] = None
     if int(Z_pann.shape[1]) >= 2:
@@ -1124,6 +1188,8 @@ def fit_audio_pretrained_embedding_multitask(
             "pann_pca_model": str(out_dir / "pann_embedding_pca_model.npz"),
             "plc_aux_pca_model": (str(out_dir / "plc_aux_pca_model.npz") if bool(aux_plc_pca) else None),
             "pann_true_vs_pred_parquet": str(pann_proj_path),
+            "plc_true_vs_pred_parquet": (str(plc_proj_path) if plc_proj_path is not None else None),
+            "plc_true_vs_pred_plot_pc123_3d": (str(plc_plot_3d_path) if plc_plot_3d_path is not None else None),
             "pann_true_vs_pred_plot_pc12": (str(pann_plot_path) if pann_plot_path is not None else None),
             "pann_true_vs_pred_plot_pc12_multicolor": (
                 str(pann_plot_multicolor_path) if pann_plot_multicolor_path is not None else None
