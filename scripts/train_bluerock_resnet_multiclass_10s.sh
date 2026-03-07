@@ -34,6 +34,8 @@ AUX_PCA_WEIGHT="${AUX_PCA_WEIGHT:-0.1}"
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_resnet_multiclass_primary_class}"
 PLOT_PNG="${PLOT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multiclass_primary_class_5panel.png}"
 PLOT_META="${PLOT_META:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multiclass_primary_class_5panel.json}"
+CURVE_PNG="${CURVE_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multiclass_primary_class_training_curves.png}"
+CURVE_META="${CURVE_META:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_resnet_multiclass_primary_class_training_curves.json}"
 
 EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
@@ -46,7 +48,7 @@ LR_PLATEAU_FACTOR="${LR_PLATEAU_FACTOR:-0.5}"
 LR_PLATEAU_PATIENCE="${LR_PLATEAU_PATIENCE:-2}"
 
 cd "$REPO"
-mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$OUT_DIR"
+mkdir -p "$(dirname "$PLOT_PNG")" "$(dirname "$PLOT_META")" "$(dirname "$CURVE_PNG")" "$(dirname "$CURVE_META")" "$OUT_DIR"
 
 extra_args=()
 if [[ "$CMVN" == "yes" ]]; then
@@ -115,6 +117,13 @@ fi
   --out-meta "$PLOT_META" \
   --title "Audio ResNet Multiclass (bluerock 10s, primary_class)"
 
+"$PYTHON" -m python.ml.cli.audio_training_curves_plot \
+  --checkpoint-dir "$OUT_DIR" \
+  --out-png "$CURVE_PNG" \
+  --out-meta "$CURVE_META" \
+  --title "Audio ResNet Multiclass Training Curves (bluerock 10s, primary_class)"
+
 echo "[OK] model -> $OUT_DIR/audio_tiny_cnn_model.pt"
 echo "[OK] plot  -> $PLOT_PNG"
+echo "[OK] curves -> $CURVE_PNG"
 echo "[OK] metrics -> $OUT_DIR/audio_tiny_cnn_metrics.json"

@@ -46,6 +46,8 @@ for w in $AUX_WEIGHTS; do
   out_dir="$BASE_OUT_ROOT/${RUN_ROOT}/auxw_${w_tag}"
   plot_png="$BASE_PLOT_ROOT/${RUN_ROOT}/auxw_${w_tag}_5panel.png"
   plot_meta="$BASE_PLOT_ROOT/${RUN_ROOT}/auxw_${w_tag}_5panel.json"
+  curve_png="$BASE_PLOT_ROOT/${RUN_ROOT}/auxw_${w_tag}_training_curves.png"
+  curve_meta="$BASE_PLOT_ROOT/${RUN_ROOT}/auxw_${w_tag}_training_curves.json"
   log_file="$BASE_LOG_ROOT/${RUN_ROOT}/auxw_${w_tag}.log"
 
   mkdir -p "$out_dir" "$(dirname "$plot_png")" "$(dirname "$log_file")"
@@ -68,6 +70,8 @@ for w in $AUX_WEIGHTS; do
     OUT_DIR="$out_dir" \
     PLOT_PNG="$plot_png" \
     PLOT_META="$plot_meta" \
+    CURVE_PNG="$curve_png" \
+    CURVE_META="$curve_meta" \
     bash "$SCRIPT_PATH"
   ) 2>&1 | tee "$log_file"; then
     echo "[FAIL] weight=$w (see $log_file)" >&2

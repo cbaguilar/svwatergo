@@ -1153,6 +1153,7 @@ def fit_audio_tiny_cnn(
         return (yt >= multilabel_truth_threshold).astype(np.int64)
 
     n_epochs = int(epochs)
+    epoch_history: List[Dict[str, Any]] = []
     log_every = max(1, int(log_every))
     eval_every = max(1, int(eval_every))
     for ep in range(1, n_epochs + 1):
@@ -1235,34 +1236,50 @@ def fit_audio_tiny_cnn(
                 if not quiet:
                     metric_name = "test_mae" if task == "multiregression" else "test_acc"
                     print(f"[lr] epoch={ep} plateau_metric={metric_name} value={test_acc:.4f} lr={float(optim.param_groups[0]['lr']):.6g}", flush=True)
+        cur_lr = float(optim.param_groups[0]["lr"])
+        avg_aux_loss = float(aux_loss_sum / max(1, n_samples))
+        train_val: Optional[float] = float(train_acc) if np.isfinite(float(train_acc)) else None
+        test_val: Optional[float] = float(test_acc) if np.isfinite(float(test_acc)) else None
+        epoch_history.append(
+            {
+                "epoch": int(ep),
+                "loss": float(avg_loss),
+                "aux_loss": float(avg_aux_loss),
+                "train_metric": train_val,
+                "test_metric": test_val,
+                "lr": cur_lr,
+                "evaluated": bool(need_eval),
+            }
+        )
+
         if (not quiet) and (ep % log_every == 0 or ep == n_epochs):
             train_txt = "NA" if not np.isfinite(float(train_acc)) else f"{float(train_acc):.4f}"
             test_txt = "NA" if not np.isfinite(float(test_acc)) else f"{float(test_acc):.4f}"
             if task == "multilabel":
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
-                    f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
+                    f"aux_loss={avg_aux_loss:.6f} "
                     f"train_exact_match={train_txt} "
                     f"test_exact_match={test_txt} "
-                    f"lr={float(optim.param_groups[0]['lr']):.6g}",
+                    f"lr={cur_lr:.6g}",
                     flush=True,
                 )
             elif task == "multiregression":
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
-                    f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
+                    f"aux_loss={avg_aux_loss:.6f} "
                     f"train_mae={train_txt} "
                     f"test_mae={test_txt} "
-                    f"lr={float(optim.param_groups[0]['lr']):.6g}",
+                    f"lr={cur_lr:.6g}",
                     flush=True,
                 )
             else:
                 print(
                     f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} "
-                    f"aux_loss={(aux_loss_sum / max(1, n_samples)):.6f} "
+                    f"aux_loss={avg_aux_loss:.6f} "
                     f"train_acc={train_txt} "
                     f"test_acc={test_txt} "
-                    f"lr={float(optim.param_groups[0]['lr']):.6g}",
+                    f"lr={cur_lr:.6g}",
                     flush=True,
                 )
 
@@ -1893,6 +1910,12 @@ def fit_audio_tiny_cnn(
             "aux_pca_weight": float(aux_pca_weight),
             "generate_projection": bool(generate_projection),
         },
+        "epoch_history_metric_name": (
+            "exact_match"
+            if task == "multilabel"
+            else ("mae" if task == "multiregression" else "acc")
+        ),
+        "epoch_history": epoch_history,
     }
     metrics_path = out_dir / "audio_tiny_cnn_metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
