@@ -15,7 +15,7 @@ from .audio_pretrained_embeddings import _PannsBackend, _coerce_audio_path_colum
 try:
     from sklearn.decomposition import PCA
     from sklearn.metrics import confusion_matrix
-    from sklearn.metrics import f1_score, precision_score, recall_score
+    from sklearn.metrics import f1_score, precision_score, r2_score, recall_score
 except Exception as e:
     raise SystemExit("Missing scikit-learn. Install: pip install scikit-learn") from e
 
@@ -276,6 +276,28 @@ def _plot_confusion_png(
     fig.savefig(out_png, dpi=160)
     plt.close(fig)
     return True
+
+
+def _r2_payload(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, Any]:
+    yt = np.asarray(y_true, dtype=np.float64)
+    yp = np.asarray(y_pred, dtype=np.float64)
+    if yt.shape != yp.shape or yt.size == 0:
+        return {"r2_mean": None, "r2_per_component": []}
+    if yt.ndim == 1:
+        yt = yt.reshape(-1, 1)
+        yp = yp.reshape(-1, 1)
+    per = []
+    for j in range(int(yt.shape[1])):
+        try:
+            per.append(float(r2_score(yt[:, j], yp[:, j])))
+        except Exception:
+            per.append(float("nan"))
+    finite = [v for v in per if np.isfinite(v)]
+    mean = float(np.mean(finite)) if finite else float("nan")
+    return {
+        "r2_mean": (mean if np.isfinite(mean) else None),
+        "r2_per_component": [float(v) if np.isfinite(v) else None for v in per],
+    }
 
 
 def fit_audio_pretrained_embedding_multitask(
@@ -591,13 +613,17 @@ def fit_audio_pretrained_embedding_multitask(
     # Export PANN-PCA true vs inferred embeddings (PC1/PC2) for visualization.
     model.eval()
     z_pred_parts: List[np.ndarray] = []
+    plc_pred_parts: List[np.ndarray] = []
     with torch.no_grad():
         for i0 in range(0, Xt.shape[0], int(batch_size)):
             i1 = min(int(Xt.shape[0]), i0 + int(batch_size))
             xb = Xt[i0:i1].to(device)
-            _logits, zhat, _plc = model(xb)
+            _logits, zhat, plc_hat = model(xb)
             z_pred_parts.append(zhat.cpu().numpy().astype(np.float32, copy=False))
+            if plc_hat is not None:
+                plc_pred_parts.append(plc_hat.cpu().numpy().astype(np.float32, copy=False))
     Z_pann_pred = np.concatenate(z_pred_parts, axis=0) if z_pred_parts else np.zeros_like(Z_pann)
+    Z_plc_pred = np.concatenate(plc_pred_parts, axis=0) if plc_pred_parts else None
 
     pann_proj_path = out_dir / "pann_pca_true_vs_pred.parquet"
     pann_proj_df = df2.reset_index(drop=True).copy()
@@ -859,6 +885,10 @@ def fit_audio_pretrained_embedding_multitask(
             "weight": float(pann_pca_weight),
         },
         "aux_plc_pca": plc_meta,
+        "pca_alignment_metrics": {
+            "pann_pca": _r2_payload(Z_pann, Z_pann_pred),
+            "plc_pca": (_r2_payload(Z_plc, Z_plc_pred) if (Z_plc is not None and Z_plc_pred is not None) else None),
+        },
         "train_metrics": _split_metrics(ytr_t, ytr_p),
         "test_metrics": _split_metrics(yte_t, yte_p),
         "val_metrics": _split_metrics(yva_t, yva_p) if len(idx_val) else {},
