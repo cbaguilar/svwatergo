@@ -588,21 +588,19 @@ def fit_audio_pretrained_embedding_multitask(
                 if zlb is not None and _p is not None:
                     plc_true.append(zlb.cpu().numpy())
                     plc_pred.append(_p.cpu().numpy())
-        if not y_true:
+        if y_true:
+            yt = np.concatenate(y_true, axis=0)
+            yp = np.concatenate(y_pred, axis=0)
+        else:
             if mode == "multiclass":
-                yt0 = np.zeros((0,), dtype=np.int64)
-                yp0 = np.zeros((0,), dtype=np.int64)
+                yt = np.zeros((0,), dtype=np.int64)
+                yp = np.zeros((0,), dtype=np.int64)
             elif mode == "multilabel":
-                yt0 = np.zeros((0, Y.shape[1]), dtype=np.float32)
-                yp0 = np.zeros((0, Y.shape[1]), dtype=np.float32)
+                yt = np.zeros((0, Y.shape[1]), dtype=np.float32)
+                yp = np.zeros((0, Y.shape[1]), dtype=np.float32)
             else:
-                yt0 = np.zeros((0,), dtype=np.float32)
-                yp0 = np.zeros((0,), dtype=np.float32)
-            zt0 = np.zeros((0, 0), dtype=np.float32)
-            zp0 = np.zeros((0, 0), dtype=np.float32)
-            return yt0, yp0, zt0, zp0
-        yt = np.concatenate(y_true, axis=0)
-        yp = np.concatenate(y_pred, axis=0)
+                yt = np.zeros((0,), dtype=np.float32)
+                yp = np.zeros((0,), dtype=np.float32)
         if plc_true and plc_pred:
             zt = np.concatenate(plc_true, axis=0).astype(np.float32, copy=False)
             zp = np.concatenate(plc_pred, axis=0).astype(np.float32, copy=False)
