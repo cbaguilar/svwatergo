@@ -326,6 +326,7 @@ def fit_audio_pretrained_embedding_multitask(
     learning_rate: float = 1e-3,
     weight_decay: float = 1e-4,
     eval_every: int = 5,
+    main_task_weight: float = 1.0,
     aux_plc_pca: bool = True,
     aux_plc_feature_cols: Optional[Sequence[str]] = None,
     aux_plc_include_duty_cols: bool = False,
@@ -529,6 +530,9 @@ def fit_audio_pretrained_embedding_multitask(
     ce = nn.CrossEntropyLoss()
     huber = nn.SmoothL1Loss()
     optim = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=float(weight_decay))
+    main_w = float(main_task_weight)
+    if main_w < 0.0:
+        raise ValueError("main_task_weight must be >= 0")
 
     def _predict(dl):
         model.eval()
@@ -579,7 +583,7 @@ def fit_audio_pretrained_embedding_multitask(
                 l_plc = huber(plc_pred, zlb)
             else:
                 l_plc = torch.tensor(0.0, device=device)
-            loss = l_cls + float(pann_pca_weight) * l_pann + float(aux_plc_weight) * l_plc
+            loss = main_w * l_cls + float(pann_pca_weight) * l_pann + float(aux_plc_weight) * l_plc
             loss.backward()
             optim.step()
             bsz = int(yb.shape[0])
@@ -866,9 +870,30 @@ def fit_audio_pretrained_embedding_multitask(
             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
             "pann_pca_weight": float(pann_pca_weight),
             "aux_plc_weight": float(aux_plc_weight),
+            "main_task_weight": float(main_w),
         },
         str(model_path),
     )
+
+    plc_encoder_path: Optional[Path] = None
+    if bool(aux_plc_pca):
+        plc_encoder_path = out_dir / "audio_pretrained_embedding_plc_encoder.pt"
+        torch.save(
+            {
+                "bundle_type": "audio_pretrained_embedding_plc_encoder",
+                "state_dict": model.state_dict(),
+                "input_dim": int(X_emb.shape[1]),
+                "hidden": hidden,
+                "z_dim": int(z_dim),
+                "task_mode": str(mode),
+                "target_col": str(target_col),
+                "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else None),
+                "main_task_weight": float(main_w),
+                "pann_pca_weight": float(pann_pca_weight),
+                "aux_plc_weight": float(aux_plc_weight),
+            },
+            str(plc_encoder_path),
+        )
 
     metrics = {
         "task": ("multitask_multiclass" if mode == "multiclass" else "multitask_2hot"),
@@ -904,6 +929,7 @@ def fit_audio_pretrained_embedding_multitask(
             "encoder_hidden": hidden,
             "encoder_dropout": float(encoder_dropout),
             "eval_every": int(eval_every),
+            "main_task_weight": float(main_w),
         },
         "artifacts": {
             "model_path": str(model_path),
@@ -916,6 +942,7 @@ def fit_audio_pretrained_embedding_multitask(
                 str(pann_plot_multicolor_path) if pann_plot_multicolor_path is not None else None
             ),
             "confusion": conf_artifacts,
+            "plc_encoder_path": (str(plc_encoder_path) if plc_encoder_path is not None else None),
         },
     }
     metrics_path = out_dir / "audio_pretrained_embedding_multitask_metrics.json"

@@ -39,6 +39,7 @@ def main() -> int:
     p.add_argument("--learning-rate", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--eval-every", type=int, default=5)
+    p.add_argument("--main-task-weight", type=float, default=1.0)
 
     p.add_argument("--aux-plc-pca", default="yes", choices=["yes", "no"])
     p.add_argument("--aux-plc-feature-cols", default="")
@@ -82,6 +83,7 @@ def main() -> int:
         learning_rate=float(args.learning_rate),
         weight_decay=float(args.weight_decay),
         eval_every=int(args.eval_every),
+        main_task_weight=float(args.main_task_weight),
         aux_plc_pca=(str(args.aux_plc_pca) == "yes"),
         aux_plc_feature_cols=(
             [c.strip() for c in str(args.aux_plc_feature_cols).split(",") if c.strip()]

@@ -27,6 +27,7 @@ BATCH_SIZE="${BATCH_SIZE:-128}"
 LEARNING_RATE="${LEARNING_RATE:-1e-3}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
 EVAL_EVERY="${EVAL_EVERY:-5}"
+MAIN_TASK_WEIGHT="${MAIN_TASK_WEIGHT:-1.0}"
 
 # Auxiliary PLC PCA target.
 AUX_PLC_PCA="${AUX_PLC_PCA:-yes}"
@@ -69,6 +70,7 @@ args=(
   --learning-rate "$LEARNING_RATE"
   --weight-decay "$WEIGHT_DECAY"
   --eval-every "$EVAL_EVERY"
+  --main-task-weight "$MAIN_TASK_WEIGHT"
   --aux-plc-pca "$AUX_PLC_PCA"
   --aux-plc-include-duty-cols "$AUX_PLC_INCLUDE_DUTY_COLS"
   --aux-plc-components "$AUX_PLC_COMPONENTS"
