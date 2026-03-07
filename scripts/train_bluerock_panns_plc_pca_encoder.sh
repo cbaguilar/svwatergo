@@ -6,14 +6,7 @@ REPO="${REPO:-$HOME/svwatergo}"
 
 DATASET="${DATASET:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet}"
 SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_event_dataset/site=bluerock/window_s=10/split_manifest.parquet}"
-
-OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_panns_multitask_multiclass_auxpca}"
-
-TASK_MODE="${TASK_MODE:-multiclass}"
-TARGET_COL="${TARGET_COL:-primary_class}"
-TARGET_COLS="${TARGET_COLS:-ropumprun_duty,deliveryrun_duty}"
-POSITIVE_THRESHOLD="${POSITIVE_THRESHOLD:-0.5}"
-POSITIVE_LABEL="${POSITIVE_LABEL:-on}"
+OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_panns_plc_pca_encoder}"
 
 TARGET_SECONDS="${TARGET_SECONDS:-10}"
 EXTRACT_BATCH_SIZE="${EXTRACT_BATCH_SIZE:-32}"
@@ -22,27 +15,28 @@ EXTRACT_LOG_EVERY="${EXTRACT_LOG_EVERY:-512}"
 
 ENCODER_HIDDEN="${ENCODER_HIDDEN:-512,256}"
 ENCODER_DROPOUT="${ENCODER_DROPOUT:-0.2}"
-EPOCHS="${EPOCHS:-60}"
+EPOCHS="${EPOCHS:-100}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
 LEARNING_RATE="${LEARNING_RATE:-1e-3}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
 EVAL_EVERY="${EVAL_EVERY:-5}"
-MAIN_TASK_WEIGHT="${MAIN_TASK_WEIGHT:-1.0}"
-BEST_MODEL_METRIC="${BEST_MODEL_METRIC:-auto}"
+
+# Explicit PCA-encoder objective: frozen embeddings -> PLC PCA.
+TASK_MODE="${TASK_MODE:-multiclass}"
+TARGET_COL="${TARGET_COL:-primary_class}"
+TARGET_COLS="${TARGET_COLS:-ropumprun_duty,deliveryrun_duty}"
+MAIN_TASK_WEIGHT="${MAIN_TASK_WEIGHT:-0.0}"
+PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-0.0}"
+BEST_MODEL_METRIC="${BEST_MODEL_METRIC:-plc_pca_r2}"
 BEST_MODEL_SPLIT="${BEST_MODEL_SPLIT:-val}"
 
-# Auxiliary PLC PCA target.
+# PLC PCA target definition.
 AUX_PLC_PCA="${AUX_PLC_PCA:-yes}"
 AUX_PLC_FEATURE_COLS="${AUX_PLC_FEATURE_COLS:-}"
-AUX_PLC_INCLUDE_DUTY_COLS="${AUX_PLC_INCLUDE_DUTY_COLS:-no}"
+AUX_PLC_INCLUDE_DUTY_COLS="${AUX_PLC_INCLUDE_DUTY_COLS:-yes}"
 AUX_PLC_COMPONENTS="${AUX_PLC_COMPONENTS:-8}"
 AUX_PLC_VARIANCE_RATIO="${AUX_PLC_VARIANCE_RATIO:-0.0}"
-AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-0.3}"
-
-# PANN embedding PCA alignment target.
-PANN_PCA_COMPONENTS="${PANN_PCA_COMPONENTS:-8}"
-PANN_PCA_VARIANCE_RATIO="${PANN_PCA_VARIANCE_RATIO:-0.0}"
-PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-1.0}"
+AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-1.0}"
 
 cd "$REPO"
 mkdir -p "$OUT_DIR"
@@ -59,8 +53,6 @@ args=(
   --task-mode "$TASK_MODE"
   --target-col "$TARGET_COL"
   --target-cols "$TARGET_COLS"
-  --positive-threshold "$POSITIVE_THRESHOLD"
-  --positive-label "$POSITIVE_LABEL"
   --target-seconds "$TARGET_SECONDS"
   --extract-batch-size "$EXTRACT_BATCH_SIZE"
   --extract-num-workers "$EXTRACT_NUM_WORKERS"
@@ -80,8 +72,8 @@ args=(
   --aux-plc-components "$AUX_PLC_COMPONENTS"
   --aux-plc-variance-ratio "$AUX_PLC_VARIANCE_RATIO"
   --aux-plc-weight "$AUX_PLC_WEIGHT"
-  --pann-pca-components "$PANN_PCA_COMPONENTS"
-  --pann-pca-variance-ratio "$PANN_PCA_VARIANCE_RATIO"
+  --pann-pca-components 8
+  --pann-pca-variance-ratio 0.0
   --pann-pca-weight "$PANN_PCA_WEIGHT"
 )
 
@@ -91,5 +83,8 @@ fi
 
 "$PYTHON" "${args[@]}"
 
-echo "[OK] model -> $OUT_DIR/audio_pretrained_embedding_multitask.pt"
+echo "[OK] model(last) -> $OUT_DIR/audio_pretrained_embedding_multitask.pt"
+echo "[OK] model(best) -> $OUT_DIR/audio_pretrained_embedding_multitask_best.pt"
+echo "[OK] plc_encoder(last) -> $OUT_DIR/audio_pretrained_embedding_plc_encoder.pt"
+echo "[OK] plc_encoder(best) -> $OUT_DIR/audio_pretrained_embedding_plc_encoder_best.pt"
 echo "[OK] metrics -> $OUT_DIR/audio_pretrained_embedding_multitask_metrics.json"

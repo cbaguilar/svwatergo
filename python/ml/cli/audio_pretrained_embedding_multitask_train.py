@@ -40,6 +40,8 @@ def main() -> int:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--main-task-weight", type=float, default=1.0)
+    p.add_argument("--best-model-metric", default="auto", choices=["auto", "main_task_metric", "plc_pca_r2"])
+    p.add_argument("--best-model-split", default="val", choices=["val", "test"])
 
     p.add_argument("--aux-plc-pca", default="yes", choices=["yes", "no"])
     p.add_argument("--aux-plc-feature-cols", default="")
@@ -84,6 +86,8 @@ def main() -> int:
         weight_decay=float(args.weight_decay),
         eval_every=int(args.eval_every),
         main_task_weight=float(args.main_task_weight),
+        best_model_metric=str(args.best_model_metric),
+        best_model_split=str(args.best_model_split),
         aux_plc_pca=(str(args.aux_plc_pca) == "yes"),
         aux_plc_feature_cols=(
             [c.strip() for c in str(args.aux_plc_feature_cols).split(",") if c.strip()]
