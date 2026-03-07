@@ -14,6 +14,7 @@ from .audio_pretrained_embeddings import _PannsBackend, _coerce_audio_path_colum
 
 try:
     from sklearn.decomposition import PCA
+    from sklearn.metrics import confusion_matrix
 except Exception as e:
     raise SystemExit("Missing scikit-learn. Install: pip install scikit-learn") from e
 
@@ -63,6 +64,7 @@ def _select_plc_feature_columns(
     include_duty_cols: bool,
 ) -> List[str]:
     default_exclude_regex = [
+        # Counter/time-like leak-prone columns.
         r"^total",
         r"^daily",
         r"^powermeter__(?!d1$)",
@@ -78,6 +80,21 @@ def _select_plc_feature_columns(
         r"(^|__)age($|__|_)",
         r"(^|__)seq($|__|_)",
         r"(^|__)index($|__|_)",
+        # Segment/source metadata (non-physical, often leak source/session details).
+        r"^source_",
+        r"^segment_",
+        r"^window_seconds$",
+        r"^n_rows$",
+        # State/proxy features that are too close to targets.
+        r"^state_",
+        r"^state__",
+        r"^warnword",
+        r"^overlap_s_",
+        r"^quiet_full$",
+        r"^is_transition_segment$",
+        r"^transition_count$",
+        r"run__transitions$",
+        r"__transitions$",
     ]
     excl_regs = [re.compile(p, flags=re.IGNORECASE) for p in default_exclude_regex]
 
@@ -166,6 +183,98 @@ def _fit_pca_targets(
         "variance_ratio_captured": float(np.sum(getattr(pca, "explained_variance_ratio_", np.asarray([], dtype=np.float64)))),
     }
     return Z, meta
+
+
+def _combo_label(bits: np.ndarray, target_cols: Sequence[str]) -> str:
+    cols = [str(c) for c in target_cols]
+    vals = [int(v) for v in np.asarray(bits).astype(int).tolist()]
+    if len(cols) == 2:
+        c0 = cols[0].lower()
+        c1 = cols[1].lower()
+        if "ropumprun" in c0 and "deliveryrun" in c1:
+            p0 = "producing" if vals[0] == 1 else "not_producing"
+            p1 = "delivering" if vals[1] == 1 else "not_delivering"
+            return f"{p0}|{p1}"
+    return "|".join(f"{c}={v}" for c, v in zip(cols, vals))
+
+
+def _build_confusion_payload(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    *,
+    target_cols: Sequence[str],
+) -> Dict[str, Any]:
+    if len(y_true) <= 0:
+        return {"labels": [], "matrix": [], "n_rows": 0, "per_target": {}}
+
+    yt = np.asarray(y_true).astype(int)
+    yp = np.asarray(y_pred).astype(int)
+    true_labels = [_combo_label(row, target_cols) for row in yt]
+    pred_labels = [_combo_label(row, target_cols) for row in yp]
+    labels = sorted(set(true_labels) | set(pred_labels))
+    cm = confusion_matrix(true_labels, pred_labels, labels=labels)
+
+    per_target: Dict[str, Any] = {}
+    for j, c in enumerate(target_cols):
+        ytj = yt[:, j]
+        ypj = yp[:, j]
+        cmj = confusion_matrix(ytj, ypj, labels=[0, 1])
+        tn, fp, fn, tp = [int(x) for x in cmj.reshape(-1).tolist()]
+        precision = float(tp / max(1, tp + fp))
+        recall = float(tp / max(1, tp + fn))
+        f1 = float((2.0 * precision * recall) / max(1e-12, precision + recall))
+        acc = float((tp + tn) / max(1, int(len(ytj))))
+        per_target[str(c)] = {
+            "labels": [0, 1],
+            "matrix": cmj.tolist(),
+            "accuracy": acc,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": int(np.sum(ytj == 1)),
+        }
+
+    return {
+        "labels": labels,
+        "matrix": cm.tolist(),
+        "n_rows": int(len(yt)),
+        "per_target": per_target,
+    }
+
+
+def _plot_confusion_png(
+    *,
+    labels: Sequence[str],
+    matrix: Sequence[Sequence[int]],
+    title: str,
+    out_png: Path,
+) -> bool:
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except Exception:
+        return False
+    if not labels:
+        return False
+    cm = np.asarray(matrix, dtype=np.int64)
+    if cm.size == 0:
+        return False
+    fig, ax = plt.subplots(1, 1, figsize=(6.8, 5.8), constrained_layout=True)
+    im = ax.imshow(cm, cmap="Blues")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title(str(title))
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+    ax.set_yticklabels(labels, fontsize=8)
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, str(int(cm[i, j])), ha="center", va="center", fontsize=8, color="black")
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=160)
+    plt.close(fig)
+    return True
 
 
 def fit_audio_pretrained_embedding_multitask(
@@ -599,6 +708,49 @@ def fit_audio_pretrained_embedding_multitask(
                 continue
             by_source_test[str(s)] = _split_metrics(yte_t[m], yte_p[m])
 
+    confusion_by_split = {
+        "train": _build_confusion_payload(ytr_t, ytr_p, target_cols=y_meta["target_cols"]),
+        "test": _build_confusion_payload(yte_t, yte_p, target_cols=y_meta["target_cols"]),
+        "val": (_build_confusion_payload(yva_t, yva_p, target_cols=y_meta["target_cols"]) if len(idx_val) else {}),
+    }
+    confusion_by_source_test: Dict[str, Any] = {}
+    if len(idx_test) > 0:
+        src = src_series.iloc[idx_test].astype(str).fillna("unknown").to_numpy()
+        for s in sorted(set(src.tolist())):
+            m = src == s
+            if int(np.sum(m)) <= 0:
+                continue
+            confusion_by_source_test[str(s)] = _build_confusion_payload(
+                yte_t[m], yte_p[m], target_cols=y_meta["target_cols"]
+            )
+
+    conf_artifacts: Dict[str, Any] = {}
+    conf_dir = out_dir / "confusion_multitask"
+    test_conf = confusion_by_split.get("test") or {}
+    if test_conf.get("labels"):
+        out_png = conf_dir / "confusion_test_multiclass_exact.png"
+        if _plot_confusion_png(
+            labels=list(test_conf["labels"]),
+            matrix=list(test_conf["matrix"]),
+            title="Test Confusion (2-hot exact class)",
+            out_png=out_png,
+        ):
+            conf_artifacts["test_multiclass_exact_png"] = str(out_png)
+    by_src_png: Dict[str, str] = {}
+    for src_name, node in confusion_by_source_test.items():
+        if not node.get("labels"):
+            continue
+        out_png = conf_dir / f"confusion_test_source_{src_name}.png"
+        if _plot_confusion_png(
+            labels=list(node["labels"]),
+            matrix=list(node["matrix"]),
+            title=f"Test Confusion (source={src_name})",
+            out_png=out_png,
+        ):
+            by_src_png[str(src_name)] = str(out_png)
+    if by_src_png:
+        conf_artifacts["test_by_source_multiclass_exact_png"] = by_src_png
+
     model_path = out_dir / "audio_pretrained_embedding_multitask.pt"
     torch.save(
         {
@@ -633,6 +785,8 @@ def fit_audio_pretrained_embedding_multitask(
         "test_metrics": _split_metrics(yte_t, yte_p),
         "val_metrics": _split_metrics(yva_t, yva_p) if len(idx_val) else {},
         "metrics_by_source": {"test": by_source_test},
+        "confusion_by_split": confusion_by_split,
+        "confusion_by_source": {"test": confusion_by_source_test},
         "epoch_history": history,
         "train_params": {
             "epochs": int(epochs),
@@ -653,6 +807,7 @@ def fit_audio_pretrained_embedding_multitask(
             "pann_true_vs_pred_plot_pc12_multicolor": (
                 str(pann_plot_multicolor_path) if pann_plot_multicolor_path is not None else None
             ),
+            "confusion": conf_artifacts,
         },
     }
     metrics_path = out_dir / "audio_pretrained_embedding_multitask_metrics.json"
