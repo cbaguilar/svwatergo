@@ -1049,7 +1049,7 @@ def fit_audio_pretrained_embedding_multitask(
                     "ropressure__d1",
                     "ropumprun_duty",
                     "deliveryrun_duty",
-                    "inletrun__duty",
+                    "wellpumprun__duty",
                     "powermeter__d1",
                     # Fallback aliases
                     "sup_deliveryflow_mean_tw",
@@ -1065,7 +1065,7 @@ def fit_audio_pretrained_embedding_multitask(
                     "sup_ropressure_mean_tw",
                     "sup_ropressure_d1",
                     "sup_deliveryrun_duty",
-                    "sup_inletrun_duty",
+                    "sup_wellpumprun_duty",
                     "sup_ropumprun_duty",
                     "sup_powermeter_d1",
                 ]
@@ -1313,7 +1313,7 @@ def fit_audio_pretrained_embedding_multitask(
                 "ropressure__d1",
                 "ropumprun_duty",
                 "deliveryrun_duty",
-                "inletrun__duty",
+                "wellpumprun__duty",
                 "powermeter__d1",
                 # Fallback aliases
                 "sup_deliveryflow_mean_tw",
@@ -1329,7 +1329,7 @@ def fit_audio_pretrained_embedding_multitask(
                 "sup_ropressure_mean_tw",
                 "sup_ropressure_d1",
                 "sup_deliveryrun_duty",
-                "sup_inletrun_duty",
+                "sup_wellpumprun_duty",
                 "sup_ropumprun_duty",
                 "sup_powermeter_d1",
             ]
