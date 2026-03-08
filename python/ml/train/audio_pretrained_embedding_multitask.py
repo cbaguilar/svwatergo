@@ -354,6 +354,7 @@ def fit_audio_pretrained_embedding_multitask(
     aux_plc_pca: bool = True,
     aux_plc_feature_cols: Optional[Sequence[str]] = None,
     aux_plc_include_duty_cols: bool = False,
+    aux_plc_target_mode: str = "pca",
     aux_plc_components: int = 8,
     aux_plc_variance_ratio: float = 0.0,
     aux_plc_weight: float = 0.3,
@@ -587,6 +588,9 @@ def fit_audio_pretrained_embedding_multitask(
     Z_plc = None
     plc_meta: Dict[str, Any] = {"enabled": False}
     if bool(aux_plc_pca):
+        plc_target_mode = str(aux_plc_target_mode).strip().lower()
+        if plc_target_mode not in ("pca", "raw"):
+            raise ValueError("aux_plc_target_mode must be one of: pca, raw")
         plc_cols = _select_plc_feature_columns(
             df2,
             target_cols=([] if is_plc_encoder else (list(y_meta.get("target_cols") or []) if mode == "multilabel" else [str(target_col)])),
@@ -597,30 +601,54 @@ def fit_audio_pretrained_embedding_multitask(
             include_duty_cols=bool(aux_plc_include_duty_cols),
         )
         X_plc = df2[plc_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
-        Z_plc, plc_fit_meta = _fit_pca_targets(
-            X_plc,
-            idx_train,
-            n_components=int(aux_plc_components),
-            variance_ratio=float(aux_plc_variance_ratio),
-            random_state=int(random_state),
-        )
-        np.savez(
-            str(out_dir / "plc_aux_pca_model.npz"),
-            mean=plc_fit_meta["mean"],
-            std=plc_fit_meta["std"],
-            components=plc_fit_meta["components"],
-            explained_variance=plc_fit_meta["explained_variance"],
-            explained_variance_ratio=plc_fit_meta["explained_variance_ratio"],
-            feature_cols=np.asarray(plc_cols, dtype=object),
-        )
-        plc_meta = {
-            "enabled": True,
-            "feature_cols": plc_cols,
-            "n_features": int(len(plc_cols)),
-            "n_components": int(plc_fit_meta["n_components"]),
-            "variance_ratio_captured": float(plc_fit_meta["variance_ratio_captured"]),
-            "weight": float(aux_plc_weight),
-        }
+        if plc_target_mode == "pca":
+            Z_plc, plc_fit_meta = _fit_pca_targets(
+                X_plc,
+                idx_train,
+                n_components=int(aux_plc_components),
+                variance_ratio=float(aux_plc_variance_ratio),
+                random_state=int(random_state),
+            )
+            np.savez(
+                str(out_dir / "plc_aux_pca_model.npz"),
+                target_mode=np.asarray(["pca"], dtype=object),
+                mean=plc_fit_meta["mean"],
+                std=plc_fit_meta["std"],
+                components=plc_fit_meta["components"],
+                explained_variance=plc_fit_meta["explained_variance"],
+                explained_variance_ratio=plc_fit_meta["explained_variance_ratio"],
+                feature_cols=np.asarray(plc_cols, dtype=object),
+            )
+            plc_meta = {
+                "enabled": True,
+                "target_mode": "pca",
+                "feature_cols": plc_cols,
+                "n_features": int(len(plc_cols)),
+                "n_components": int(plc_fit_meta["n_components"]),
+                "variance_ratio_captured": float(plc_fit_meta["variance_ratio_captured"]),
+                "weight": float(aux_plc_weight),
+            }
+        else:
+            mu = X_plc[idx_train].mean(axis=0, keepdims=True)
+            sd = X_plc[idx_train].std(axis=0, keepdims=True)
+            sd = np.where(sd > 0, sd, 1.0)
+            Z_plc = ((X_plc - mu) / sd).astype(np.float32, copy=False)
+            np.savez(
+                str(out_dir / "plc_aux_pca_model.npz"),
+                target_mode=np.asarray(["raw"], dtype=object),
+                mean=mu.squeeze(0).astype(np.float32),
+                std=sd.squeeze(0).astype(np.float32),
+                feature_cols=np.asarray(plc_cols, dtype=object),
+            )
+            plc_meta = {
+                "enabled": True,
+                "target_mode": "raw",
+                "feature_cols": plc_cols,
+                "n_features": int(len(plc_cols)),
+                "n_components": int(Z_plc.shape[1]),
+                "variance_ratio_captured": None,
+                "weight": float(aux_plc_weight),
+            }
 
     try:
         import torch  # type: ignore
@@ -977,6 +1005,13 @@ def fit_audio_pretrained_embedding_multitask(
         if int(Z_plc.shape[1]) >= 3:
             try:
                 import matplotlib.pyplot as plt  # type: ignore
+                Z_plc_view = np.asarray(Z_plc, dtype=np.float32)
+                Z_plc_pred_view = np.asarray(Z_plc_pred, dtype=np.float32)
+                if str(plc_meta.get("target_mode", "pca")) == "raw":
+                    pca_vis = PCA(n_components=3, random_state=int(random_state))
+                    pca_vis.fit(Z_plc_view)
+                    Z_plc_view = pca_vis.transform(Z_plc_view).astype(np.float32, copy=False)
+                    Z_plc_pred_view = pca_vis.transform(Z_plc_pred_view).astype(np.float32, copy=False)
 
                 src_vals = src_series.astype(str).fillna("unknown").to_numpy()
                 src_labels = sorted(set(src_vals.tolist()))
@@ -992,18 +1027,18 @@ def fit_audio_pretrained_embedding_multitask(
                     if int(np.sum(m)) <= 0:
                         continue
                     ax_t.scatter(
-                        Z_plc[m, 0],
-                        Z_plc[m, 1],
-                        Z_plc[m, 2],
+                        Z_plc_view[m, 0],
+                        Z_plc_view[m, 1],
+                        Z_plc_view[m, 2],
                         s=7,
                         alpha=0.38,
                         c=[src_color[lab]],
                         label=str(lab),
                     )
                     ax_p.scatter(
-                        Z_plc_pred[m, 0],
-                        Z_plc_pred[m, 1],
-                        Z_plc_pred[m, 2],
+                        Z_plc_pred_view[m, 0],
+                        Z_plc_pred_view[m, 1],
+                        Z_plc_pred_view[m, 2],
                         s=7,
                         alpha=0.38,
                         c=[src_color[lab]],
@@ -1049,6 +1084,12 @@ def fit_audio_pretrained_embedding_multitask(
                     "ropressure__d1",
                     "ropumprun_duty",
                     "deliveryrun_duty",
+                    "inletrun__duty",
+                    "flushrun__duty",
+                    "proddiversionrun__duty",
+                    "inletrun__transitions",
+                    "flushrun__transitions",
+                    "proddiversionrun__transitions",
                     "wellpumprun__duty",
                     "powermeter__d1",
                     # Fallback aliases
@@ -1065,6 +1106,9 @@ def fit_audio_pretrained_embedding_multitask(
                     "sup_ropressure_mean_tw",
                     "sup_ropressure_d1",
                     "sup_deliveryrun_duty",
+                    "sup_inletrun_duty",
+                    "sup_flushrun_duty",
+                    "sup_proddiversionrun_duty",
                     "sup_wellpumprun_duty",
                     "sup_ropumprun_duty",
                     "sup_powermeter_d1",
@@ -1138,17 +1182,17 @@ def fit_audio_pretrained_embedding_multitask(
                     ax_p = axesm[1, j]
                     _plot_plc_panel(
                         ax_t,
-                        x=Z_plc[:, 0],
-                        y=Z_plc[:, 1],
-                        z=Z_plc[:, 2],
+                        x=Z_plc_view[:, 0],
+                        y=Z_plc_view[:, 1],
+                        z=Z_plc_view[:, 2],
                         spec=spec,
                         title_prefix="True",
                     )
                     _plot_plc_panel(
                         ax_p,
-                        x=Z_plc_pred[:, 0],
-                        y=Z_plc_pred[:, 1],
-                        z=Z_plc_pred[:, 2],
+                        x=Z_plc_pred_view[:, 0],
+                        y=Z_plc_pred_view[:, 1],
+                        z=Z_plc_pred_view[:, 2],
                         spec=spec,
                         title_prefix="Pred",
                     )
@@ -1160,7 +1204,7 @@ def fit_audio_pretrained_embedding_multitask(
                     ax_p.set_zlabel("pred_pc3")
 
                 # Shared linear axis bounds across all PLC multicolor 3D panels.
-                xyz_all = np.vstack([np.asarray(Z_plc[:, :3], dtype=np.float64), np.asarray(Z_plc_pred[:, :3], dtype=np.float64)])
+                xyz_all = np.vstack([np.asarray(Z_plc_view[:, :3], dtype=np.float64), np.asarray(Z_plc_pred_view[:, :3], dtype=np.float64)])
                 max_abs = np.nanmax(np.abs(xyz_all), axis=0)
                 max_abs = np.where(np.isfinite(max_abs) & (max_abs > 1e-9), max_abs, 1.0)
                 for rr in range(2):
@@ -1217,8 +1261,8 @@ def fit_audio_pretrained_embedding_multitask(
                     ax.grid(alpha=0.2)
 
                 for j, spec in enumerate(color_specs):
-                    _plot_plc_panel_pc13(axes13[0, j], x=Z_plc[:, 0], y=Z_plc[:, 2], spec=spec, title_prefix="True")
-                    _plot_plc_panel_pc13(axes13[1, j], x=Z_plc_pred[:, 0], y=Z_plc_pred[:, 2], spec=spec, title_prefix="Pred")
+                    _plot_plc_panel_pc13(axes13[0, j], x=Z_plc_view[:, 0], y=Z_plc_view[:, 2], spec=spec, title_prefix="True")
+                    _plot_plc_panel_pc13(axes13[1, j], x=Z_plc_pred_view[:, 0], y=Z_plc_pred_view[:, 2], spec=spec, title_prefix="Pred")
                     axes13[0, j].set_xlabel("true_pc1")
                     axes13[0, j].set_ylabel("true_pc3")
                     axes13[1, j].set_xlabel("pred_pc1")
@@ -1313,6 +1357,12 @@ def fit_audio_pretrained_embedding_multitask(
                 "ropressure__d1",
                 "ropumprun_duty",
                 "deliveryrun_duty",
+                "inletrun__duty",
+                "flushrun__duty",
+                "proddiversionrun__duty",
+                "inletrun__transitions",
+                "flushrun__transitions",
+                "proddiversionrun__transitions",
                 "wellpumprun__duty",
                 "powermeter__d1",
                 # Fallback aliases
@@ -1329,6 +1379,9 @@ def fit_audio_pretrained_embedding_multitask(
                 "sup_ropressure_mean_tw",
                 "sup_ropressure_d1",
                 "sup_deliveryrun_duty",
+                "sup_inletrun_duty",
+                "sup_flushrun_duty",
+                "sup_proddiversionrun_duty",
                 "sup_wellpumprun_duty",
                 "sup_ropumprun_duty",
                 "sup_powermeter_d1",

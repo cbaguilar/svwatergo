@@ -51,6 +51,7 @@ def main() -> int:
     p.add_argument("--aux-plc-pca", default="yes", choices=["yes", "no"])
     p.add_argument("--aux-plc-feature-cols", default="")
     p.add_argument("--aux-plc-include-duty-cols", default="no", choices=["yes", "no"])
+    p.add_argument("--aux-plc-target-mode", default="pca", choices=["pca", "raw"])
     p.add_argument("--aux-plc-components", type=int, default=8)
     p.add_argument("--aux-plc-variance-ratio", type=float, default=0.0)
     p.add_argument("--aux-plc-weight", type=float, default=0.3)
@@ -107,6 +108,7 @@ def main() -> int:
             else None
         ),
         aux_plc_include_duty_cols=(str(args.aux_plc_include_duty_cols) == "yes"),
+        aux_plc_target_mode=str(args.aux_plc_target_mode),
         aux_plc_components=int(args.aux_plc_components),
         aux_plc_variance_ratio=float(args.aux_plc_variance_ratio),
         aux_plc_weight=float(args.aux_plc_weight),
