@@ -1078,6 +1078,13 @@ def fit_audio_pretrained_embedding_multitask(
                 if pressure_dt_col is not None:
                     color_specs.append(("pressure_dt", str(pressure_dt_col), "numeric"))
 
+                power_dt_col = next(
+                    (c for c in ("powermeter__d1", "sup_powermeter_d1") if c in plc_proj_df.columns),
+                    None,
+                )
+                if power_dt_col is not None:
+                    color_specs.append(("powermeter_dt", str(power_dt_col), "numeric"))
+
                 ncols = max(1, int(len(color_specs)))
                 figm = plt.figure(figsize=(5.0 * ncols, 9.2), constrained_layout=True)
                 axesm = np.empty((2, ncols), dtype=object)
@@ -1322,6 +1329,13 @@ def fit_audio_pretrained_embedding_multitask(
             )
             if pressure_dt_col is not None:
                 color_specs.append(("pressure_dt", str(pressure_dt_col), "numeric"))
+
+            power_dt_col = next(
+                (c for c in ("powermeter__d1", "sup_powermeter_d1") if c in pann_proj_df.columns),
+                None,
+            )
+            if power_dt_col is not None:
+                color_specs.append(("powermeter_dt", str(power_dt_col), "numeric"))
 
             if int(Z_pann.shape[1]) >= 3:
                 ncols = max(1, int(len(color_specs)))
