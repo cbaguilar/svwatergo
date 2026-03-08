@@ -345,6 +345,26 @@ def fit_audio_pretrained_embedding_multitask(
     drop_state_unknown_scope: str = "all",
 ) -> AudioPretrainedEmbeddingMultitaskResult:
     out_dir.mkdir(parents=True, exist_ok=True)
+    state_unknown_col_used: Optional[str] = None
+
+    def _resolve_state_unknown_col(columns: Sequence[Any], requested: str) -> Optional[str]:
+        cols = [str(c) for c in columns]
+        req = str(requested or "").strip()
+        cands: List[str] = []
+        for x in (req, "state__unknown", "state_unknown", "unknown_state", "stateunknown"):
+            xs = str(x).strip()
+            if xs and xs not in cands:
+                cands.append(xs)
+        for cand in cands:
+            if cand in cols:
+                return cand
+        lower_to_col = {c.lower(): c for c in cols}
+        for cand in cands:
+            hit = lower_to_col.get(cand.lower())
+            if hit:
+                return hit
+        return None
+
     drop_unknown_scope = str(drop_state_unknown_scope).strip().lower()
     if drop_unknown_scope not in ("all", "train_only"):
         raise ValueError("drop_state_unknown_scope must be one of: all, train_only")
@@ -352,24 +372,30 @@ def fit_audio_pretrained_embedding_multitask(
         suc = str(state_unknown_col).strip()
         if not suc:
             raise ValueError("state_unknown_col cannot be empty when drop_state_unknown is enabled")
-        if suc not in df.columns:
-            raise ValueError(f"Missing state unknown column in dataset: {suc}")
-        before_n = int(len(df))
-        su = pd.to_numeric(df[suc], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
-        keep = su < 0.5
-        df = df.loc[keep].reset_index(drop=True)
-        if len(df) <= 0:
-            raise ValueError(f"All rows removed by drop_state_unknown using column: {suc}")
-        if split_manifest_df is not None:
-            if str(dataset_id_col) not in df.columns:
-                raise ValueError(f"Missing dataset_id_col in filtered dataset: {dataset_id_col}")
-            if str(split_manifest_id_col) not in split_manifest_df.columns:
-                raise ValueError(f"Missing split_manifest_id_col in split manifest: {split_manifest_id_col}")
-            keep_ids = set(df[str(dataset_id_col)].astype(str).tolist())
-            split_manifest_df = split_manifest_df.loc[
-                split_manifest_df[str(split_manifest_id_col)].astype(str).isin(keep_ids)
-            ].reset_index(drop=True)
-        print(f"[state_filter] scope=all drop_unknown col={suc} rows={len(df)}/{before_n}", flush=True)
+        suc_res = _resolve_state_unknown_col(df.columns, suc)
+        if suc_res is None:
+            print(
+                f"[state_filter] scope=all requested col={suc} not found; skipping unknown-state drop",
+                flush=True,
+            )
+        else:
+            state_unknown_col_used = str(suc_res)
+            before_n = int(len(df))
+            su = pd.to_numeric(df[suc_res], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+            keep = su < 0.5
+            df = df.loc[keep].reset_index(drop=True)
+            if len(df) <= 0:
+                raise ValueError(f"All rows removed by drop_state_unknown using column: {suc_res}")
+            if split_manifest_df is not None:
+                if str(dataset_id_col) not in df.columns:
+                    raise ValueError(f"Missing dataset_id_col in filtered dataset: {dataset_id_col}")
+                if str(split_manifest_id_col) not in split_manifest_df.columns:
+                    raise ValueError(f"Missing split_manifest_id_col in split manifest: {split_manifest_id_col}")
+                keep_ids = set(df[str(dataset_id_col)].astype(str).tolist())
+                split_manifest_df = split_manifest_df.loc[
+                    split_manifest_df[str(split_manifest_id_col)].astype(str).isin(keep_ids)
+                ].reset_index(drop=True)
+            print(f"[state_filter] scope=all drop_unknown col={suc_res} rows={len(df)}/{before_n}", flush=True)
 
     src_filter_vals = [str(v).strip() for v in (source_filter_values or []) if str(v).strip()]
     src_filter_col = str(source_filter_col or "").strip()
@@ -455,16 +481,22 @@ def fit_audio_pretrained_embedding_multitask(
         suc = str(state_unknown_col).strip()
         if not suc:
             raise ValueError("state_unknown_col cannot be empty when drop_state_unknown is enabled")
-        if suc not in df2.columns:
-            raise ValueError(f"Missing state unknown column in dataset: {suc}")
-        su2 = pd.to_numeric(df2[suc], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
-        keep_train = su2[idx_train] < 0.5
-        before_train = int(len(idx_train))
-        idx_train = idx_train[keep_train]
-        print(
-            f"[state_filter] scope=train_only drop_unknown col={suc} train_rows={len(idx_train)}/{before_train}",
-            flush=True,
-        )
+        suc_res = _resolve_state_unknown_col(df2.columns, suc)
+        if suc_res is None:
+            print(
+                f"[state_filter] scope=train_only requested col={suc} not found; skipping unknown-state drop",
+                flush=True,
+            )
+        else:
+            state_unknown_col_used = str(suc_res)
+            su2 = pd.to_numeric(df2[suc_res], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+            keep_train = su2[idx_train] < 0.5
+            before_train = int(len(idx_train))
+            idx_train = idx_train[keep_train]
+            print(
+                f"[state_filter] scope=train_only drop_unknown col={suc_res} train_rows={len(idx_train)}/{before_train}",
+                flush=True,
+            )
     if len(idx_train) < 2 or len(idx_test) < 1:
         raise ValueError("Need non-empty train and test splits")
 
@@ -1343,7 +1375,7 @@ def fit_audio_pretrained_embedding_multitask(
             "source_filter_col": (src_filter_col if src_filter_vals else None),
             "source_filter_values": (src_filter_vals if src_filter_vals else []),
             "drop_state_unknown": bool(drop_state_unknown),
-            "state_unknown_col": str(state_unknown_col),
+            "state_unknown_col": (str(state_unknown_col_used) if state_unknown_col_used else None),
             "drop_state_unknown_scope": str(drop_unknown_scope),
         },
         "best_model": {
