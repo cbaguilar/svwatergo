@@ -87,8 +87,8 @@ func (s *QueryService) QuerySiteEvents(site string, req QueryRequest) (QueryResu
 	if req.MaxResults <= 0 {
 		req.MaxResults = 500
 	}
-	if req.MaxResults > 5000 {
-		req.MaxResults = 5000
+	if req.MaxResults > 50000 {
+		req.MaxResults = 50000
 	}
 	if req.Match == "" {
 		req.Match = "all"
