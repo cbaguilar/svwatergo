@@ -68,6 +68,25 @@ def _select_device(torch):
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def _resolve_state_unknown_col(columns: Sequence[Any], requested: str) -> Optional[str]:
+    cols = [str(c) for c in columns]
+    req = str(requested or "").strip()
+    cands: List[str] = []
+    for x in (req, "state_unknown", "state__unknown", "unknown_state", "stateunknown"):
+        xs = str(x).strip()
+        if xs and xs not in cands:
+            cands.append(xs)
+    for cand in cands:
+        if cand in cols:
+            return cand
+    lower_to_col = {c.lower(): c for c in cols}
+    for cand in cands:
+        hit = lower_to_col.get(cand.lower())
+        if hit:
+            return hit
+    return None
+
+
 def _balanced_loss_kwargs(
     *,
     torch,
@@ -801,6 +820,8 @@ def fit_audio_tiny_cnn(
     aux_pca_variance_ratio: float = 0.0,
     aux_pca_weight: float = 0.1,
     generate_projection: bool = False,
+    drop_state_unknown_train: bool = True,
+    state_unknown_col: str = "state_unknown",
 ) -> AudioTinyCNNResult:
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
@@ -888,6 +909,27 @@ def fit_audio_tiny_cnn(
         )
         split_for_projection = pd.Series(["train"] * len(df), index=df.index, dtype="string")
         split_for_projection.iloc[idx_test] = "test"
+
+    state_unknown_col_used: Optional[str] = None
+    if bool(drop_state_unknown_train):
+        suc_res = _resolve_state_unknown_col(df.columns, str(state_unknown_col))
+        if suc_res is None:
+            if not quiet:
+                print(
+                    f"[state_filter] train_only requested col={state_unknown_col} not found; skipping unknown-state drop",
+                    flush=True,
+                )
+        else:
+            state_unknown_col_used = str(suc_res)
+            su = pd.to_numeric(df[suc_res], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+            keep_train = su[idx_train] < 0.5
+            before_train = int(len(idx_train))
+            idx_train = idx_train[keep_train]
+            if not quiet:
+                print(
+                    f"[state_filter] train_only drop_unknown col={suc_res} train_rows={len(idx_train)}/{before_train}",
+                    flush=True,
+                )
 
     source_col = next((c for c in ("audio_source", "source_name", "source") if c in df.columns), None)
     source_series = (
@@ -1989,6 +2031,8 @@ def fit_audio_tiny_cnn(
             "aux_pca_variance_ratio": float(aux_pca_variance_ratio),
             "aux_pca_weight": float(aux_pca_weight),
             "generate_projection": bool(generate_projection),
+            "drop_state_unknown_train": bool(drop_state_unknown_train),
+            "state_unknown_col": (str(state_unknown_col_used) if state_unknown_col_used else None),
         },
         "aux_projection_artifacts": {
             "parquet": (str(aux_projection_path) if aux_projection_path is not None else None),
@@ -2114,9 +2158,28 @@ def predict_audio_tiny_cnn(
     mel_npz_key: str = "mel",
     mel_npz_index: int = 0,
 ) -> Dict[str, Any]:
+    bundle = load_audio_tiny_cnn_bundle(model_path)
+    return predict_audio_tiny_cnn_from_bundle(
+        bundle=bundle,
+        wav_path=wav_path,
+        mel_npy_path=mel_npy_path,
+        mel_npz_path=mel_npz_path,
+        mel_npz_key=mel_npz_key,
+        mel_npz_index=mel_npz_index,
+    )
+
+
+def predict_audio_tiny_cnn_from_bundle(
+    *,
+    bundle: Dict[str, Any],
+    wav_path: Optional[Path] = None,
+    mel_npy_path: Optional[Path] = None,
+    mel_npz_path: Optional[Path] = None,
+    mel_npz_key: str = "mel",
+    mel_npz_index: int = 0,
+) -> Dict[str, Any]:
     torch, _, _, _ = _require_torch()
     device = _select_device(torch)
-    bundle = load_audio_tiny_cnn_bundle(model_path)
     mel = _load_mel_input_for_cnn(
         bundle=bundle,
         wav_path=wav_path,

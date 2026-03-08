@@ -245,6 +245,25 @@ def _attach_split_labels(
     return out, None, "random"
 
 
+def _resolve_state_unknown_col(columns: Sequence[Any], requested: str) -> Optional[str]:
+    cols = [str(c) for c in columns]
+    req = str(requested or "").strip()
+    cands: List[str] = []
+    for x in (req, "state_unknown", "state__unknown", "unknown_state", "stateunknown"):
+        xs = str(x).strip()
+        if xs and xs not in cands:
+            cands.append(xs)
+    for cand in cands:
+        if cand in cols:
+            return cand
+    lower_to_col = {c.lower(): c for c in cols}
+    for cand in cands:
+        hit = lower_to_col.get(cand.lower())
+        if hit:
+            return hit
+    return None
+
+
 def _infer_mel_shape(df: pd.DataFrame, X_mel: np.ndarray) -> Tuple[int, int]:
     if "mel_n_mels" in df.columns and "mel_n_frames" in df.columns:
         m = pd.to_numeric(df["mel_n_mels"], errors="coerce").dropna()
@@ -298,6 +317,8 @@ def fit_audio_pca_svm(
     oversample_class_col: str = "primary_class",
     oversample_classes: Optional[Sequence[str]] = None,
     oversample_multiplier: int = 1,
+    drop_state_unknown_train: bool = True,
+    state_unknown_col: str = "state_unknown",
 ) -> AudioPCASVMResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     df = _sample_rows(df, limit, sample_mode)
@@ -352,6 +373,25 @@ def fit_audio_pca_svm(
         )
         split_for_projection = pd.Series(["train"] * len(df), index=df.index, dtype="string")
         split_for_projection.iloc[idx_test] = "test"
+
+    state_unknown_col_used: Optional[str] = None
+    if bool(drop_state_unknown_train):
+        suc_res = _resolve_state_unknown_col(df.columns, str(state_unknown_col))
+        if suc_res is None:
+            print(
+                f"[state_filter] train_only requested col={state_unknown_col} not found; skipping unknown-state drop",
+                flush=True,
+            )
+        else:
+            state_unknown_col_used = str(suc_res)
+            su = pd.to_numeric(df[suc_res], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+            keep_train = su[idx_train] < 0.5
+            before_train = int(len(idx_train))
+            idx_train = idx_train[keep_train]
+            print(
+                f"[state_filter] train_only drop_unknown col={suc_res} train_rows={len(idx_train)}/{before_train}",
+                flush=True,
+            )
 
     if len(np.unique(y[idx_train])) < 2:
         raise ValueError("Train split has only one class after filtering; cannot train SVM classifier.")
@@ -470,6 +510,10 @@ def fit_audio_pca_svm(
         "train_metrics": _metrics_dict(y[idx_train], y_train_pred, y_train_score, task=task),
         "test_metrics": _metrics_dict(y[idx_test], y_test_pred, y_test_score, task=task) if len(idx_test) else {},
         "val_metrics": _metrics_dict(y[idx_val], y_val_pred, y_val_score, task=task) if len(idx_val) else {},
+        "train_filter": {
+            "drop_state_unknown_train": bool(drop_state_unknown_train),
+            "state_unknown_col": (str(state_unknown_col_used) if state_unknown_col_used else None),
+        },
     }
     metrics_path = out_dir / "audio_pca_svm_metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -596,6 +640,27 @@ def predict_audio_pca_svm(
     mel_npz_index: int = 0,
 ) -> Dict[str, Any]:
     bundle = load_audio_pca_svm_bundle(model_path)
+    return predict_audio_pca_svm_from_bundle(
+        bundle=bundle,
+        wav_path=wav_path,
+        webp_path=webp_path,
+        mel_npy_path=mel_npy_path,
+        mel_npz_path=mel_npz_path,
+        mel_npz_key=mel_npz_key,
+        mel_npz_index=mel_npz_index,
+    )
+
+
+def predict_audio_pca_svm_from_bundle(
+    *,
+    bundle: Dict[str, Any],
+    wav_path: Optional[Path] = None,
+    webp_path: Optional[Path] = None,
+    mel_npy_path: Optional[Path] = None,
+    mel_npz_path: Optional[Path] = None,
+    mel_npz_key: str = "mel",
+    mel_npz_index: int = 0,
+) -> Dict[str, Any]:
     mel = _load_mel_input(
         bundle=bundle,
         wav_path=wav_path,

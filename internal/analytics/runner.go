@@ -1,9 +1,12 @@
 package analytics
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +19,7 @@ type Runner struct {
 	PythonBin      string
 	WorkerScript   string
 	ArtifactsRoot  string
+	InferenceURL   string
 	ExtraEnv       []string
 	CommandTimeout time.Duration
 }
@@ -36,6 +40,7 @@ func NewRunner(store *Store) *Runner {
 		PythonBin:      envOr("ANALYTICS_PYTHON_BIN", "python3"),
 		WorkerScript:   envOr("ANALYTICS_WORKER_SCRIPT", filepath.Join("python", "analytics", "worker_main.py")),
 		ArtifactsRoot:  envOr("ANALYTICS_ARTIFACTS_ROOT", filepath.Join("data", "analytics")),
+		InferenceURL:   strings.TrimRight(envOr("ANALYTICS_INFERENCE_SERVICE_URL", ""), "/"),
 		CommandTimeout: 30 * time.Minute,
 	}
 }
@@ -116,12 +121,74 @@ func (r *Runner) runAudioAlignPLCJob(jobID string, req AudioAlignPLCRunRequest) 
 }
 
 func (r *Runner) runAudioInferenceJob(jobID string, req AudioInferenceRequest) {
+	if strings.TrimSpace(r.InferenceURL) != "" {
+		r.runAudioInferenceServiceJob(context.Background(), jobID, req)
+		return
+	}
 	r.runWorkerJob(context.Background(), jobID, workerJobSpec{
 		JobID:          jobID,
 		JobType:        JobTypeAudioInference,
 		AudioInference: &req,
 		ArtifactsDir:   filepath.Join(r.ArtifactsRoot, "jobs", jobID),
 	})
+}
+
+func (r *Runner) runAudioInferenceServiceJob(ctx context.Context, jobID string, req AudioInferenceRequest) {
+	if _, err := r.Store.MarkRunning(ctx, jobID); err != nil {
+		return
+	}
+	timeout := r.CommandTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	u := strings.TrimRight(strings.TrimSpace(r.InferenceURL), "/") + "/api/v1/inference/audio"
+	b, err := json.Marshal(req)
+	if err != nil {
+		_, _ = r.Store.MarkFailed(ctx, jobID, fmt.Errorf("marshal inference request: %w", err), nil)
+		return
+	}
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, u, bytes.NewReader(b))
+	if err != nil {
+		_, _ = r.Store.MarkFailed(ctx, jobID, fmt.Errorf("build inference request: %w", err), nil)
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		_, _ = r.Store.MarkFailed(ctx, jobID, fmt.Errorf("inference service request failed: %w", err), nil)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var parsed map[string]any
+	if len(body) > 0 {
+		_ = json.Unmarshal(body, &parsed)
+	}
+	result := map[string]any{
+		"inference_service_url": u,
+		"http_status":           resp.StatusCode,
+	}
+	if parsed != nil {
+		result["inference_response"] = parsed
+		if p, ok := parsed["payload"]; ok {
+			result["worker_result"] = p
+		}
+		if a, ok := parsed["artifacts"]; ok {
+			result["artifacts"] = a
+		}
+	}
+	if resp.StatusCode >= 400 {
+		msg := strings.TrimSpace(string(body))
+		if msg == "" {
+			msg = resp.Status
+		}
+		_, _ = r.Store.MarkFailed(ctx, jobID, fmt.Errorf("inference service error: %s", msg), result)
+		return
+	}
+	_, _ = r.Store.MarkSucceeded(ctx, jobID, result)
 }
 
 func (r *Runner) runWorkerJob(ctx context.Context, jobID string, spec workerJobSpec) {

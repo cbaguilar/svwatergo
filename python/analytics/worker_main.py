@@ -5,7 +5,9 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -17,6 +19,15 @@ try:
 except Exception:
     joblib = None
 
+def _ensure_repo_on_syspath() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+
+_ensure_repo_on_syspath()
+
 from window_features.pipeline import (
     generate_window_features_for_day,
     write_window_features_outputs,
@@ -26,8 +37,20 @@ from window_pca.model import fit_pca, transform_pca
 from window_pca.selection import select_pca_columns
 from audio_align_plc import align_audio_partition_to_plc_raw
 from python.ml.storage.s3 import split_s3_uri, get_s3_bytes
-from python.ml.train.audio_pca_svm import predict_audio_pca_svm
-from python.ml.train.audio_tiny_cnn import predict_audio_tiny_cnn
+from python.ml.train.audio_pca_svm import (
+    load_audio_pca_svm_bundle,
+    predict_audio_pca_svm,
+    predict_audio_pca_svm_from_bundle,
+)
+from python.ml.train.audio_tiny_cnn import (
+    load_audio_tiny_cnn_bundle,
+    predict_audio_tiny_cnn,
+    predict_audio_tiny_cnn_from_bundle,
+)
+
+
+_PREDICTOR_CACHE: Dict[str, Tuple[threading.Lock, Any]] = {}
+_PREDICTOR_CACHE_GUARD = threading.Lock()
 
 
 def main() -> None:
@@ -309,6 +332,7 @@ def run_audio_inference_job(req: Dict[str, Any], artifacts_dir: Path) -> Tuple[D
         raise ValueError(f"audio_inference model not found: {model_path}")
     if model_kind == "auto":
         model_kind = "tiny_cnn" if model_path.suffix.lower() in (".pt", ".pth") else "pca_svm"
+    predict_one = _build_audio_predictor(model_path=model_path, model_kind=model_kind)
 
     outputs = req.get("outputs") or {}
     want_predictions = bool(outputs.get("predictions", True))
@@ -323,6 +347,8 @@ def run_audio_inference_job(req: Dict[str, Any], artifacts_dir: Path) -> Tuple[D
     errors: List[Dict[str, Any]] = []
     input_cache_dir = artifacts_dir / "input_cache"
     input_cache_dir.mkdir(parents=True, exist_ok=True)
+    normalized_audio_dir = artifacts_dir / "normalized_audio"
+    normalized_audio_dir.mkdir(parents=True, exist_ok=True)
 
     for i, item in enumerate(inputs):
         input_id = str(item.get("input_id", "")).strip() or f"input_{i:04d}"
@@ -408,10 +434,12 @@ def run_audio_inference_job(req: Dict[str, Any], artifacts_dir: Path) -> Tuple[D
 
         if row["status"] == "ok" and wav_path is not None:
             try:
+                wav_path = _normalize_audio_for_inference(wav_path=wav_path, out_dir=normalized_audio_dir)
                 pred = _run_audio_inference_one(
                     model_path=model_path,
                     model_kind=model_kind,
                     wav_path=wav_path,
+                    predict_one=predict_one,
                 )
                 if want_predictions:
                     row["predictions"] = pred
@@ -482,7 +510,15 @@ def _resolve_audio_model_path(model: Dict[str, Any]) -> Path:
     raise ValueError(f"model_id not found in registry: {model_id}")
 
 
-def _run_audio_inference_one(*, model_path: Path, model_kind: str, wav_path: Path) -> Dict[str, Any]:
+def _run_audio_inference_one(
+    *,
+    model_path: Path,
+    model_kind: str,
+    wav_path: Path,
+    predict_one: Any = None,
+) -> Dict[str, Any]:
+    if predict_one is not None:
+        return predict_one(wav_path)
     kind = str(model_kind).strip().lower()
     if kind == "tiny_cnn":
         return predict_audio_tiny_cnn(model_path=model_path, wav_path=wav_path)
@@ -491,11 +527,88 @@ def _run_audio_inference_one(*, model_path: Path, model_kind: str, wav_path: Pat
     raise ValueError(f"unsupported model_kind: {model_kind}")
 
 
+def _build_audio_predictor(*, model_path: Path, model_kind: str):
+    kind = str(model_kind).strip().lower()
+    key = f"{kind}|{str(model_path.resolve())}|{int(model_path.stat().st_mtime_ns)}"
+    with _PREDICTOR_CACHE_GUARD:
+        hit = _PREDICTOR_CACHE.get(key)
+        if hit is not None:
+            lock, fn = hit
+            return _locked_predictor(fn, lock)
+        if kind == "tiny_cnn":
+            bundle = load_audio_tiny_cnn_bundle(model_path)
+            fn = lambda wav_path: predict_audio_tiny_cnn_from_bundle(bundle=bundle, wav_path=wav_path)
+        elif kind == "pca_svm":
+            bundle = load_audio_pca_svm_bundle(model_path)
+            fn = lambda wav_path: predict_audio_pca_svm_from_bundle(bundle=bundle, wav_path=wav_path)
+        else:
+            raise ValueError(f"unsupported model_kind: {model_kind}")
+        lock = threading.Lock()
+        _PREDICTOR_CACHE[key] = (lock, fn)
+        return _locked_predictor(fn, lock)
+
+
+def _locked_predictor(fn, lock: threading.Lock):
+    def _predict(wav_path: Path) -> Dict[str, Any]:
+        with lock:
+            return fn(wav_path)
+
+    return _predict
+
+
 def _extract_embedding(pred: Dict[str, Any]) -> Dict[str, Any]:
     if "pca_projection" in pred and isinstance(pred.get("pca_projection"), list):
         vec = [float(v) for v in (pred.get("pca_projection") or [])]
         return {"dim": int(len(vec)), "vector": vec}
     return {"dim": 0, "vector": []}
+
+
+def _normalize_audio_for_inference(*, wav_path: Path, out_dir: Path) -> Path:
+    # Tiny-CNN/PCA-SVM paths expect WAV-like decoding. For webm/other containers,
+    # normalize once to mono PCM WAV using ffmpeg.
+    sfx = wav_path.suffix.lower()
+    if sfx in (".wav", ".wave"):
+        return wav_path
+    out_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(f"{str(wav_path)}::{int(wav_path.stat().st_mtime_ns)}".encode("utf-8")).hexdigest()[:16]
+    out_wav = out_dir / f"{wav_path.stem}_{digest}.wav"
+    if out_wav.exists() and out_wav.stat().st_size > 0:
+        return out_wav
+    _convert_to_wav_ffmpeg(src=wav_path, dst=out_wav, sample_rate=16000, channels=1, pcm_codec="pcm_s16le")
+    return out_wav
+
+
+def _convert_to_wav_ffmpeg(
+    *,
+    src: Path,
+    dst: Path,
+    sample_rate: int,
+    channels: int,
+    pcm_codec: str,
+) -> None:
+    # Mirrors existing conversion logic in analytics/wyze_webm_to_wav.py.
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(src),
+        "-vn",
+        "-ac",
+        str(int(channels)),
+        "-ar",
+        str(int(sample_rate)),
+        "-acodec",
+        str(pcm_codec),
+        str(dst),
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        raise RuntimeError("ffmpeg not found. Install ffmpeg.")
+    if res.returncode != 0:
+        raise RuntimeError((res.stderr or "").strip() or f"ffmpeg exit={res.returncode}")
 
 
 def artifact_dict(path: Path, content_type: str) -> Dict[str, Any]:
