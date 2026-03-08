@@ -93,3 +93,18 @@ export async function apiDelete(path, options = {}) {
   })
   return handleJsonResponse(response, options)
 }
+
+export async function apiPostBlob(path, body, options = {}) {
+  const url = `${getApiBaseUrl()}${path}`
+  const headers = buildHeaders(options, true)
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal: options.signal,
+  })
+  if (response.ok) {
+    return response.blob()
+  }
+  return handleJsonResponse(response, options)
+}

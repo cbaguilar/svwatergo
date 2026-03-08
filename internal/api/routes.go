@@ -8,6 +8,7 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/analytics"
 	"github.com/cbaguilar/svwatergo/internal/audio"
 	"github.com/cbaguilar/svwatergo/internal/auth"
+	"github.com/cbaguilar/svwatergo/internal/database"
 	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/reports"
@@ -17,7 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, audioStore *audio.Store, usersStore *users.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, audioStore *audio.Store, usersStore *users.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool, dbClient *database.SQLXClient) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -59,9 +60,10 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	})
 
 	state := NewStateAPI(reg, meta)
-	liveState := NewLiveStateAPI(reg, meta)
+	liveState := NewLiveStateAPI(reg, meta, dbClient)
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
+	alertFormsAPI := NewAlertFormsAPI()
 	audioAPI := NewAudioAPI(audioStore)
 	usersAPI := NewUsersAPI(usersStore)
 	analyticsStore := analytics.NewStore()
@@ -140,6 +142,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		sites.GET("/summary/daily", site.GetDailySummary)
 		sites.GET("/forecast/next-state", site.GetNextStateForecast)
 		sites.POST("/events/query", eventsAPI.QueryInterestingTimestamps)
+		sites.POST("/alert-forms/pdf", alertFormsAPI.GeneratePDF)
 
 		operatorReports := sites.Group("/operator-reports")
 		operatorReportsAdmin := sites.Group("/operator-reports")
