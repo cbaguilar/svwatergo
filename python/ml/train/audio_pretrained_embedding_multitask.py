@@ -1180,10 +1180,10 @@ def fit_audio_pretrained_embedding_multitask(
                     axes13[0, j].set_ylabel("true_pc3")
                     axes13[1, j].set_xlabel("pred_pc1")
                     axes13[1, j].set_ylabel("pred_pc3")
-                    axes13[0, j].set_xlim(-10.0, 10.0)
-                    axes13[0, j].set_ylim(-6.0, 6.0)
-                    axes13[1, j].set_xlim(-10.0, 10.0)
-                    axes13[1, j].set_ylim(-6.0, 6.0)
+                    axes13[0, j].set_xlim(-12.0, 12.0)
+                    axes13[0, j].set_ylim(-8.0, 8.0)
+                    axes13[1, j].set_xlim(-12.0, 12.0)
+                    axes13[1, j].set_ylim(-8.0, 8.0)
 
                 plc_plot_multicolor_pc13_path = out_dir / "plc_pca_true_vs_pred_pc13_multicolor.png"
                 fig13.savefig(plc_plot_multicolor_pc13_path, dpi=170)
@@ -1445,10 +1445,10 @@ def fit_audio_pretrained_embedding_multitask(
                     axes13[0, j].set_ylabel("true_pc3")
                     axes13[1, j].set_xlabel("pred_pc1")
                     axes13[1, j].set_ylabel("pred_pc3")
-                    axes13[0, j].set_xlim(-10.0, 10.0)
-                    axes13[0, j].set_ylim(-6.0, 6.0)
-                    axes13[1, j].set_xlim(-10.0, 10.0)
-                    axes13[1, j].set_ylim(-6.0, 6.0)
+                    axes13[0, j].set_xlim(-12.0, 12.0)
+                    axes13[0, j].set_ylim(-8.0, 8.0)
+                    axes13[1, j].set_xlim(-12.0, 12.0)
+                    axes13[1, j].set_ylim(-8.0, 8.0)
 
                 pann_plot_multicolor_pc13_path = out_dir / "pann_pca_true_vs_pred_pc13_multicolor.png"
                 fig13.savefig(pann_plot_multicolor_pc13_path, dpi=170)
