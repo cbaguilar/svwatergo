@@ -437,7 +437,23 @@ def fit_audio_pretrained_embedding_multitask(
     if emb_cache.exists():
         z = np.load(str(emb_cache))
         X_emb = np.asarray(z["embeddings"], dtype=np.float32)
-        print(f"[embed] cache hit -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
+        if int(X_emb.shape[0]) != int(len(path_ser)):
+            print(
+                f"[embed] cache size mismatch -> {emb_cache} rows={int(X_emb.shape[0])} expected={int(len(path_ser))}; rebuilding",
+                flush=True,
+            )
+            X_emb = _extract_embeddings(
+                backend=backend,
+                paths=path_ser.tolist(),
+                batch_size=int(extract_batch_size),
+                target_seconds=float(target_seconds),
+                num_workers=int(extract_num_workers),
+                log_every=int(extract_log_every),
+            )
+            np.savez_compressed(str(emb_cache), embeddings=X_emb)
+            print(f"[embed] saved cache -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
+        else:
+            print(f"[embed] cache hit -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
     else:
         print(f"[embed] cache miss -> extracting {len(path_ser)} clips", flush=True)
         X_emb = _extract_embeddings(
