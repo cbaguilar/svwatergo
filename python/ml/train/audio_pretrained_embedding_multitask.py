@@ -1091,6 +1091,11 @@ def fit_audio_pretrained_embedding_multitask(
                 for rr in range(2):
                     for cc in range(ncols):
                         axesm[rr, cc] = figm.add_subplot(2, ncols, rr * ncols + cc + 1, projection="3d")
+                unknown_mask = np.zeros(len(plc_proj_df), dtype=bool)
+                for _uc in ("state_unknown", "state__unknown"):
+                    if _uc in plc_proj_df.columns:
+                        u = pd.to_numeric(plc_proj_df[_uc], errors="coerce").to_numpy(dtype=float)
+                        unknown_mask = unknown_mask | (np.isfinite(u) & (u > 0.5))
 
                 def _plot_plc_panel(
                     ax,
@@ -1106,14 +1111,15 @@ def fit_audio_pretrained_embedding_multitask(
                         s = src_series.astype(str).fillna("unknown")
                     else:
                         s = plc_proj_df[col]
+                    valid_mask = ~unknown_mask
 
                     if mode == "categorical":
                         cats = s.astype(str).fillna("unknown")
-                        labs = sorted(cats.unique().tolist())
+                        labs = sorted(cats[valid_mask].unique().tolist())
                         pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
                         cmap = {lab: pal[i] for i, lab in enumerate(labs)}
                         for lab in labs:
-                            m = (cats.to_numpy() == lab)
+                            m = (cats.to_numpy() == lab) & valid_mask
                             if int(np.sum(m)) <= 0:
                                 continue
                             ax.scatter(x[m], y[m], z[m], s=7, alpha=0.4, c=[cmap[lab]], label=str(lab))
@@ -1121,7 +1127,7 @@ def fit_audio_pretrained_embedding_multitask(
                             ax.legend(fontsize=7, loc="best")
                     else:
                         v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
-                        finite = np.isfinite(v)
+                        finite = np.isfinite(v) & valid_mask
                         if finite.any():
                             lo = float(np.nanquantile(v[finite], 0.01))
                             hi = float(np.nanquantile(v[finite], 0.99))
@@ -1129,11 +1135,11 @@ def fit_audio_pretrained_embedding_multitask(
                                 lo = float(np.nanmin(v[finite]))
                                 hi = float(np.nanmax(v[finite]) + 1e-9)
                             vv = np.clip(v, lo, hi)
-                            sc = ax.scatter(x, y, z, c=vv, s=7, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                            sc = ax.scatter(x[valid_mask], y[valid_mask], z[valid_mask], c=vv[valid_mask], s=7, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
                             cb = figm.colorbar(sc, ax=ax, fraction=0.046, pad=0.03)
                             cb.ax.tick_params(labelsize=7)
                         else:
-                            ax.scatter(x, y, z, s=7, alpha=0.35, c="#777777")
+                            ax.scatter(x[valid_mask], y[valid_mask], z[valid_mask], s=7, alpha=0.35, c="#777777")
                     ax.set_title(f"{title_prefix} colored by {label}")
                     ax.grid(alpha=0.2)
 
@@ -1344,6 +1350,11 @@ def fit_audio_pretrained_embedding_multitask(
                 for rr in range(2):
                     for cc in range(ncols):
                         axes2[rr, cc] = fig2.add_subplot(2, ncols, rr * ncols + cc + 1, projection="3d")
+                unknown_mask = np.zeros(len(pann_proj_df), dtype=bool)
+                for _uc in ("state_unknown", "state__unknown"):
+                    if _uc in pann_proj_df.columns:
+                        u = pd.to_numeric(pann_proj_df[_uc], errors="coerce").to_numpy(dtype=float)
+                        unknown_mask = unknown_mask | (np.isfinite(u) & (u > 0.5))
 
                 def _plot_panel(
                     ax,
@@ -1359,14 +1370,15 @@ def fit_audio_pretrained_embedding_multitask(
                         s = src_series.astype(str).fillna("unknown")
                     else:
                         s = pann_proj_df[col]
+                    valid_mask = ~unknown_mask
 
                     if mode == "categorical":
                         cats = s.astype(str).fillna("unknown")
-                        labs = sorted(cats.unique().tolist())
+                        labs = sorted(cats[valid_mask].unique().tolist())
                         pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
                         cmap = {lab: pal[i] for i, lab in enumerate(labs)}
                         for lab in labs:
-                            m = (cats.to_numpy() == lab)
+                            m = (cats.to_numpy() == lab) & valid_mask
                             if int(np.sum(m)) <= 0:
                                 continue
                             ax.scatter(x[m], y[m], z[m], s=7, alpha=0.4, c=[cmap[lab]], label=str(lab))
@@ -1374,7 +1386,7 @@ def fit_audio_pretrained_embedding_multitask(
                             ax.legend(fontsize=7, loc="best")
                     else:
                         v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
-                        finite = np.isfinite(v)
+                        finite = np.isfinite(v) & valid_mask
                         if finite.any():
                             lo = float(np.nanquantile(v[finite], 0.01))
                             hi = float(np.nanquantile(v[finite], 0.99))
@@ -1382,11 +1394,11 @@ def fit_audio_pretrained_embedding_multitask(
                                 lo = float(np.nanmin(v[finite]))
                                 hi = float(np.nanmax(v[finite]) + 1e-9)
                             vv = np.clip(v, lo, hi)
-                            sc = ax.scatter(x, y, z, c=vv, s=7, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                            sc = ax.scatter(x[valid_mask], y[valid_mask], z[valid_mask], c=vv[valid_mask], s=7, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
                             cb = fig2.colorbar(sc, ax=ax, fraction=0.046, pad=0.03)
                             cb.ax.tick_params(labelsize=7)
                         else:
-                            ax.scatter(x, y, z, s=7, alpha=0.35, c="#777777")
+                            ax.scatter(x[valid_mask], y[valid_mask], z[valid_mask], s=7, alpha=0.35, c="#777777")
                     ax.set_title(f"{title_prefix} colored by {label}")
                     ax.grid(alpha=0.2)
 
