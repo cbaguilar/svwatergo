@@ -920,6 +920,7 @@ def fit_audio_pretrained_embedding_multitask(
     plc_proj_path: Optional[Path] = None
     plc_plot_3d_path: Optional[Path] = None
     plc_plot_multicolor_3d_path: Optional[Path] = None
+    plc_plot_multicolor_pc13_path: Optional[Path] = None
     if Z_plc is not None and Z_plc_pred is not None:
         plc_proj_path = out_dir / "plc_pca_true_vs_pred.parquet"
         plc_proj_df = df2.reset_index(drop=True).copy()
@@ -988,7 +989,7 @@ def fit_audio_pretrained_embedding_multitask(
                     None,
                 )
                 if state_col is not None:
-                    color_specs.append(("state__mode", str(state_col), "categorical"))
+                    color_specs.append((f"state__mode ({state_col})", str(state_col), "categorical"))
 
                 flow_col = next(
                     (
@@ -1008,7 +1009,7 @@ def fit_audio_pretrained_embedding_multitask(
                     None,
                 )
                 if flow_col is not None:
-                    color_specs.append(("flow", str(flow_col), "numeric"))
+                    color_specs.append((f"flow ({flow_col})", str(flow_col), "numeric"))
 
                 pressure_col = next(
                     (
@@ -1032,7 +1033,7 @@ def fit_audio_pretrained_embedding_multitask(
                     None,
                 )
                 if pressure_col is not None:
-                    color_specs.append(("pressure", str(pressure_col), "numeric"))
+                    color_specs.append((f"pressure ({pressure_col})", str(pressure_col), "numeric"))
 
                 flow_dt_col = next(
                     (
@@ -1052,7 +1053,7 @@ def fit_audio_pretrained_embedding_multitask(
                     None,
                 )
                 if flow_dt_col is not None:
-                    color_specs.append(("flow_dt", str(flow_dt_col), "numeric"))
+                    color_specs.append((f"flow_dt ({flow_dt_col})", str(flow_dt_col), "numeric"))
 
                 pressure_dt_col = next(
                     (
@@ -1076,14 +1077,14 @@ def fit_audio_pretrained_embedding_multitask(
                     None,
                 )
                 if pressure_dt_col is not None:
-                    color_specs.append(("pressure_dt", str(pressure_dt_col), "numeric"))
+                    color_specs.append((f"pressure_dt ({pressure_dt_col})", str(pressure_dt_col), "numeric"))
 
                 power_dt_col = next(
                     (c for c in ("powermeter__d1", "sup_powermeter_d1") if c in plc_proj_df.columns),
                     None,
                 )
                 if power_dt_col is not None:
-                    color_specs.append(("powermeter_dt", str(power_dt_col), "numeric"))
+                    color_specs.append((f"powermeter_dt ({power_dt_col})", str(power_dt_col), "numeric"))
 
                 ncols = max(1, int(len(color_specs)))
                 figm = plt.figure(figsize=(5.0 * ncols, 9.2), constrained_layout=True)
@@ -1183,12 +1184,68 @@ def fit_audio_pretrained_embedding_multitask(
                 plc_plot_multicolor_3d_path = out_dir / "plc_pca_true_vs_pred_pc123_multicolor_3d.png"
                 figm.savefig(plc_plot_multicolor_3d_path, dpi=170)
                 plt.close(figm)
+
+                # Additional 2D projection (PC1 vs PC3) with same coloring.
+                fig13, axes13 = plt.subplots(2, ncols, figsize=(4.8 * ncols, 8.0), constrained_layout=True)
+                if ncols == 1:
+                    axes13 = np.asarray(axes13).reshape(2, 1)
+
+                def _plot_plc_panel_pc13(ax, *, x: np.ndarray, y: np.ndarray, spec: Tuple[str, str, str], title_prefix: str) -> None:
+                    label, col, mode = spec
+                    if col == "__source__":
+                        s = src_series.astype(str).fillna("unknown")
+                    else:
+                        s = plc_proj_df[col]
+                    valid_mask = ~unknown_mask
+                    if mode == "categorical":
+                        cats = s.astype(str).fillna("unknown")
+                        labs = sorted(cats[valid_mask].unique().tolist())
+                        pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
+                        cmap = {lab: pal[i] for i, lab in enumerate(labs)}
+                        for lab in labs:
+                            m = (cats.to_numpy() == lab) & valid_mask
+                            if int(np.sum(m)) <= 0:
+                                continue
+                            ax.scatter(x[m], y[m], s=8, alpha=0.4, c=[cmap[lab]], label=str(lab))
+                        if len(labs) <= 12:
+                            ax.legend(fontsize=7, loc="best")
+                    else:
+                        v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+                        finite = np.isfinite(v) & valid_mask
+                        if finite.any():
+                            lo = float(np.nanquantile(v[finite], 0.01))
+                            hi = float(np.nanquantile(v[finite], 0.99))
+                            if hi <= lo:
+                                lo = float(np.nanmin(v[finite]))
+                                hi = float(np.nanmax(v[finite]) + 1e-9)
+                            vv = np.clip(v, lo, hi)
+                            sc = ax.scatter(x[valid_mask], y[valid_mask], c=vv[valid_mask], s=8, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                            cb = fig13.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+                            cb.ax.tick_params(labelsize=7)
+                        else:
+                            ax.scatter(x[valid_mask], y[valid_mask], s=8, alpha=0.35, c="#777777")
+                    ax.set_title(f"{title_prefix} colored by {label}")
+                    ax.grid(alpha=0.2)
+
+                for j, spec in enumerate(color_specs):
+                    _plot_plc_panel_pc13(axes13[0, j], x=Z_plc[:, 0], y=Z_plc[:, 2], spec=spec, title_prefix="True")
+                    _plot_plc_panel_pc13(axes13[1, j], x=Z_plc_pred[:, 0], y=Z_plc_pred[:, 2], spec=spec, title_prefix="Pred")
+                    axes13[0, j].set_xlabel("true_pc1")
+                    axes13[0, j].set_ylabel("true_pc3")
+                    axes13[1, j].set_xlabel("pred_pc1")
+                    axes13[1, j].set_ylabel("pred_pc3")
+
+                plc_plot_multicolor_pc13_path = out_dir / "plc_pca_true_vs_pred_pc13_multicolor.png"
+                fig13.savefig(plc_plot_multicolor_pc13_path, dpi=170)
+                plt.close(fig13)
             except Exception:
                 plc_plot_3d_path = None
                 plc_plot_multicolor_3d_path = None
+                plc_plot_multicolor_pc13_path = None
 
     pann_plot_path: Optional[Path] = None
     pann_plot_multicolor_path: Optional[Path] = None
+    pann_plot_multicolor_pc13_path: Optional[Path] = None
     if int(Z_pann.shape[1]) >= 2:
         try:
             import matplotlib.pyplot as plt  # type: ignore
@@ -1246,7 +1303,7 @@ def fit_audio_pretrained_embedding_multitask(
                 None,
             )
             if state_col is not None:
-                color_specs.append(("state__mode", str(state_col), "categorical"))
+                color_specs.append((f"state__mode ({state_col})", str(state_col), "categorical"))
 
             flow_col = next(
                 (
@@ -1266,7 +1323,7 @@ def fit_audio_pretrained_embedding_multitask(
                 None,
             )
             if flow_col is not None:
-                color_specs.append(("flow", str(flow_col), "numeric"))
+                color_specs.append((f"flow ({flow_col})", str(flow_col), "numeric"))
 
             pressure_col = next(
                 (
@@ -1290,7 +1347,7 @@ def fit_audio_pretrained_embedding_multitask(
                 None,
             )
             if pressure_col is not None:
-                color_specs.append(("pressure", str(pressure_col), "numeric"))
+                color_specs.append((f"pressure ({pressure_col})", str(pressure_col), "numeric"))
 
             flow_dt_col = next(
                 (
@@ -1310,7 +1367,7 @@ def fit_audio_pretrained_embedding_multitask(
                 None,
             )
             if flow_dt_col is not None:
-                color_specs.append(("flow_dt", str(flow_dt_col), "numeric"))
+                color_specs.append((f"flow_dt ({flow_dt_col})", str(flow_dt_col), "numeric"))
 
             pressure_dt_col = next(
                 (
@@ -1334,14 +1391,14 @@ def fit_audio_pretrained_embedding_multitask(
                 None,
             )
             if pressure_dt_col is not None:
-                color_specs.append(("pressure_dt", str(pressure_dt_col), "numeric"))
+                color_specs.append((f"pressure_dt ({pressure_dt_col})", str(pressure_dt_col), "numeric"))
 
             power_dt_col = next(
                 (c for c in ("powermeter__d1", "sup_powermeter_d1") if c in pann_proj_df.columns),
                 None,
             )
             if power_dt_col is not None:
-                color_specs.append(("powermeter_dt", str(power_dt_col), "numeric"))
+                color_specs.append((f"powermeter_dt ({power_dt_col})", str(power_dt_col), "numeric"))
 
             if int(Z_pann.shape[1]) >= 3:
                 ncols = max(1, int(len(color_specs)))
@@ -1442,6 +1499,60 @@ def fit_audio_pretrained_embedding_multitask(
                 pann_plot_multicolor_path = out_dir / "pann_pca_true_vs_pred_pc123_multicolor_3d.png"
                 fig2.savefig(pann_plot_multicolor_path, dpi=170)
                 plt.close(fig2)
+
+                # Additional 2D projection (PC1 vs PC3) with same coloring.
+                fig13, axes13 = plt.subplots(2, ncols, figsize=(4.8 * ncols, 8.0), constrained_layout=True)
+                if ncols == 1:
+                    axes13 = np.asarray(axes13).reshape(2, 1)
+
+                def _plot_panel_pc13(ax, *, x: np.ndarray, y: np.ndarray, spec: Tuple[str, str, str], title_prefix: str) -> None:
+                    label, col, mode = spec
+                    if col == "__source__":
+                        s = src_series.astype(str).fillna("unknown")
+                    else:
+                        s = pann_proj_df[col]
+                    valid_mask = ~unknown_mask
+                    if mode == "categorical":
+                        cats = s.astype(str).fillna("unknown")
+                        labs = sorted(cats[valid_mask].unique().tolist())
+                        pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
+                        cmap = {lab: pal[i] for i, lab in enumerate(labs)}
+                        for lab in labs:
+                            m = (cats.to_numpy() == lab) & valid_mask
+                            if int(np.sum(m)) <= 0:
+                                continue
+                            ax.scatter(x[m], y[m], s=8, alpha=0.4, c=[cmap[lab]], label=str(lab))
+                        if len(labs) <= 12:
+                            ax.legend(fontsize=7, loc="best")
+                    else:
+                        v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+                        finite = np.isfinite(v) & valid_mask
+                        if finite.any():
+                            lo = float(np.nanquantile(v[finite], 0.01))
+                            hi = float(np.nanquantile(v[finite], 0.99))
+                            if hi <= lo:
+                                lo = float(np.nanmin(v[finite]))
+                                hi = float(np.nanmax(v[finite]) + 1e-9)
+                            vv = np.clip(v, lo, hi)
+                            sc = ax.scatter(x[valid_mask], y[valid_mask], c=vv[valid_mask], s=8, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                            cb = fig13.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+                            cb.ax.tick_params(labelsize=7)
+                        else:
+                            ax.scatter(x[valid_mask], y[valid_mask], s=8, alpha=0.35, c="#777777")
+                    ax.set_title(f"{title_prefix} colored by {label}")
+                    ax.grid(alpha=0.2)
+
+                for j, spec in enumerate(color_specs):
+                    _plot_panel_pc13(axes13[0, j], x=Z_pann[:, 0], y=Z_pann[:, 2], spec=spec, title_prefix="True")
+                    _plot_panel_pc13(axes13[1, j], x=Z_pann_pred[:, 0], y=Z_pann_pred[:, 2], spec=spec, title_prefix="Pred")
+                    axes13[0, j].set_xlabel("true_pc1")
+                    axes13[0, j].set_ylabel("true_pc3")
+                    axes13[1, j].set_xlabel("pred_pc1")
+                    axes13[1, j].set_ylabel("pred_pc3")
+
+                pann_plot_multicolor_pc13_path = out_dir / "pann_pca_true_vs_pred_pc13_multicolor.png"
+                fig13.savefig(pann_plot_multicolor_pc13_path, dpi=170)
+                plt.close(fig13)
             else:
                 ncols = max(1, int(len(color_specs)))
                 fig2, axes2 = plt.subplots(2, ncols, figsize=(4.8 * ncols, 8.0), constrained_layout=True)
@@ -1501,6 +1612,7 @@ def fit_audio_pretrained_embedding_multitask(
         except Exception:
             pann_plot_path = None
             pann_plot_multicolor_path = None
+            pann_plot_multicolor_pc13_path = None
 
     def _split_metrics(yt: np.ndarray, yp: np.ndarray) -> Dict[str, Any]:
         if is_plc_encoder:
@@ -1712,9 +1824,15 @@ def fit_audio_pretrained_embedding_multitask(
             "plc_true_vs_pred_plot_pc123_multicolor_3d": (
                 str(plc_plot_multicolor_3d_path) if plc_plot_multicolor_3d_path is not None else None
             ),
+            "plc_true_vs_pred_plot_pc13_multicolor": (
+                str(plc_plot_multicolor_pc13_path) if plc_plot_multicolor_pc13_path is not None else None
+            ),
             "pann_true_vs_pred_plot_pc12": (str(pann_plot_path) if pann_plot_path is not None else None),
             "pann_true_vs_pred_plot_pc12_multicolor": (
                 str(pann_plot_multicolor_path) if pann_plot_multicolor_path is not None else None
+            ),
+            "pann_true_vs_pred_plot_pc13_multicolor": (
+                str(pann_plot_multicolor_pc13_path) if pann_plot_multicolor_pc13_path is not None else None
             ),
             "confusion": conf_artifacts,
             "plc_encoder_path": (str(plc_encoder_path) if plc_encoder_path is not None else None),
