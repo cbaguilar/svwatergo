@@ -340,8 +340,37 @@ def fit_audio_pretrained_embedding_multitask(
     best_model_split: str = "val",
     source_filter_col: str = "",
     source_filter_values: Optional[Sequence[str]] = None,
+    drop_state_unknown: bool = False,
+    state_unknown_col: str = "state__unknown",
+    drop_state_unknown_scope: str = "all",
 ) -> AudioPretrainedEmbeddingMultitaskResult:
     out_dir.mkdir(parents=True, exist_ok=True)
+    drop_unknown_scope = str(drop_state_unknown_scope).strip().lower()
+    if drop_unknown_scope not in ("all", "train_only"):
+        raise ValueError("drop_state_unknown_scope must be one of: all, train_only")
+    if bool(drop_state_unknown) and drop_unknown_scope == "all":
+        suc = str(state_unknown_col).strip()
+        if not suc:
+            raise ValueError("state_unknown_col cannot be empty when drop_state_unknown is enabled")
+        if suc not in df.columns:
+            raise ValueError(f"Missing state unknown column in dataset: {suc}")
+        before_n = int(len(df))
+        su = pd.to_numeric(df[suc], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+        keep = su < 0.5
+        df = df.loc[keep].reset_index(drop=True)
+        if len(df) <= 0:
+            raise ValueError(f"All rows removed by drop_state_unknown using column: {suc}")
+        if split_manifest_df is not None:
+            if str(dataset_id_col) not in df.columns:
+                raise ValueError(f"Missing dataset_id_col in filtered dataset: {dataset_id_col}")
+            if str(split_manifest_id_col) not in split_manifest_df.columns:
+                raise ValueError(f"Missing split_manifest_id_col in split manifest: {split_manifest_id_col}")
+            keep_ids = set(df[str(dataset_id_col)].astype(str).tolist())
+            split_manifest_df = split_manifest_df.loc[
+                split_manifest_df[str(split_manifest_id_col)].astype(str).isin(keep_ids)
+            ].reset_index(drop=True)
+        print(f"[state_filter] scope=all drop_unknown col={suc} rows={len(df)}/{before_n}", flush=True)
+
     src_filter_vals = [str(v).strip() for v in (source_filter_values or []) if str(v).strip()]
     src_filter_col = str(source_filter_col or "").strip()
     if src_filter_vals:
@@ -422,6 +451,20 @@ def fit_audio_pretrained_embedding_multitask(
     idx_train = idx_all[split2.to_numpy() == "train"]
     idx_test = idx_all[split2.to_numpy() == "test"]
     idx_val = idx_all[split2.to_numpy() == "val"]
+    if bool(drop_state_unknown) and drop_unknown_scope == "train_only":
+        suc = str(state_unknown_col).strip()
+        if not suc:
+            raise ValueError("state_unknown_col cannot be empty when drop_state_unknown is enabled")
+        if suc not in df2.columns:
+            raise ValueError(f"Missing state unknown column in dataset: {suc}")
+        su2 = pd.to_numeric(df2[suc], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+        keep_train = su2[idx_train] < 0.5
+        before_train = int(len(idx_train))
+        idx_train = idx_train[keep_train]
+        print(
+            f"[state_filter] scope=train_only drop_unknown col={suc} train_rows={len(idx_train)}/{before_train}",
+            flush=True,
+        )
     if len(idx_train) < 2 or len(idx_test) < 1:
         raise ValueError("Need non-empty train and test splits")
 
@@ -1216,6 +1259,9 @@ def fit_audio_pretrained_embedding_multitask(
             "best_model_split": str(split_mode),
             "source_filter_col": (src_filter_col if src_filter_vals else None),
             "source_filter_values": (src_filter_vals if src_filter_vals else []),
+            "drop_state_unknown": bool(drop_state_unknown),
+            "state_unknown_col": str(state_unknown_col),
+            "drop_state_unknown_scope": str(drop_unknown_scope),
         },
         "best_model": {
             "path": str(best_ckpt_path) if best_ckpt_path.exists() else None,

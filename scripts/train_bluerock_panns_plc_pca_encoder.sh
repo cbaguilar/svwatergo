@@ -10,6 +10,9 @@ OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_p
 # Optional source filter (for example: rpi_audio).
 AUDIO_SOURCE_FILTER="${AUDIO_SOURCE_FILTER:-}"
 AUDIO_SOURCE_COL="${AUDIO_SOURCE_COL:-audio_source}"
+DROP_STATE_UNKNOWN="${DROP_STATE_UNKNOWN:-yes}"
+STATE_UNKNOWN_COL="${STATE_UNKNOWN_COL:-state__unknown}"
+DROP_STATE_UNKNOWN_SCOPE="${DROP_STATE_UNKNOWN_SCOPE:-train_only}"
 
 TARGET_SECONDS="${TARGET_SECONDS:-10}"
 EXTRACT_BATCH_SIZE="${EXTRACT_BATCH_SIZE:-32}"
@@ -53,6 +56,9 @@ args=(
   --split-id-col sample_id
   --audio-path-col segment_path
   --source-filter-col "$AUDIO_SOURCE_COL"
+  --drop-state-unknown "$DROP_STATE_UNKNOWN"
+  --state-unknown-col "$STATE_UNKNOWN_COL"
+  --drop-state-unknown-scope "$DROP_STATE_UNKNOWN_SCOPE"
   --out-dir "$OUT_DIR"
   --task-mode "$TASK_MODE"
   --target-col "$TARGET_COL"

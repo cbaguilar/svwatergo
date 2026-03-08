@@ -20,6 +20,9 @@ def main() -> int:
     p.add_argument("--audio-path-col", default="segment_path")
     p.add_argument("--source-filter-col", default="audio_source")
     p.add_argument("--source-filter-values", default="", help="Optional comma-separated source values to keep")
+    p.add_argument("--drop-state-unknown", default="no", choices=["yes", "no"])
+    p.add_argument("--state-unknown-col", default="state__unknown")
+    p.add_argument("--drop-state-unknown-scope", default="all", choices=["all", "train_only"])
 
     p.add_argument("--out-dir", required=True)
     p.add_argument("--task-mode", default="multiclass", choices=["multiclass", "multilabel", "plc_pca_encoder"])
@@ -77,6 +80,9 @@ def main() -> int:
         audio_path_col=str(args.audio_path_col),
         source_filter_col=str(args.source_filter_col),
         source_filter_values=[c.strip() for c in str(args.source_filter_values).split(",") if c.strip()],
+        drop_state_unknown=(str(args.drop_state_unknown) == "yes"),
+        state_unknown_col=str(args.state_unknown_col),
+        drop_state_unknown_scope=str(args.drop_state_unknown_scope),
         random_state=int(args.random_state),
         target_seconds=float(args.target_seconds),
         extract_batch_size=int(args.extract_batch_size),
