@@ -919,6 +919,7 @@ def fit_audio_pretrained_embedding_multitask(
 
     plc_proj_path: Optional[Path] = None
     plc_plot_3d_path: Optional[Path] = None
+    plc_plot_multicolor_3d_path: Optional[Path] = None
     if Z_plc is not None and Z_plc_pred is not None:
         plc_proj_path = out_dir / "plc_pca_true_vs_pred.parquet"
         plc_proj_df = df2.reset_index(drop=True).copy()
@@ -978,8 +979,105 @@ def fit_audio_pretrained_embedding_multitask(
                 plc_plot_3d_path = out_dir / "plc_pca_true_vs_pred_pc123_3d.png"
                 fig.savefig(plc_plot_3d_path, dpi=170)
                 plt.close(fig)
+
+                # Multicolor PLC PCA view: source/state/duty on true and predicted spaces.
+                color_specs: List[Tuple[str, str, str]] = []
+                color_specs.append(("source", "__source__", "categorical"))
+                state_col = next(
+                    (c for c in ("state_mode", "primary_class", "state", "mode") if c in plc_proj_df.columns),
+                    None,
+                )
+                if state_col is not None:
+                    color_specs.append(("state", str(state_col), "categorical"))
+                if "ropumprun_duty" in plc_proj_df.columns:
+                    color_specs.append(("ropumprun_duty", "ropumprun_duty", "numeric"))
+                if "deliveryrun_duty" in plc_proj_df.columns:
+                    color_specs.append(("deliveryrun_duty", "deliveryrun_duty", "numeric"))
+
+                ncols = max(1, int(len(color_specs)))
+                figm = plt.figure(figsize=(5.0 * ncols, 9.2), constrained_layout=True)
+                axesm = np.empty((2, ncols), dtype=object)
+                for rr in range(2):
+                    for cc in range(ncols):
+                        axesm[rr, cc] = figm.add_subplot(2, ncols, rr * ncols + cc + 1, projection="3d")
+
+                def _plot_plc_panel(
+                    ax,
+                    *,
+                    x: np.ndarray,
+                    y: np.ndarray,
+                    z: np.ndarray,
+                    spec: Tuple[str, str, str],
+                    title_prefix: str,
+                ) -> None:
+                    label, col, mode = spec
+                    if col == "__source__":
+                        s = src_series.astype(str).fillna("unknown")
+                    else:
+                        s = plc_proj_df[col]
+
+                    if mode == "categorical":
+                        cats = s.astype(str).fillna("unknown")
+                        labs = sorted(cats.unique().tolist())
+                        pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
+                        cmap = {lab: pal[i] for i, lab in enumerate(labs)}
+                        for lab in labs:
+                            m = (cats.to_numpy() == lab)
+                            if int(np.sum(m)) <= 0:
+                                continue
+                            ax.scatter(x[m], y[m], z[m], s=7, alpha=0.4, c=[cmap[lab]], label=str(lab))
+                        if len(labs) <= 12:
+                            ax.legend(fontsize=7, loc="best")
+                    else:
+                        v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+                        finite = np.isfinite(v)
+                        if finite.any():
+                            lo = float(np.nanquantile(v[finite], 0.01))
+                            hi = float(np.nanquantile(v[finite], 0.99))
+                            if hi <= lo:
+                                lo = float(np.nanmin(v[finite]))
+                                hi = float(np.nanmax(v[finite]) + 1e-9)
+                            vv = np.clip(v, lo, hi)
+                            sc = ax.scatter(x, y, z, c=vv, s=7, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                            cb = figm.colorbar(sc, ax=ax, fraction=0.046, pad=0.03)
+                            cb.ax.tick_params(labelsize=7)
+                        else:
+                            ax.scatter(x, y, z, s=7, alpha=0.35, c="#777777")
+                    ax.set_title(f"{title_prefix} colored by {label}")
+                    ax.grid(alpha=0.2)
+
+                for j, spec in enumerate(color_specs):
+                    ax_t = axesm[0, j]
+                    ax_p = axesm[1, j]
+                    _plot_plc_panel(
+                        ax_t,
+                        x=Z_plc[:, 0],
+                        y=Z_plc[:, 1],
+                        z=Z_plc[:, 2],
+                        spec=spec,
+                        title_prefix="True",
+                    )
+                    _plot_plc_panel(
+                        ax_p,
+                        x=Z_plc_pred[:, 0],
+                        y=Z_plc_pred[:, 1],
+                        z=Z_plc_pred[:, 2],
+                        spec=spec,
+                        title_prefix="Pred",
+                    )
+                    ax_t.set_xlabel("true_pc1")
+                    ax_t.set_ylabel("true_pc2")
+                    ax_t.set_zlabel("true_pc3")
+                    ax_p.set_xlabel("pred_pc1")
+                    ax_p.set_ylabel("pred_pc2")
+                    ax_p.set_zlabel("pred_pc3")
+
+                plc_plot_multicolor_3d_path = out_dir / "plc_pca_true_vs_pred_pc123_multicolor_3d.png"
+                figm.savefig(plc_plot_multicolor_3d_path, dpi=170)
+                plt.close(figm)
             except Exception:
                 plc_plot_3d_path = None
+                plc_plot_multicolor_3d_path = None
 
     pann_plot_path: Optional[Path] = None
     pann_plot_multicolor_path: Optional[Path] = None
@@ -1395,6 +1493,9 @@ def fit_audio_pretrained_embedding_multitask(
             "pann_true_vs_pred_parquet": str(pann_proj_path),
             "plc_true_vs_pred_parquet": (str(plc_proj_path) if plc_proj_path is not None else None),
             "plc_true_vs_pred_plot_pc123_3d": (str(plc_plot_3d_path) if plc_plot_3d_path is not None else None),
+            "plc_true_vs_pred_plot_pc123_multicolor_3d": (
+                str(plc_plot_multicolor_3d_path) if plc_plot_multicolor_3d_path is not None else None
+            ),
             "pann_true_vs_pred_plot_pc12": (str(pann_plot_path) if pann_plot_path is not None else None),
             "pann_true_vs_pred_plot_pc12_multicolor": (
                 str(pann_plot_multicolor_path) if pann_plot_multicolor_path is not None else None
