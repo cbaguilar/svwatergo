@@ -1072,6 +1072,29 @@ def fit_audio_pretrained_embedding_multitask(
                     ax_p.set_ylabel("pred_pc2")
                     ax_p.set_zlabel("pred_pc3")
 
+                # Shared symmetric-log axis scaling across all PLC multicolor 3D panels.
+                xyz_all = np.vstack([np.asarray(Z_plc[:, :3], dtype=np.float64), np.asarray(Z_plc_pred[:, :3], dtype=np.float64)])
+                max_abs = np.nanmax(np.abs(xyz_all), axis=0)
+                max_abs = np.where(np.isfinite(max_abs) & (max_abs > 1e-9), max_abs, 1.0)
+                nz_abs = np.abs(xyz_all)
+                linthresh = []
+                for jj in range(3):
+                    v = nz_abs[:, jj]
+                    v = v[np.isfinite(v) & (v > 0)]
+                    if v.size <= 0:
+                        linthresh.append(1.0)
+                    else:
+                        linthresh.append(float(max(1e-3, np.nanpercentile(v, 15.0))))
+                for rr in range(2):
+                    for cc in range(ncols):
+                        ax = axesm[rr, cc]
+                        ax.set_xscale("symlog", linthresh=linthresh[0])
+                        ax.set_yscale("symlog", linthresh=linthresh[1])
+                        ax.set_zscale("symlog", linthresh=linthresh[2])
+                        ax.set_xlim(-float(max_abs[0]), float(max_abs[0]))
+                        ax.set_ylim(-float(max_abs[1]), float(max_abs[1]))
+                        ax.set_zlim(-float(max_abs[2]), float(max_abs[2]))
+
                 plc_plot_multicolor_3d_path = out_dir / "plc_pca_true_vs_pred_pc123_multicolor_3d.png"
                 figm.savefig(plc_plot_multicolor_3d_path, dpi=170)
                 plt.close(figm)
@@ -1222,6 +1245,29 @@ def fit_audio_pretrained_embedding_multitask(
                     ax_p.set_xlabel("pred_pc1")
                     ax_p.set_ylabel("pred_pc2")
                     ax_p.set_zlabel("pred_pc3")
+
+                # Shared symmetric-log axis scaling across all PANN multicolor 3D panels.
+                xyz_all = np.vstack([np.asarray(Z_pann[:, :3], dtype=np.float64), np.asarray(Z_pann_pred[:, :3], dtype=np.float64)])
+                max_abs = np.nanmax(np.abs(xyz_all), axis=0)
+                max_abs = np.where(np.isfinite(max_abs) & (max_abs > 1e-9), max_abs, 1.0)
+                nz_abs = np.abs(xyz_all)
+                linthresh = []
+                for jj in range(3):
+                    v = nz_abs[:, jj]
+                    v = v[np.isfinite(v) & (v > 0)]
+                    if v.size <= 0:
+                        linthresh.append(1.0)
+                    else:
+                        linthresh.append(float(max(1e-3, np.nanpercentile(v, 15.0))))
+                for rr in range(2):
+                    for cc in range(ncols):
+                        ax = axes2[rr, cc]
+                        ax.set_xscale("symlog", linthresh=linthresh[0])
+                        ax.set_yscale("symlog", linthresh=linthresh[1])
+                        ax.set_zscale("symlog", linthresh=linthresh[2])
+                        ax.set_xlim(-float(max_abs[0]), float(max_abs[0]))
+                        ax.set_ylim(-float(max_abs[1]), float(max_abs[1]))
+                        ax.set_zlim(-float(max_abs[2]), float(max_abs[2]))
 
                 pann_plot_multicolor_path = out_dir / "pann_pca_true_vs_pred_pc123_multicolor_3d.png"
                 fig2.savefig(pann_plot_multicolor_path, dpi=170)
