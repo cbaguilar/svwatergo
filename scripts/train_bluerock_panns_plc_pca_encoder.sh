@@ -11,7 +11,7 @@ OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_p
 AUDIO_SOURCE_FILTER="${AUDIO_SOURCE_FILTER:-}"
 AUDIO_SOURCE_COL="${AUDIO_SOURCE_COL:-audio_source}"
 DROP_STATE_UNKNOWN="${DROP_STATE_UNKNOWN:-yes}"
-STATE_UNKNOWN_COL="${STATE_UNKNOWN_COL:-state__unknown}"
+STATE_UNKNOWN_COL="${STATE_UNKNOWN_COL:-state_unknown}"
 DROP_STATE_UNKNOWN_SCOPE="${DROP_STATE_UNKNOWN_SCOPE:-train_only}"
 
 TARGET_SECONDS="${TARGET_SECONDS:-10}"
@@ -43,6 +43,8 @@ AUX_PLC_INCLUDE_DUTY_COLS="${AUX_PLC_INCLUDE_DUTY_COLS:-yes}"
 AUX_PLC_COMPONENTS="${AUX_PLC_COMPONENTS:-8}"
 AUX_PLC_VARIANCE_RATIO="${AUX_PLC_VARIANCE_RATIO:-0.0}"
 AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-1.0}"
+PLC_CONTRASTIVE_WEIGHT="${PLC_CONTRASTIVE_WEIGHT:-0.0}"
+PLC_CONTRASTIVE_TEMPERATURE="${PLC_CONTRASTIVE_TEMPERATURE:-0.1}"
 
 cd "$REPO"
 mkdir -p "$OUT_DIR"
@@ -82,6 +84,8 @@ args=(
   --aux-plc-components "$AUX_PLC_COMPONENTS"
   --aux-plc-variance-ratio "$AUX_PLC_VARIANCE_RATIO"
   --aux-plc-weight "$AUX_PLC_WEIGHT"
+  --plc-contrastive-weight "$PLC_CONTRASTIVE_WEIGHT"
+  --plc-contrastive-temperature "$PLC_CONTRASTIVE_TEMPERATURE"
   --pann-pca-components 8
   --pann-pca-variance-ratio 0.0
   --pann-pca-weight "$PANN_PCA_WEIGHT"

@@ -300,6 +300,30 @@ def _r2_payload(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, Any]:
     }
 
 
+def _paired_contrastive_loss(
+    audio_plc: "torch.Tensor",
+    target_plc: "torch.Tensor",
+    *,
+    temperature: float,
+) -> "torch.Tensor":
+    import torch  # type: ignore
+    import torch.nn.functional as F  # type: ignore
+
+    if audio_plc.ndim != 2 or target_plc.ndim != 2:
+        raise ValueError("contrastive inputs must be 2D tensors")
+    if audio_plc.shape != target_plc.shape:
+        raise ValueError("contrastive inputs must have same shape")
+    n = int(audio_plc.shape[0])
+    if n <= 1:
+        return torch.tensor(0.0, device=audio_plc.device, dtype=audio_plc.dtype)
+
+    a = F.normalize(audio_plc, p=2, dim=1)
+    b = F.normalize(target_plc, p=2, dim=1)
+    logits = torch.matmul(a, b.T) / float(max(1e-6, temperature))
+    labels = torch.arange(n, device=audio_plc.device, dtype=torch.long)
+    return 0.5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels))
+
+
 def fit_audio_pretrained_embedding_multitask(
     df: pd.DataFrame,
     out_dir: Path,
@@ -333,6 +357,8 @@ def fit_audio_pretrained_embedding_multitask(
     aux_plc_components: int = 8,
     aux_plc_variance_ratio: float = 0.0,
     aux_plc_weight: float = 0.3,
+    plc_contrastive_weight: float = 0.0,
+    plc_contrastive_temperature: float = 0.1,
     pann_pca_components: int = 8,
     pann_pca_variance_ratio: float = 0.0,
     pann_pca_weight: float = 1.0,
@@ -681,6 +707,12 @@ def fit_audio_pretrained_embedding_multitask(
     main_w = float(main_task_weight)
     if main_w < 0.0:
         raise ValueError("main_task_weight must be >= 0")
+    plc_con_w = float(plc_contrastive_weight)
+    plc_con_temp = float(plc_contrastive_temperature)
+    if plc_con_w < 0.0:
+        raise ValueError("plc_contrastive_weight must be >= 0")
+    if plc_con_temp <= 0.0:
+        raise ValueError("plc_contrastive_temperature must be > 0")
 
     def _predict(dl):
         model.eval()
@@ -768,9 +800,16 @@ def fit_audio_pretrained_embedding_multitask(
             l_pann = huber(zhat, zpb)
             if zlb is not None and plc_pred is not None:
                 l_plc = huber(plc_pred, zlb)
+                l_con = _paired_contrastive_loss(plc_pred, zlb, temperature=plc_con_temp)
             else:
                 l_plc = torch.tensor(0.0, device=device)
-            loss = main_w * l_cls + float(pann_pca_weight) * l_pann + float(aux_plc_weight) * l_plc
+                l_con = torch.tensor(0.0, device=device)
+            loss = (
+                main_w * l_cls
+                + float(pann_pca_weight) * l_pann
+                + float(aux_plc_weight) * l_plc
+                + plc_con_w * l_con
+            )
             loss.backward()
             optim.step()
             bsz = int(yb.shape[0])
@@ -825,6 +864,8 @@ def fit_audio_pretrained_embedding_multitask(
                             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
                             "pann_pca_weight": float(pann_pca_weight),
                             "aux_plc_weight": float(aux_plc_weight),
+                            "plc_contrastive_weight": float(plc_con_w),
+                            "plc_contrastive_temperature": float(plc_con_temp),
                             "main_task_weight": float(main_w),
                             "best_epoch": int(ep),
                             "best_score": float(score),
@@ -847,6 +888,8 @@ def fit_audio_pretrained_embedding_multitask(
                                 "main_task_weight": float(main_w),
                                 "pann_pca_weight": float(pann_pca_weight),
                                 "aux_plc_weight": float(aux_plc_weight),
+                                "plc_contrastive_weight": float(plc_con_w),
+                                "plc_contrastive_temperature": float(plc_con_temp),
                                 "best_epoch": int(ep),
                                 "best_score": float(score),
                                 "best_model_metric": str(metric_mode),
@@ -1636,6 +1679,8 @@ def fit_audio_pretrained_embedding_multitask(
             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
             "pann_pca_weight": float(pann_pca_weight),
             "aux_plc_weight": float(aux_plc_weight),
+            "plc_contrastive_weight": float(plc_con_w),
+            "plc_contrastive_temperature": float(plc_con_temp),
             "main_task_weight": float(main_w),
         },
         str(model_path),
@@ -1657,6 +1702,8 @@ def fit_audio_pretrained_embedding_multitask(
                 "main_task_weight": float(main_w),
                 "pann_pca_weight": float(pann_pca_weight),
                 "aux_plc_weight": float(aux_plc_weight),
+                "plc_contrastive_weight": float(plc_con_w),
+                "plc_contrastive_temperature": float(plc_con_temp),
             },
             str(plc_encoder_path),
         )
@@ -1696,6 +1743,8 @@ def fit_audio_pretrained_embedding_multitask(
             "encoder_dropout": float(encoder_dropout),
             "eval_every": int(eval_every),
             "main_task_weight": float(main_w),
+            "plc_contrastive_weight": float(plc_con_w),
+            "plc_contrastive_temperature": float(plc_con_temp),
             "best_model_metric": str(metric_mode),
             "best_model_split": str(split_mode),
             "source_filter_col": (src_filter_col if src_filter_vals else None),

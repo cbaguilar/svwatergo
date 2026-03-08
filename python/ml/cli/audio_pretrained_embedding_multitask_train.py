@@ -20,9 +20,9 @@ def main() -> int:
     p.add_argument("--audio-path-col", default="segment_path")
     p.add_argument("--source-filter-col", default="audio_source")
     p.add_argument("--source-filter-values", default="", help="Optional comma-separated source values to keep")
-    p.add_argument("--drop-state-unknown", default="no", choices=["yes", "no"])
-    p.add_argument("--state-unknown-col", default="state__unknown")
-    p.add_argument("--drop-state-unknown-scope", default="all", choices=["all", "train_only"])
+    p.add_argument("--drop-state-unknown", default="yes", choices=["yes", "no"])
+    p.add_argument("--state-unknown-col", default="state_unknown")
+    p.add_argument("--drop-state-unknown-scope", default="train_only", choices=["all", "train_only"])
 
     p.add_argument("--out-dir", required=True)
     p.add_argument("--task-mode", default="multiclass", choices=["multiclass", "multilabel", "plc_pca_encoder"])
@@ -54,6 +54,8 @@ def main() -> int:
     p.add_argument("--aux-plc-components", type=int, default=8)
     p.add_argument("--aux-plc-variance-ratio", type=float, default=0.0)
     p.add_argument("--aux-plc-weight", type=float, default=0.3)
+    p.add_argument("--plc-contrastive-weight", type=float, default=0.0)
+    p.add_argument("--plc-contrastive-temperature", type=float, default=0.1)
 
     p.add_argument("--pann-pca-components", type=int, default=8)
     p.add_argument("--pann-pca-variance-ratio", type=float, default=0.0)
@@ -108,6 +110,8 @@ def main() -> int:
         aux_plc_components=int(args.aux_plc_components),
         aux_plc_variance_ratio=float(args.aux_plc_variance_ratio),
         aux_plc_weight=float(args.aux_plc_weight),
+        plc_contrastive_weight=float(args.plc_contrastive_weight),
+        plc_contrastive_temperature=float(args.plc_contrastive_temperature),
         pann_pca_components=int(args.pann_pca_components),
         pann_pca_variance_ratio=float(args.pann_pca_variance_ratio),
         pann_pca_weight=float(args.pann_pca_weight),

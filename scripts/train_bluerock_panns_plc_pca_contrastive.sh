@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="${REPO:-$HOME/svwatergo}"
+
+# Contrastive PLC-PCA encoder defaults.
+OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s_panns_plc_pca_contrastive}"
+TASK_MODE="${TASK_MODE:-plc_pca_encoder}"
+MAIN_TASK_WEIGHT="${MAIN_TASK_WEIGHT:-0.0}"
+PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-0.0}"
+AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-1.0}"
+PLC_CONTRASTIVE_WEIGHT="${PLC_CONTRASTIVE_WEIGHT:-0.5}"
+PLC_CONTRASTIVE_TEMPERATURE="${PLC_CONTRASTIVE_TEMPERATURE:-0.1}"
+
+OUT_DIR="$OUT_DIR" \
+TASK_MODE="$TASK_MODE" \
+MAIN_TASK_WEIGHT="$MAIN_TASK_WEIGHT" \
+PANN_PCA_WEIGHT="$PANN_PCA_WEIGHT" \
+AUX_PLC_WEIGHT="$AUX_PLC_WEIGHT" \
+PLC_CONTRASTIVE_WEIGHT="$PLC_CONTRASTIVE_WEIGHT" \
+PLC_CONTRASTIVE_TEMPERATURE="$PLC_CONTRASTIVE_TEMPERATURE" \
+bash "$REPO/scripts/train_bluerock_panns_plc_pca_encoder.sh"
