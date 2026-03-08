@@ -9,7 +9,8 @@ OUT_ROOT="${OUT_ROOT:-/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_10s
 LOG_ROOT="${LOG_ROOT:-/mnt/d/datasets/svwatergo/derived/logs/bluerock_10s_panns_plc_pca_encoder_sweep_${RUN_TS}}"
 
 # Comma-separated list of sources to run individually.
-SOURCES="${SOURCES:-rpi_audio,wyze_Bluerock_Cam_1,wyze_Bluerock_Cam_2,wyze_camera_5}"
+# Intentionally excludes wyze_Bluerock_Cam_1 (known bad/sparse data).
+SOURCES="${SOURCES:-rpi_audio,wyze_Bluerock_Cam_2,wyze_camera_5}"
 
 mkdir -p "$OUT_ROOT" "$LOG_ROOT"
 
@@ -29,9 +30,16 @@ for src in "${SOURCE_ARR[@]}"; do
   echo "[RUN] source=$src_trim"
   echo "      OUT_DIR=$OUT_ROOT/source_${safe_name}"
   echo "      LOG=$LOG_ROOT/source_${safe_name}.log"
+  set +e
   OUT_DIR="$OUT_ROOT/source_${safe_name}" \
   AUDIO_SOURCE_FILTER="$src_trim" \
   bash "$BASE_SCRIPT" 2>&1 | tee "$LOG_ROOT/source_${safe_name}.log"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    echo "[WARN] source=$src_trim failed (exit=$rc); skipping"
+    continue
+  fi
 done
 
 echo "[DONE] sweep outputs -> $OUT_ROOT"
