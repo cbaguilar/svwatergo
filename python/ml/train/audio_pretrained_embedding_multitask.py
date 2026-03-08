@@ -1014,61 +1014,144 @@ def fit_audio_pretrained_embedding_multitask(
             if "deliveryrun_duty" in pann_proj_df.columns:
                 color_specs.append(("deliveryrun_duty", "deliveryrun_duty", "numeric"))
 
-            ncols = max(1, int(len(color_specs)))
-            fig2, axes2 = plt.subplots(2, ncols, figsize=(4.8 * ncols, 8.0), constrained_layout=True)
-            if ncols == 1:
-                axes2 = np.asarray(axes2).reshape(2, 1)
+            if int(Z_pann.shape[1]) >= 3:
+                ncols = max(1, int(len(color_specs)))
+                fig2 = plt.figure(figsize=(5.0 * ncols, 9.2), constrained_layout=True)
+                axes2 = np.empty((2, ncols), dtype=object)
+                for rr in range(2):
+                    for cc in range(ncols):
+                        axes2[rr, cc] = fig2.add_subplot(2, ncols, rr * ncols + cc + 1, projection="3d")
 
-            def _plot_panel(ax, *, x: np.ndarray, y: np.ndarray, spec: Tuple[str, str, str], title_prefix: str) -> None:
-                label, col, mode = spec
-                if col == "__source__":
-                    s = src_series.astype(str).fillna("unknown")
-                else:
-                    s = pann_proj_df[col]
-
-                if mode == "categorical":
-                    cats = s.astype(str).fillna("unknown")
-                    labs = sorted(cats.unique().tolist())
-                    pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
-                    cmap = {lab: pal[i] for i, lab in enumerate(labs)}
-                    for lab in labs:
-                        m = (cats.to_numpy() == lab)
-                        if int(np.sum(m)) <= 0:
-                            continue
-                        ax.scatter(x[m], y[m], s=8, alpha=0.4, c=[cmap[lab]], label=str(lab))
-                    if len(labs) <= 12:
-                        ax.legend(fontsize=7, loc="best")
-                else:
-                    v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
-                    finite = np.isfinite(v)
-                    if finite.any():
-                        lo = float(np.nanquantile(v[finite], 0.01))
-                        hi = float(np.nanquantile(v[finite], 0.99))
-                        if hi <= lo:
-                            lo = float(np.nanmin(v[finite]))
-                            hi = float(np.nanmax(v[finite]) + 1e-9)
-                        vv = np.clip(v, lo, hi)
-                        sc = ax.scatter(x, y, c=vv, s=8, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
-                        cb = fig2.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
-                        cb.ax.tick_params(labelsize=7)
+                def _plot_panel(
+                    ax,
+                    *,
+                    x: np.ndarray,
+                    y: np.ndarray,
+                    z: np.ndarray,
+                    spec: Tuple[str, str, str],
+                    title_prefix: str,
+                ) -> None:
+                    label, col, mode = spec
+                    if col == "__source__":
+                        s = src_series.astype(str).fillna("unknown")
                     else:
-                        ax.scatter(x, y, s=8, alpha=0.35, c="#777777")
-                ax.set_title(f"{title_prefix} colored by {label}")
-                ax.grid(alpha=0.2)
+                        s = pann_proj_df[col]
 
-            for j, spec in enumerate(color_specs):
-                ax_t = axes2[0, j]
-                ax_p = axes2[1, j]
-                _plot_panel(ax_t, x=Z_pann[:, 0], y=Z_pann[:, 1], spec=spec, title_prefix="True")
-                _plot_panel(ax_p, x=Z_pann_pred[:, 0], y=Z_pann_pred[:, 1], spec=spec, title_prefix="Pred")
-                ax_t.set_xlabel("true_pc1")
-                ax_t.set_ylabel("true_pc2")
-                ax_p.set_xlabel("pred_pc1")
-                ax_p.set_ylabel("pred_pc2")
+                    if mode == "categorical":
+                        cats = s.astype(str).fillna("unknown")
+                        labs = sorted(cats.unique().tolist())
+                        pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
+                        cmap = {lab: pal[i] for i, lab in enumerate(labs)}
+                        for lab in labs:
+                            m = (cats.to_numpy() == lab)
+                            if int(np.sum(m)) <= 0:
+                                continue
+                            ax.scatter(x[m], y[m], z[m], s=7, alpha=0.4, c=[cmap[lab]], label=str(lab))
+                        if len(labs) <= 12:
+                            ax.legend(fontsize=7, loc="best")
+                    else:
+                        v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+                        finite = np.isfinite(v)
+                        if finite.any():
+                            lo = float(np.nanquantile(v[finite], 0.01))
+                            hi = float(np.nanquantile(v[finite], 0.99))
+                            if hi <= lo:
+                                lo = float(np.nanmin(v[finite]))
+                                hi = float(np.nanmax(v[finite]) + 1e-9)
+                            vv = np.clip(v, lo, hi)
+                            sc = ax.scatter(x, y, z, c=vv, s=7, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                            cb = fig2.colorbar(sc, ax=ax, fraction=0.046, pad=0.03)
+                            cb.ax.tick_params(labelsize=7)
+                        else:
+                            ax.scatter(x, y, z, s=7, alpha=0.35, c="#777777")
+                    ax.set_title(f"{title_prefix} colored by {label}")
+                    ax.grid(alpha=0.2)
 
-            pann_plot_multicolor_path = out_dir / "pann_pca_true_vs_pred_pc12_multicolor.png"
-            fig2.savefig(pann_plot_multicolor_path, dpi=160)
-            plt.close(fig2)
+                for j, spec in enumerate(color_specs):
+                    ax_t = axes2[0, j]
+                    ax_p = axes2[1, j]
+                    _plot_panel(
+                        ax_t,
+                        x=Z_pann[:, 0],
+                        y=Z_pann[:, 1],
+                        z=Z_pann[:, 2],
+                        spec=spec,
+                        title_prefix="True",
+                    )
+                    _plot_panel(
+                        ax_p,
+                        x=Z_pann_pred[:, 0],
+                        y=Z_pann_pred[:, 1],
+                        z=Z_pann_pred[:, 2],
+                        spec=spec,
+                        title_prefix="Pred",
+                    )
+                    ax_t.set_xlabel("true_pc1")
+                    ax_t.set_ylabel("true_pc2")
+                    ax_t.set_zlabel("true_pc3")
+                    ax_p.set_xlabel("pred_pc1")
+                    ax_p.set_ylabel("pred_pc2")
+                    ax_p.set_zlabel("pred_pc3")
+
+                pann_plot_multicolor_path = out_dir / "pann_pca_true_vs_pred_pc123_multicolor_3d.png"
+                fig2.savefig(pann_plot_multicolor_path, dpi=170)
+                plt.close(fig2)
+            else:
+                ncols = max(1, int(len(color_specs)))
+                fig2, axes2 = plt.subplots(2, ncols, figsize=(4.8 * ncols, 8.0), constrained_layout=True)
+                if ncols == 1:
+                    axes2 = np.asarray(axes2).reshape(2, 1)
+
+                def _plot_panel(ax, *, x: np.ndarray, y: np.ndarray, spec: Tuple[str, str, str], title_prefix: str) -> None:
+                    label, col, mode = spec
+                    if col == "__source__":
+                        s = src_series.astype(str).fillna("unknown")
+                    else:
+                        s = pann_proj_df[col]
+
+                    if mode == "categorical":
+                        cats = s.astype(str).fillna("unknown")
+                        labs = sorted(cats.unique().tolist())
+                        pal = plt.cm.tab20(np.linspace(0.0, 1.0, max(1, len(labs))))
+                        cmap = {lab: pal[i] for i, lab in enumerate(labs)}
+                        for lab in labs:
+                            m = (cats.to_numpy() == lab)
+                            if int(np.sum(m)) <= 0:
+                                continue
+                            ax.scatter(x[m], y[m], s=8, alpha=0.4, c=[cmap[lab]], label=str(lab))
+                        if len(labs) <= 12:
+                            ax.legend(fontsize=7, loc="best")
+                    else:
+                        v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+                        finite = np.isfinite(v)
+                        if finite.any():
+                            lo = float(np.nanquantile(v[finite], 0.01))
+                            hi = float(np.nanquantile(v[finite], 0.99))
+                            if hi <= lo:
+                                lo = float(np.nanmin(v[finite]))
+                                hi = float(np.nanmax(v[finite]) + 1e-9)
+                            vv = np.clip(v, lo, hi)
+                            sc = ax.scatter(x, y, c=vv, s=8, alpha=0.45, cmap="viridis", vmin=lo, vmax=hi)
+                            cb = fig2.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+                            cb.ax.tick_params(labelsize=7)
+                        else:
+                            ax.scatter(x, y, s=8, alpha=0.35, c="#777777")
+                    ax.set_title(f"{title_prefix} colored by {label}")
+                    ax.grid(alpha=0.2)
+
+                for j, spec in enumerate(color_specs):
+                    ax_t = axes2[0, j]
+                    ax_p = axes2[1, j]
+                    _plot_panel(ax_t, x=Z_pann[:, 0], y=Z_pann[:, 1], spec=spec, title_prefix="True")
+                    _plot_panel(ax_p, x=Z_pann_pred[:, 0], y=Z_pann_pred[:, 1], spec=spec, title_prefix="Pred")
+                    ax_t.set_xlabel("true_pc1")
+                    ax_t.set_ylabel("true_pc2")
+                    ax_p.set_xlabel("pred_pc1")
+                    ax_p.set_ylabel("pred_pc2")
+
+                pann_plot_multicolor_path = out_dir / "pann_pca_true_vs_pred_pc12_multicolor.png"
+                fig2.savefig(pann_plot_multicolor_path, dpi=160)
+                plt.close(fig2)
         except Exception:
             pann_plot_path = None
             pann_plot_multicolor_path = None
