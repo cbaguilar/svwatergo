@@ -25,6 +25,17 @@ const LoadingScreen = () => (
   </div>
 )
 
+const normalizeBootstrapAuthError = (err) => {
+  const status = err?.status
+  const message = String(err?.message || '')
+    .trim()
+    .toLowerCase()
+  if (status === 401 || message.includes('invalid token')) {
+    return 'Session expired. Please sign in again.'
+  }
+  return err?.message || 'Authentication check failed'
+}
+
 const App = () => {
   const { isColorModeSet, setColorMode } = useColorModes('coreui-free-react-admin-template-theme')
   const storedTheme = useSelector((state) => state.theme)
@@ -49,9 +60,11 @@ const App = () => {
 
   useEffect(() => {
     let active = true
+    let bootstrapConfig = null
     ;(async () => {
       try {
         const config = await getAuthConfig()
+        bootstrapConfig = config
         if (!active) return
 
         if (!config?.enabled) {
@@ -90,13 +103,13 @@ const App = () => {
       } catch (err) {
         if (!active) return
         clearAuthSession()
-        setAuthState((prev) => ({
-          ...prev,
+        setAuthState({
           loading: false,
+          config: bootstrapConfig,
           authenticated: false,
           user: null,
-          error: err?.message || 'Authentication check failed',
-        }))
+          error: normalizeBootstrapAuthError(err),
+        })
       }
     })()
     return () => {

@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
+import { CChartLine } from '@coreui/react-chartjs'
 import {
   CAlert,
   CBadge,
@@ -10,6 +11,8 @@ import {
   CCol,
   CFormInput,
   CFormLabel,
+  CFormSelect,
+  CFormSwitch,
   CFormTextarea,
   CRow,
   CSpinner,
@@ -42,7 +45,6 @@ function defaultQueryJSON() {
       match: 'all',
       conditions: [{ field: 'state', op: 'eq', value: 2 }],
       max_results: 200,
-      min_gap_seconds: 60,
       include_rows: true,
     },
     null,
@@ -129,7 +131,6 @@ function inferColumns(rows) {
         columns.push(key)
         seen.add(key)
       }
-      if (columns.length >= 10) return columns
     }
   }
   return columns
@@ -154,6 +155,20 @@ function rowTimestamp(row) {
   return row?.plctime || row?.recordtime || ''
 }
 
+function toFiniteNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'boolean') return value ? 1 : 0
+  if (typeof value === 'string') {
+    const n = Number(value.trim())
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+const CHART_COLORS = ['#58a6ff', '#3fb950', '#f2cc60', '#ff7b72', '#bc8cff', '#56d4dd']
+const ACTIONS_COL_WIDTH = 190
+const PLCTIME_COL_WIDTH = 220
+
 const DataManagement = () => {
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const siteKey = SITE_BY_SYSTEM[selectedSystem] || 'bluerock'
@@ -161,12 +176,99 @@ const DataManagement = () => {
   const [queryText, setQueryText] = useState(defaultQueryJSON)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showAdvancedQuery, setShowAdvancedQuery] = useState(false)
   const [timestamps, setTimestamps] = useState([])
   const [matchedRows, setMatchedRows] = useState([])
+  const [stackedYAxis, setStackedYAxis] = useState([])
   const [lastMeta, setLastMeta] = useState(null)
 
   const previewRows = useMemo(() => matchedRows.slice(0, MAX_PREVIEW_ROWS), [matchedRows])
-  const previewColumns = useMemo(() => inferColumns(previewRows), [previewRows])
+  const tableColumns = useMemo(() => inferColumns(matchedRows), [matchedRows])
+  const numericColumns = useMemo(() => {
+    const blocked = new Set(['id', 'location', 'plctime', 'recordtime'])
+    const keys = []
+    const seen = new Set()
+    for (const row of matchedRows) {
+      for (const [key, value] of Object.entries(row || {})) {
+        if (blocked.has(key) || seen.has(key)) continue
+        if (toFiniteNumber(value) == null) continue
+        seen.add(key)
+        keys.push(key)
+      }
+    }
+    return keys
+  }, [matchedRows])
+  useEffect(() => {
+    if (!numericColumns.length) {
+      setStackedYAxis([])
+      return
+    }
+    setStackedYAxis((prev) => prev.filter((field) => numericColumns.includes(field)))
+  }, [numericColumns])
+
+  const toggleSeriesFromColumn = (column) => {
+    if (!numericColumns.includes(column)) return
+    setStackedYAxis((prev) =>
+      prev.includes(column) ? prev.filter((v) => v !== column) : [...prev, column],
+    )
+  }
+
+  const chartData = useMemo(() => {
+    return {
+      labels: matchedRows.map((row) => rowTimestamp(row) || ''),
+      datasets: stackedYAxis.map((field, datasetIndex) => {
+        const color = CHART_COLORS[datasetIndex % CHART_COLORS.length]
+        return {
+          label: field,
+          data: matchedRows.map((row) => {
+            const n = toFiniteNumber(row[field])
+            return n == null ? null : n
+          }),
+          borderColor: color,
+          backgroundColor: color,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.25,
+          spanGaps: true,
+        }
+      }),
+    }
+  }, [matchedRows, stackedYAxis])
+  const chartOptions = useMemo(
+    () => ({
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: {
+            color: '#cfd7e6',
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: {
+            color: '#aeb7c4',
+            maxRotation: 55,
+            minRotation: 30,
+            autoSkip: true,
+            maxTicksLimit: 12,
+          },
+          grid: {
+            color: 'rgba(255,255,255,0.08)',
+          },
+        },
+        y: {
+          ticks: {
+            color: '#aeb7c4',
+          },
+          grid: {
+            color: 'rgba(255,255,255,0.08)',
+          },
+        },
+      },
+    }),
+    [],
+  )
 
   const parsedQuery = useMemo(() => {
     try {
@@ -308,18 +410,28 @@ const DataManagement = () => {
                 />
               </CCol>
               <CCol xs={12}>
-                <CFormLabel htmlFor="dm-query-json">
-                  Query JSON (existing events query language)
-                </CFormLabel>
-                <CFormTextarea
-                  id="dm-query-json"
-                  rows={14}
-                  value={queryText}
-                  onChange={(e) => setQueryText(e.target.value)}
-                  spellCheck={false}
-                  style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                <CFormSwitch
+                  id="dm-show-advanced"
+                  label="Advanced Query"
+                  checked={showAdvancedQuery}
+                  onChange={(e) => setShowAdvancedQuery(e.target.checked)}
                 />
               </CCol>
+              {showAdvancedQuery && (
+                <CCol xs={12}>
+                  <CFormLabel htmlFor="dm-query-json">
+                    Query JSON (existing events query language)
+                  </CFormLabel>
+                  <CFormTextarea
+                    id="dm-query-json"
+                    rows={14}
+                    value={queryText}
+                    onChange={(e) => setQueryText(e.target.value)}
+                    spellCheck={false}
+                    style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                  />
+                </CCol>
+              )}
               <CCol xs={12} className="d-flex gap-2 flex-wrap">
                 <CButton color="primary" onClick={runQuery} disabled={loading}>
                   {loading ? (
@@ -382,6 +494,51 @@ const DataManagement = () => {
                 {new Date(lastMeta.rangeEnd).toLocaleString()}
               </div>
             )}
+            <CCard className="mb-3">
+              <CCardHeader className="d-flex align-items-center justify-content-between">
+                <span>Query Trend Chart</span>
+                <div className="d-flex gap-2">
+                  <CBadge color="dark">Stacked Series: {stackedYAxis.length}</CBadge>
+                  <CButton
+                    color="secondary"
+                    variant="outline"
+                    size="sm"
+                    disabled={!stackedYAxis.length}
+                    onClick={() => setStackedYAxis([])}
+                  >
+                    Clear Selection
+                  </CButton>
+                </div>
+              </CCardHeader>
+              <CCardBody>
+                {!numericColumns.length ? (
+                  <div className="text-body-secondary">
+                    No numeric columns found for charting in this result set.
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-body-secondary mb-3" style={{ fontSize: '0.9rem' }}>
+                      Click a numeric column header in the table below to add/remove it from the
+                      chart.
+                    </div>
+                    <div className="d-flex flex-wrap gap-2 mb-3">
+                      {stackedYAxis.map((field) => (
+                        <CBadge color="info" key={field}>
+                          {field}
+                        </CBadge>
+                      ))}
+                    </div>
+                    {!stackedYAxis.length ? (
+                      <div className="text-body-secondary">Select a y-axis column to plot.</div>
+                    ) : (
+                      <div style={{ height: 300 }}>
+                        <CChartLine data={chartData} options={chartOptions} />
+                      </div>
+                    )}
+                  </>
+                )}
+              </CCardBody>
+            </CCard>
             {!matchedRows.length ? (
               <div className="text-body-secondary">
                 {timestamps.length
@@ -392,13 +549,47 @@ const DataManagement = () => {
               </div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
-                <CTable hover small responsive align="middle">
+                <CTable hover small align="middle" style={{ minWidth: 1400 }}>
                   <CTableHead>
                     <CTableRow>
-                      <CTableHeaderCell scope="col">Actions</CTableHeaderCell>
-                      {previewColumns.map((col) => (
-                        <CTableHeaderCell scope="col" key={col}>
+                      <CTableHeaderCell
+                        scope="col"
+                        style={{
+                          position: 'sticky',
+                          left: 0,
+                          zIndex: 4,
+                          minWidth: ACTIONS_COL_WIDTH,
+                          width: ACTIONS_COL_WIDTH,
+                          background: 'var(--cui-body-bg)',
+                        }}
+                      >
+                        Actions
+                      </CTableHeaderCell>
+                      {tableColumns.map((col) => (
+                        <CTableHeaderCell
+                          scope="col"
+                          key={col}
+                          onClick={() => toggleSeriesFromColumn(col)}
+                          style={{
+                            position: col === 'plctime' ? 'sticky' : 'static',
+                            left: col === 'plctime' ? ACTIONS_COL_WIDTH : undefined,
+                            zIndex: col === 'plctime' ? 4 : 1,
+                            minWidth: col === 'plctime' ? PLCTIME_COL_WIDTH : 150,
+                            width: col === 'plctime' ? PLCTIME_COL_WIDTH : undefined,
+                            background: 'var(--cui-body-bg)',
+                            cursor: numericColumns.includes(col) ? 'pointer' : 'default',
+                            color: stackedYAxis.includes(col) ? '#58a6ff' : undefined,
+                          }}
+                          title={
+                            numericColumns.includes(col)
+                              ? stackedYAxis.includes(col)
+                                ? 'Click to remove series from chart'
+                                : 'Click to add series to chart'
+                              : undefined
+                          }
+                        >
                           {col}
+                          {stackedYAxis.includes(col) ? ' *' : ''}
                         </CTableHeaderCell>
                       ))}
                     </CTableRow>
@@ -408,13 +599,29 @@ const DataManagement = () => {
                       const ts = rowTimestamp(row)
                       return (
                         <CTableRow key={`${ts || 'row'}-${idx}`}>
-                          <CTableDataCell style={{ whiteSpace: 'nowrap' }}>
+                          <CTableDataCell
+                            style={{
+                              whiteSpace: 'nowrap',
+                              position: 'sticky',
+                              left: 0,
+                              zIndex: 3,
+                              minWidth: ACTIONS_COL_WIDTH,
+                              width: ACTIONS_COL_WIDTH,
+                              background: 'var(--cui-body-bg)',
+                            }}
+                          >
                             <a href={dashboardJumpHref(siteKey, ts)}>Open in Dashboard</a>
                           </CTableDataCell>
-                          {previewColumns.map((col) => (
+                          {tableColumns.map((col) => (
                             <CTableDataCell
                               key={col}
                               style={{
+                                position: col === 'plctime' ? 'sticky' : 'static',
+                                left: col === 'plctime' ? ACTIONS_COL_WIDTH : undefined,
+                                zIndex: col === 'plctime' ? 3 : 1,
+                                minWidth: col === 'plctime' ? PLCTIME_COL_WIDTH : 150,
+                                width: col === 'plctime' ? PLCTIME_COL_WIDTH : undefined,
+                                background: 'var(--cui-body-bg)',
                                 maxWidth: 220,
                                 whiteSpace: 'nowrap',
                                 textOverflow: 'ellipsis',

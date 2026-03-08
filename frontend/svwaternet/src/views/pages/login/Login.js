@@ -52,7 +52,12 @@ const Login = ({ authConfig, authError, onLoginSuccess }) => {
   useEffect(() => {
     let active = true
     const googleClientId = authConfig?.googleClientId
-    if (!authConfig?.enabled || !googleClientId || !authConfig?.sessionJwt || !googleBtnRef.current) {
+    if (
+      !authConfig?.enabled ||
+      !googleClientId ||
+      !authConfig?.sessionJwt ||
+      !googleBtnRef.current
+    ) {
       return undefined
     }
 
@@ -103,8 +108,11 @@ const Login = ({ authConfig, authError, onLoginSuccess }) => {
       : ''
 
   const showGoogle = authConfig?.enabled && authConfig?.googleClientId && authConfig?.sessionJwt
+  const authExplicitlyDisabled = authConfig?.enabled === false
   const normalizeAccessError = (value) => {
-    const msg = String(value || '').trim().toLowerCase()
+    const msg = String(value || '')
+      .trim()
+      .toLowerCase()
     if (!msg) return value
     if (msg.includes('forbidden') || msg.includes('unauthorized') || msg.includes('403')) {
       return 'Unauthorized, please reach out to the UCLA WaTeR group for access.'
@@ -124,10 +132,14 @@ const Login = ({ authConfig, authError, onLoginSuccess }) => {
                 <CCardBody>
                   <h1>Login</h1>
                   <p className="text-body-secondary">Sign in with your Google account</p>
-                  {normalizedAuthError ? <CAlert color="danger">{normalizedAuthError}</CAlert> : null}
+                  {normalizedAuthError ? (
+                    <CAlert color="danger">{normalizedAuthError}</CAlert>
+                  ) : null}
                   {configError ? <CAlert color="warning">{configError}</CAlert> : null}
-                  {normalizedLocalError ? <CAlert color="danger">{normalizedLocalError}</CAlert> : null}
-                  {!authConfig?.enabled ? (
+                  {normalizedLocalError ? (
+                    <CAlert color="danger">{normalizedLocalError}</CAlert>
+                  ) : null}
+                  {authExplicitlyDisabled ? (
                     <CAlert color="info">Authentication is disabled on this backend.</CAlert>
                   ) : null}
                   {showGoogle ? (
