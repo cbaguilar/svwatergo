@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +37,11 @@ const (
 	staleDataThreshold      = 30 * time.Minute
 	staleDataCheckInterval  = 5 * time.Minute
 	staleDataRepeatInterval = 1 * time.Hour
+	plcAlarmCheckInterval   = 1 * time.Minute
+	plcAlarmRepeatInterval  = 1 * time.Hour
 )
+
+var runtimePLCAlarmStateStore *plcAlarmStateStore
 
 func New(cfg *Config) *Server {
 	return &Server{
@@ -101,9 +106,14 @@ func (s *Server) Start() error {
 	} else {
 		mailSender = sender
 	}
+	runtimePLCAlarmStateStore = newPLCAlarmStateStore(dbClient)
+	if err := runtimePLCAlarmStateStore.EnsureSchema(context.Background()); err != nil {
+		log.Fatalf("Failed to ensure plc alarm state schema: %v", err)
+	}
 
 	checkStartupStaleData(ing.Reg, mailSender, adminEmails, staleDataThreshold)
 	startStaleDataMonitor(ing.Reg, mailSender, adminEmails, staleDataThreshold, staleDataCheckInterval, staleDataRepeatInterval)
+	startPLCAlarmMonitor(ing.Reg, mailSender, adminEmails, plcAlarmCheckInterval, plcAlarmRepeatInterval)
 
 	ingestDisabled := envEnabled("INGEST_DISABLED")
 	readOnly := envEnabled("READ_ONLY_MODE")
@@ -114,7 +124,7 @@ func (s *Server) Start() error {
 		log.Printf("INGEST_DISABLED enabled: upload ingestion endpoints are disabled")
 	}
 
-	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, audioStore, usersStore, mailSender, adminEmails, ingestDisabled, readOnly)
+	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, audioStore, usersStore, mailSender, adminEmails, ingestDisabled, readOnly, dbClient)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }
@@ -138,6 +148,16 @@ func bootstrapUsers(ctx context.Context, usersStore *users.Store, admins []strin
 type staleMonitorState struct {
 	lastAlertAt time.Time
 	lastSeenTS  time.Time
+}
+
+type plcAlarmMonitorState struct {
+	lastAlertAt        time.Time
+	lastSeenTS         time.Time
+	lastAlarmOn        bool
+	lastAlarmKey       string
+	messageCount       int64
+	incidentReportedAt time.Time
+	incidentResolvedAt time.Time
 }
 
 func checkStartupStaleData(reg systemservice.Registry, mailSender mail.Sender, recipients []string, maxAge time.Duration) {
@@ -336,6 +356,182 @@ func sendStaleSiteAlert(mailSender mail.Sender, recipients []string, site string
 	}
 }
 
+func startPLCAlarmMonitor(reg systemservice.Registry, mailSender mail.Sender, recipients []string, checkEvery, repeatEvery time.Duration) {
+	if reg == nil || checkEvery <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(checkEvery)
+		defer ticker.Stop()
+
+		stateBySite := map[string]plcAlarmMonitorState{}
+		checkPeriodicPLCAlarms(reg, mailSender, recipients, repeatEvery, stateBySite)
+		for range ticker.C {
+			checkPeriodicPLCAlarms(reg, mailSender, recipients, repeatEvery, stateBySite)
+		}
+	}()
+}
+
+func checkPeriodicPLCAlarms(reg systemservice.Registry, mailSender mail.Sender, recipients []string, repeatEvery time.Duration, stateBySite map[string]plcAlarmMonitorState) {
+	now := time.Now().UTC()
+	sites := reg.Sites()
+	sort.Strings(sites)
+	activeSites := make(map[string]struct{}, len(sites))
+
+	for _, site := range sites {
+		activeSites[site] = struct{}{}
+		mgr, ok := reg.Get(site)
+		if !ok || mgr == nil {
+			continue
+		}
+		data, err := mgr.GetLatest()
+		if err != nil {
+			log.Printf("periodic plc-alarm check skipped for %s: GetLatest failed: %v", site, err)
+			continue
+		}
+		ts, ok := latestTimestamp(data)
+		if !ok {
+			ts = now
+		}
+		ts = ts.UTC()
+
+		alarmOn, alarmKey := evaluatePLCAlarmState(data)
+		prev, hasPrev := stateBySite[site]
+		if !hasPrev && runtimePLCAlarmStateStore != nil {
+			stored, ok, err := runtimePLCAlarmStateStore.Get(context.Background(), site)
+			if err != nil {
+				log.Printf("periodic plc-alarm state load failed for %s: %v", site, err)
+			} else if ok {
+				prev = stored
+				hasPrev = true
+				stateBySite[site] = prev
+			}
+		}
+		if !alarmOn {
+			if prev.lastAlarmOn {
+				log.Printf("plc alarm cleared for %s: last=%s", site, ts.Format(time.RFC3339))
+			}
+			prev.lastAlarmOn = false
+			prev.lastAlarmKey = ""
+			prev.lastSeenTS = ts
+			prev.incidentResolvedAt = ts
+			stateBySite[site] = prev
+			if runtimePLCAlarmStateStore != nil && (hasPrev || prev.messageCount > 0) {
+				if err := runtimePLCAlarmStateStore.Upsert(context.Background(), site, prev); err != nil {
+					log.Printf("periodic plc-alarm state upsert failed for %s: %v", site, err)
+				}
+			}
+			continue
+		}
+
+		shouldAlert := !prev.lastAlarmOn
+		if !shouldAlert && prev.lastAlarmKey != alarmKey {
+			shouldAlert = true
+		}
+		if !shouldAlert && repeatEvery > 0 && !prev.lastAlertAt.IsZero() && now.Sub(prev.lastAlertAt) >= repeatEvery {
+			shouldAlert = true
+		}
+		if !shouldAlert && prev.lastSeenTS.Before(ts) {
+			// Data advanced while still in alarm; update state but avoid extra alerts.
+			prev.lastSeenTS = ts
+			stateBySite[site] = prev
+			if runtimePLCAlarmStateStore != nil {
+				if err := runtimePLCAlarmStateStore.Upsert(context.Background(), site, prev); err != nil {
+					log.Printf("periodic plc-alarm state upsert failed for %s: %v", site, err)
+				}
+			}
+			continue
+		}
+		if !shouldAlert {
+			prev.lastSeenTS = ts
+			stateBySite[site] = prev
+			if runtimePLCAlarmStateStore != nil {
+				if err := runtimePLCAlarmStateStore.Upsert(context.Background(), site, prev); err != nil {
+					log.Printf("periodic plc-alarm state upsert failed for %s: %v", site, err)
+				}
+			}
+			continue
+		}
+
+		isRepeat := prev.lastAlarmOn && !prev.lastAlertAt.IsZero()
+		sendPLCAlarmEmail(mailSender, recipients, site, ts, alarmKey, data, now, isRepeat, repeatEvery)
+		next := prev
+		if !prev.lastAlarmOn {
+			next.incidentReportedAt = ts
+			next.messageCount = 0
+		}
+		next.lastAlertAt = now
+		next.lastSeenTS = ts
+		next.lastAlarmOn = true
+		next.lastAlarmKey = alarmKey
+		next.messageCount++
+		next.incidentResolvedAt = time.Time{}
+		stateBySite[site] = next
+		if runtimePLCAlarmStateStore != nil {
+			if err := runtimePLCAlarmStateStore.Upsert(context.Background(), site, next); err != nil {
+				log.Printf("periodic plc-alarm state upsert failed for %s: %v", site, err)
+			}
+		}
+	}
+
+	for site := range stateBySite {
+		if _, ok := activeSites[site]; !ok {
+			delete(stateBySite, site)
+		}
+	}
+}
+
+func evaluatePLCAlarmState(data map[string]interface{}) (bool, string) {
+	if data == nil {
+		return false, ""
+	}
+	if b, ok := toBoolAny(data["alarm"]); ok && b {
+		return true, "alarm=1"
+	}
+	if w, ok := toIntAny(data["alarmword"]); ok && w != 0 {
+		return true, fmt.Sprintf("alarmword=%d", w)
+	}
+	return false, ""
+}
+
+func sendPLCAlarmEmail(mailSender mail.Sender, recipients []string, site string, ts time.Time, alarmKey string, data map[string]interface{}, checkedAt time.Time, isRepeat bool, repeatEvery time.Duration) {
+	subjectPrefix := "SVWaterGo PLC alarm alert"
+	if isRepeat {
+		subjectPrefix = "SVWaterGo PLC alarm reminder"
+	}
+
+	warn0, _ := toIntAny(data["warnword0"])
+	warn1, _ := toIntAny(data["warnword1"])
+	alarmWord, _ := toIntAny(data["alarmword"])
+	body := strings.Builder{}
+	body.WriteString("Admin!\n\n")
+	body.WriteString(fmt.Sprintf("PLC alarm condition is active for %s.\n\n", formatSiteAlertName(site)))
+	body.WriteString(fmt.Sprintf("Site key: %s\n", site))
+	body.WriteString(fmt.Sprintf("Alarm condition: %s\n", alarmKey))
+	body.WriteString(fmt.Sprintf("PLC Time (UTC): %s\n", ts.Format(time.RFC3339)))
+	body.WriteString(fmt.Sprintf("Checked At (UTC): %s\n", checkedAt.Format(time.RFC3339)))
+	body.WriteString(fmt.Sprintf("alarm=%v\n", data["alarm"]))
+	body.WriteString(fmt.Sprintf("alarmword=%d\n", alarmWord))
+	body.WriteString(fmt.Sprintf("warnword0=%d\n", warn0))
+	body.WriteString(fmt.Sprintf("warnword1=%d\n", warn1))
+	if repeatEvery > 0 {
+		body.WriteString(fmt.Sprintf("\nAn automated reminder will be sent every %s while alarm remains active.\n", repeatEvery))
+	}
+
+	log.Printf("plc alarm alert for %s: %s ts=%s", site, alarmKey, ts.Format(time.RFC3339))
+	if mailSender == nil || len(recipients) == 0 {
+		return
+	}
+	if err := mailSender.Send(mail.Message{
+		To:       recipients,
+		Subject:  fmt.Sprintf("%s: %s", subjectPrefix, site),
+		TextBody: body.String(),
+		ReplyTo:  strings.Join(recipients, ", "),
+	}); err != nil {
+		log.Printf("plc alarm email failed for %s: %v", site, err)
+	}
+}
+
 func formatSiteAlertName(site string) string {
 	switch strings.ToLower(strings.TrimSpace(site)) {
 	case "bluerock":
@@ -375,6 +571,74 @@ func latestTimestamp(data map[string]interface{}) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+func toBoolAny(v interface{}) (bool, bool) {
+	switch t := v.(type) {
+	case bool:
+		return t, true
+	case int:
+		return t != 0, true
+	case int64:
+		return t != 0, true
+	case int32:
+		return t != 0, true
+	case uint:
+		return t != 0, true
+	case uint64:
+		return t != 0, true
+	case uint32:
+		return t != 0, true
+	case float64:
+		return t != 0, true
+	case float32:
+		return t != 0, true
+	case string:
+		s := strings.ToLower(strings.TrimSpace(t))
+		switch s {
+		case "1", "true", "yes", "on":
+			return true, true
+		case "0", "false", "no", "off", "":
+			return false, true
+		default:
+			return false, false
+		}
+	default:
+		return false, false
+	}
+}
+
+func toIntAny(v interface{}) (int64, bool) {
+	switch t := v.(type) {
+	case int:
+		return int64(t), true
+	case int64:
+		return t, true
+	case int32:
+		return int64(t), true
+	case uint:
+		return int64(t), true
+	case uint64:
+		return int64(t), true
+	case uint32:
+		return int64(t), true
+	case float64:
+		return int64(t), true
+	case float32:
+		return int64(t), true
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return 0, false
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 func envEnabled(name string) bool {
