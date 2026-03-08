@@ -991,100 +991,46 @@ def fit_audio_pretrained_embedding_multitask(
                 if state_col is not None:
                     color_specs.append((f"state__mode ({state_col})", str(state_col), "categorical"))
 
-                flow_col = next(
-                    (
-                        c
-                        for c in (
-                            "feedflow__mean_tw",
-                            "deliveryflow__mean_tw",
-                            "permeateflow__mean_tw",
-                            "concentrateflow__mean_tw",
-                            "sup_feedflow_mean_tw",
-                            "sup_deliveryflow_mean_tw",
-                            "sup_permeateflow_mean_tw",
-                            "sup_concentrateflow_mean_tw",
-                        )
-                        if c in plc_proj_df.columns
-                    ),
-                    None,
-                )
-                if flow_col is not None:
-                    color_specs.append((f"flow ({flow_col})", str(flow_col), "numeric"))
-
-                pressure_col = next(
-                    (
-                        c
-                        for c in (
-                            "feedpressure__mean_tw",
-                            "ropressure__mean_tw",
-                            "deliverypressure__mean_tw",
-                            "inletpressure__mean_tw",
-                            "permeatepressure__mean_tw",
-                            "concentratepressure__mean_tw",
-                            "sup_feedpressure_mean_tw",
-                            "sup_ropressure_mean_tw",
-                            "sup_deliverypressure_mean_tw",
-                            "sup_inletpressure_mean_tw",
-                            "sup_permeatepressure_mean_tw",
-                            "sup_concentratepressure_mean_tw",
-                        )
-                        if c in plc_proj_df.columns
-                    ),
-                    None,
-                )
-                if pressure_col is not None:
-                    color_specs.append((f"pressure ({pressure_col})", str(pressure_col), "numeric"))
-
-                flow_dt_col = next(
-                    (
-                        c
-                        for c in (
-                            "feedflow__d1",
-                            "deliveryflow__d1",
-                            "permeateflow__d1",
-                            "concentrateflow__d1",
-                            "sup_feedflow_d1",
-                            "sup_deliveryflow_d1",
-                            "sup_permeateflow_d1",
-                            "sup_concentrateflow_d1",
-                        )
-                        if c in plc_proj_df.columns
-                    ),
-                    None,
-                )
-                if flow_dt_col is not None:
-                    color_specs.append((f"flow_dt ({flow_dt_col})", str(flow_dt_col), "numeric"))
-
-                pressure_dt_col = next(
-                    (
-                        c
-                        for c in (
-                            "feedpressure__d1",
-                            "ropressure__d1",
-                            "deliverypressure__d1",
-                            "inletpressure__d1",
-                            "permeatepressure__d1",
-                            "concentratepressure__d1",
-                            "sup_feedpressure_d1",
-                            "sup_ropressure_d1",
-                            "sup_deliverypressure_d1",
-                            "sup_inletpressure_d1",
-                            "sup_permeatepressure_d1",
-                            "sup_concentratepressure_d1",
-                        )
-                        if c in plc_proj_df.columns
-                    ),
-                    None,
-                )
-                if pressure_dt_col is not None:
-                    color_specs.append((f"pressure_dt ({pressure_dt_col})", str(pressure_dt_col), "numeric"))
-
-                power_dt_col = next(
-                    (c for c in ("powermeter__d1", "sup_powermeter_d1") if c in plc_proj_df.columns),
-                    None,
-                )
-                if power_dt_col is not None:
-                    color_specs.append((f"powermeter_dt ({power_dt_col})", str(power_dt_col), "numeric"))
+                requested_numeric_cols = [
+                    "deliveryflow__mean_tw",
+                    "deliverypressure__mean_tw",
+                    "deliveryflow__d1",
+                    "deliverypressure__d1",
+                    "inletpressure__mean_tw",
+                    "inletpressure__d1",
+                    "concentrateflow__mean_tw",
+                    "concentratepressure__mean_tw",
+                    "concentrateflow__d1",
+                    "concentratepressure__d1",
+                    "ropressure__mean_tw",
+                    "ropressure__d1",
+                    "ropumprun_duty",
+                    "deliveryrun_duty",
+                    "inletrun__duty",
+                    "powermeter__d1",
+                    # Fallback aliases
+                    "sup_deliveryflow_mean_tw",
+                    "sup_deliverypressure_mean_tw",
+                    "sup_deliveryflow_d1",
+                    "sup_deliverypressure_d1",
+                    "sup_inletpressure_mean_tw",
+                    "sup_inletpressure_d1",
+                    "sup_concentrateflow_mean_tw",
+                    "sup_concentratepressure_mean_tw",
+                    "sup_concentrateflow_d1",
+                    "sup_concentratepressure_d1",
+                    "sup_ropressure_mean_tw",
+                    "sup_ropressure_d1",
+                    "sup_deliveryrun_duty",
+                    "sup_inletrun_duty",
+                    "sup_ropumprun_duty",
+                    "sup_powermeter_d1",
+                ]
+                seen_numeric_cols: set[str] = set()
+                for c in requested_numeric_cols:
+                    if (c in plc_proj_df.columns) and (c not in seen_numeric_cols):
+                        color_specs.append((f"{c}", str(c), "numeric"))
+                        seen_numeric_cols.add(c)
 
                 ncols = max(1, int(len(color_specs)))
                 figm = plt.figure(figsize=(5.0 * ncols, 9.2), constrained_layout=True)
@@ -1234,6 +1180,10 @@ def fit_audio_pretrained_embedding_multitask(
                     axes13[0, j].set_ylabel("true_pc3")
                     axes13[1, j].set_xlabel("pred_pc1")
                     axes13[1, j].set_ylabel("pred_pc3")
+                    axes13[0, j].set_xlim(-10.0, 10.0)
+                    axes13[0, j].set_ylim(-6.0, 6.0)
+                    axes13[1, j].set_xlim(-10.0, 10.0)
+                    axes13[1, j].set_ylim(-6.0, 6.0)
 
                 plc_plot_multicolor_pc13_path = out_dir / "plc_pca_true_vs_pred_pc13_multicolor.png"
                 fig13.savefig(plc_plot_multicolor_pc13_path, dpi=170)
@@ -1305,100 +1255,46 @@ def fit_audio_pretrained_embedding_multitask(
             if state_col is not None:
                 color_specs.append((f"state__mode ({state_col})", str(state_col), "categorical"))
 
-            flow_col = next(
-                (
-                    c
-                    for c in (
-                        "feedflow__mean_tw",
-                        "deliveryflow__mean_tw",
-                        "permeateflow__mean_tw",
-                        "concentrateflow__mean_tw",
-                        "sup_feedflow_mean_tw",
-                        "sup_deliveryflow_mean_tw",
-                        "sup_permeateflow_mean_tw",
-                        "sup_concentrateflow_mean_tw",
-                    )
-                    if c in pann_proj_df.columns
-                ),
-                None,
-            )
-            if flow_col is not None:
-                color_specs.append((f"flow ({flow_col})", str(flow_col), "numeric"))
-
-            pressure_col = next(
-                (
-                    c
-                    for c in (
-                        "feedpressure__mean_tw",
-                        "ropressure__mean_tw",
-                        "deliverypressure__mean_tw",
-                        "inletpressure__mean_tw",
-                        "permeatepressure__mean_tw",
-                        "concentratepressure__mean_tw",
-                        "sup_feedpressure_mean_tw",
-                        "sup_ropressure_mean_tw",
-                        "sup_deliverypressure_mean_tw",
-                        "sup_inletpressure_mean_tw",
-                        "sup_permeatepressure_mean_tw",
-                        "sup_concentratepressure_mean_tw",
-                    )
-                    if c in pann_proj_df.columns
-                ),
-                None,
-            )
-            if pressure_col is not None:
-                color_specs.append((f"pressure ({pressure_col})", str(pressure_col), "numeric"))
-
-            flow_dt_col = next(
-                (
-                    c
-                    for c in (
-                        "feedflow__d1",
-                        "deliveryflow__d1",
-                        "permeateflow__d1",
-                        "concentrateflow__d1",
-                        "sup_feedflow_d1",
-                        "sup_deliveryflow_d1",
-                        "sup_permeateflow_d1",
-                        "sup_concentrateflow_d1",
-                    )
-                    if c in pann_proj_df.columns
-                ),
-                None,
-            )
-            if flow_dt_col is not None:
-                color_specs.append((f"flow_dt ({flow_dt_col})", str(flow_dt_col), "numeric"))
-
-            pressure_dt_col = next(
-                (
-                    c
-                    for c in (
-                        "feedpressure__d1",
-                        "ropressure__d1",
-                        "deliverypressure__d1",
-                        "inletpressure__d1",
-                        "permeatepressure__d1",
-                        "concentratepressure__d1",
-                        "sup_feedpressure_d1",
-                        "sup_ropressure_d1",
-                        "sup_deliverypressure_d1",
-                        "sup_inletpressure_d1",
-                        "sup_permeatepressure_d1",
-                        "sup_concentratepressure_d1",
-                    )
-                    if c in pann_proj_df.columns
-                ),
-                None,
-            )
-            if pressure_dt_col is not None:
-                color_specs.append((f"pressure_dt ({pressure_dt_col})", str(pressure_dt_col), "numeric"))
-
-            power_dt_col = next(
-                (c for c in ("powermeter__d1", "sup_powermeter_d1") if c in pann_proj_df.columns),
-                None,
-            )
-            if power_dt_col is not None:
-                color_specs.append((f"powermeter_dt ({power_dt_col})", str(power_dt_col), "numeric"))
+            requested_numeric_cols = [
+                "deliveryflow__mean_tw",
+                "deliverypressure__mean_tw",
+                "deliveryflow__d1",
+                "deliverypressure__d1",
+                "inletpressure__mean_tw",
+                "inletpressure__d1",
+                "concentrateflow__mean_tw",
+                "concentratepressure__mean_tw",
+                "concentrateflow__d1",
+                "concentratepressure__d1",
+                "ropressure__mean_tw",
+                "ropressure__d1",
+                "ropumprun_duty",
+                "deliveryrun_duty",
+                "inletrun__duty",
+                "powermeter__d1",
+                # Fallback aliases
+                "sup_deliveryflow_mean_tw",
+                "sup_deliverypressure_mean_tw",
+                "sup_deliveryflow_d1",
+                "sup_deliverypressure_d1",
+                "sup_inletpressure_mean_tw",
+                "sup_inletpressure_d1",
+                "sup_concentrateflow_mean_tw",
+                "sup_concentratepressure_mean_tw",
+                "sup_concentrateflow_d1",
+                "sup_concentratepressure_d1",
+                "sup_ropressure_mean_tw",
+                "sup_ropressure_d1",
+                "sup_deliveryrun_duty",
+                "sup_inletrun_duty",
+                "sup_ropumprun_duty",
+                "sup_powermeter_d1",
+            ]
+            seen_numeric_cols: set[str] = set()
+            for c in requested_numeric_cols:
+                if (c in pann_proj_df.columns) and (c not in seen_numeric_cols):
+                    color_specs.append((f"{c}", str(c), "numeric"))
+                    seen_numeric_cols.add(c)
 
             if int(Z_pann.shape[1]) >= 3:
                 ncols = max(1, int(len(color_specs)))
@@ -1549,6 +1445,10 @@ def fit_audio_pretrained_embedding_multitask(
                     axes13[0, j].set_ylabel("true_pc3")
                     axes13[1, j].set_xlabel("pred_pc1")
                     axes13[1, j].set_ylabel("pred_pc3")
+                    axes13[0, j].set_xlim(-10.0, 10.0)
+                    axes13[0, j].set_ylim(-6.0, 6.0)
+                    axes13[1, j].set_xlim(-10.0, 10.0)
+                    axes13[1, j].set_ylim(-6.0, 6.0)
 
                 pann_plot_multicolor_pc13_path = out_dir / "pann_pca_true_vs_pred_pc13_multicolor.png"
                 fig13.savefig(pann_plot_multicolor_pc13_path, dpi=170)
