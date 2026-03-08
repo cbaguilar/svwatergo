@@ -300,6 +300,17 @@ def _r2_payload(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, Any]:
     }
 
 
+def _named_values(values: Sequence[Any], names: Sequence[str], *, default_prefix: str = "target") -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for i, v in enumerate(values):
+        if i < len(names) and str(names[i]).strip():
+            k = str(names[i]).strip()
+        else:
+            k = f"{default_prefix}_{i + 1}"
+        out[k] = v
+    return out
+
+
 def _paired_contrastive_loss(
     audio_plc: "torch.Tensor",
     target_plc: "torch.Tensor",
@@ -586,6 +597,7 @@ def fit_audio_pretrained_embedding_multitask(
     )
 
     Z_plc = None
+    plc_target_mode = "pca"
     plc_meta: Dict[str, Any] = {"enabled": False}
     if bool(aux_plc_pca):
         plc_target_mode = str(aux_plc_target_mode).strip().lower()
@@ -789,6 +801,7 @@ def fit_audio_pretrained_embedding_multitask(
         return yt, yp, zt, zp
 
     history: List[Dict[str, Any]] = []
+    plc_target_names: List[str] = list(plc_meta.get("feature_cols") or [])
     n_epochs = int(epochs)
     eval_every = max(1, int(eval_every))
     metric_mode = str(best_model_metric).strip().lower()
@@ -925,17 +938,21 @@ def fit_audio_pretrained_embedding_multitask(
                             },
                             str(best_plc_ckpt_path),
                         )
-        history.append(
-            {
-                "epoch": int(ep),
-                "loss": avg_loss,
-                "test_metric": test_metric,
-                "val_metric": val_metric,
-                "test_plc_pca_r2": test_plc_r2,
-                "val_plc_pca_r2": val_plc_r2,
-                "lr": float(optim.param_groups[0]["lr"]),
-            }
-        )
+        hrow = {
+            "epoch": int(ep),
+            "loss": avg_loss,
+            "test_metric": test_metric,
+            "val_metric": val_metric,
+            "test_plc_r2": test_plc_r2,
+            "val_plc_r2": val_plc_r2,
+            "test_plc_pca_r2": test_plc_r2,
+            "val_plc_pca_r2": val_plc_r2,
+            "lr": float(optim.param_groups[0]["lr"]),
+        }
+        if plc_target_mode == "raw":
+            hrow["test_plc_target_r2"] = test_plc_r2
+            hrow["val_plc_target_r2"] = val_plc_r2
+        history.append(hrow)
         if is_plc_encoder:
             rtxt = "NA" if test_plc_r2 is None else f"{float(test_plc_r2):.4f}"
             print(
@@ -1640,11 +1657,23 @@ def fit_audio_pretrained_embedding_multitask(
             if is_plc_encoder:
                 if Z_plc is not None and Z_plc_pred is not None:
                     zr = _r2_payload(Z_plc[idx_test][m], Z_plc_pred[idx_test][m])
-                    by_source_test[str(s)] = {
-                        "plc_pca_r2_mean": zr.get("r2_mean"),
-                        "plc_pca_r2_per_component": zr.get("r2_per_component"),
+                    node: Dict[str, Any] = {
+                        "plc_r2_mean": zr.get("r2_mean"),
+                        "plc_r2_per_target": zr.get("r2_per_component"),
                         "n_rows": int(np.sum(m)),
                     }
+                    if plc_target_mode == "raw":
+                        node["plc_target_r2_mean"] = zr.get("r2_mean")
+                        node["plc_target_r2_per_feature"] = zr.get("r2_per_component")
+                        node["plc_target_r2_by_feature"] = _named_values(
+                            zr.get("r2_per_component") or [],
+                            plc_target_names,
+                            default_prefix="feature",
+                        )
+                    else:
+                        node["plc_pca_r2_mean"] = zr.get("r2_mean")
+                        node["plc_pca_r2_per_component"] = zr.get("r2_per_component")
+                    by_source_test[str(s)] = node
             else:
                 by_source_test[str(s)] = _split_metrics(yte_t[m], yte_p[m])
 
@@ -1761,6 +1790,7 @@ def fit_audio_pretrained_embedding_multitask(
             str(plc_encoder_path),
         )
 
+    plc_alignment = (_r2_payload(Z_plc, Z_plc_pred) if (Z_plc is not None and Z_plc_pred is not None) else None)
     metrics = {
         "task": ("multitask_multiclass" if mode == "multiclass" else ("multitask_2hot" if mode == "multilabel" else "plc_pca_encoder")),
         "target_meta": y_meta,
@@ -1778,7 +1808,21 @@ def fit_audio_pretrained_embedding_multitask(
         "aux_plc_pca": plc_meta,
         "pca_alignment_metrics": {
             "pann_pca": _r2_payload(Z_pann, Z_pann_pred),
-            "plc_pca": (_r2_payload(Z_plc, Z_plc_pred) if (Z_plc is not None and Z_plc_pred is not None) else None),
+            "plc_pca": plc_alignment,
+        },
+        "plc_alignment_metrics": {
+            "target_mode": str(plc_target_mode),
+            "plc_r2_mean": (plc_alignment.get("r2_mean") if isinstance(plc_alignment, dict) else None),
+            "plc_r2_per_target": (plc_alignment.get("r2_per_component") if isinstance(plc_alignment, dict) else []),
+            "plc_r2_by_target": (
+                _named_values(
+                    plc_alignment.get("r2_per_component") or [],
+                    plc_target_names,
+                    default_prefix=("feature" if plc_target_mode == "raw" else "component"),
+                )
+                if isinstance(plc_alignment, dict)
+                else {}
+            ),
         },
         "train_metrics": _split_metrics(ytr_t, ytr_p),
         "test_metrics": _split_metrics(yte_t, yte_p),
