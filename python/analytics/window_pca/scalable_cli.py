@@ -97,6 +97,18 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--color-exclude-regex", action="append", default=[])
     p.add_argument("--color-max-cols", type=int, default=18, help="Max color columns for grid rendering")
     p.add_argument("--color-grid-cols-per-page", type=int, default=9, help="Subplots per grid page")
+    p.add_argument(
+        "--color-grid-fit-quantile",
+        type=float,
+        default=0.0,
+        help="If in (0,1], keep central PCA core for color-grid panels (alarm panel still uses all points).",
+    )
+    p.add_argument(
+        "--color-grid-fit-method",
+        choices=["axis", "mahal"],
+        default="mahal",
+        help="Core fit method for color-grid quantile filtering.",
+    )
 
     p.add_argument("--out-dir", default="./pca_out")
     p.add_argument("--out-prefix", default="bluerock_alltime")
@@ -291,6 +303,7 @@ def _is_discrete_col(name: str, s: pd.Series) -> bool:
 
 def _render_color_grid_pages(
     df: pd.DataFrame,
+    df_core: pd.DataFrame,
     *,
     color_cols: List[str],
     cols_per_page: int,
@@ -320,7 +333,8 @@ def _render_color_grid_pages(
 
         for i, c in enumerate(sub, start=1):
             ax = fig.add_subplot(nrow, ncol, i, projection="3d")
-            d = df[["pca1", "pca2", "pca3", c]].copy()
+            use_df = df if str(c).lower().startswith("alarm__") else df_core
+            d = use_df[["pca1", "pca2", "pca3", c]].copy()
             for x in ("pca1", "pca2", "pca3"):
                 d[x] = pd.to_numeric(d[x], errors="coerce")
             good = np.isfinite(d["pca1"]) & np.isfinite(d["pca2"]) & np.isfinite(d["pca3"])
@@ -400,6 +414,48 @@ def _render_color_grid_pages(
         emitted.append(str(out))
 
     return emitted
+
+
+def _fit_core_subset(
+    df: pd.DataFrame,
+    *,
+    quantile: float,
+    method: str,
+) -> pd.DataFrame:
+    q = float(quantile)
+    if not (0.0 < q < 1.0):
+        return df
+    if len(df) == 0:
+        return df
+
+    work = df.copy()
+    for c in ("pca1", "pca2", "pca3"):
+        work[c] = pd.to_numeric(work[c], errors="coerce")
+    work = work[np.isfinite(work["pca1"]) & np.isfinite(work["pca2"]) & np.isfinite(work["pca3"])].copy()
+    if len(work) == 0:
+        return work
+
+    if str(method) == "axis":
+        lo = (1.0 - q) / 2.0
+        hi = 1.0 - lo
+        xlo, xhi = work["pca1"].quantile([lo, hi]).to_numpy(dtype=np.float64)
+        ylo, yhi = work["pca2"].quantile([lo, hi]).to_numpy(dtype=np.float64)
+        zlo, zhi = work["pca3"].quantile([lo, hi]).to_numpy(dtype=np.float64)
+        core = work[
+            (work["pca1"] >= xlo) & (work["pca1"] <= xhi) &
+            (work["pca2"] >= ylo) & (work["pca2"] <= yhi) &
+            (work["pca3"] >= zlo) & (work["pca3"] <= zhi)
+        ].copy()
+        return core if len(core) else work
+
+    X = work[["pca1", "pca2", "pca3"]].to_numpy(dtype=np.float64)
+    mu = np.median(X, axis=0)
+    C = np.cov((X - mu).T)
+    Ci = np.linalg.pinv(C)
+    d2 = np.einsum("ij,jk,ik->i", X - mu, Ci, X - mu)
+    thr = float(np.quantile(d2, q))
+    core = work.loc[d2 <= thr].copy()
+    return core if len(core) else work
 
 
 def _hist3d_sparse_df(hist3d: np.ndarray, ranges: Dict[str, Tuple[float, float]]) -> pd.DataFrame:
@@ -951,8 +1007,14 @@ def main() -> None:
     color_grid_paths: List[str] = []
     color_grid_dir = out_dir / f"{args.out_prefix}_color_grids"
     if args.color_grid and args.render_mode in {"points", "both"} and len(color_sample_df):
+        color_sample_core = _fit_core_subset(
+            color_sample_df,
+            quantile=float(args.color_grid_fit_quantile),
+            method=str(args.color_grid_fit_method),
+        )
         color_grid_paths = _render_color_grid_pages(
             color_sample_df,
+            color_sample_core,
             color_cols=[c for c in color_cols if c in color_sample_df.columns],
             cols_per_page=int(args.color_grid_cols_per_page),
             out_dir=color_grid_dir,
@@ -991,6 +1053,8 @@ def main() -> None:
         "color_grid": bool(args.color_grid),
         "color_cols_selected": color_cols,
         "color_grid_cols_per_page": int(args.color_grid_cols_per_page),
+        "color_grid_fit_quantile": float(args.color_grid_fit_quantile),
+        "color_grid_fit_method": str(args.color_grid_fit_method),
         "explained_variance_ratio": explained,
         "explained_variance_ratio_sum": float(np.sum(bundle.pca.explained_variance_ratio_)),
         "render_mode": args.render_mode,
