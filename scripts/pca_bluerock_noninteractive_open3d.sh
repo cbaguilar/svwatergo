@@ -28,7 +28,13 @@ MAX_RENDER_POINTS="${MAX_RENDER_POINTS:-2000000}"
 OPEN3D_MAX_POINTS="${OPEN3D_MAX_POINTS:-3000000}"
 OPEN3D_POINT_SIZE="${OPEN3D_POINT_SIZE:-1.0}"
 
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+log() { echo "[$(ts)] $*"; }
+
 cd "$REPO"
+T0="$(date +%s)"
+log "Starting noninteractive PCA/Open3D pipeline"
+log "Config: SITE=$SITE DATE_FROM=$DATE_FROM DATE_TO=$DATE_TO WINDOW_S=$WINDOW_S BACKEND=$BACKEND OUT_DIR=$OUT_DIR OUT_PREFIX=$OUT_PREFIX"
 
 args=(
   -m python.analytics.window_pca.scalable_cli
@@ -55,7 +61,9 @@ if [[ -n "$STRIDE_S" ]]; then
   args+=(--stride-s "$STRIDE_S")
 fi
 
+log "Running scalable PCA projection + render artifact generation"
 "$PYTHON" "${args[@]}"
+log "PCA stage complete"
 
 VOXELS="$OUT_DIR/${OUT_PREFIX}_pc123_voxels.parquet"
 POINTS="$OUT_DIR/${OUT_PREFIX}_point_sample.parquet"
@@ -63,6 +71,7 @@ OPEN3D_IMG="$OUT_DIR/${OUT_PREFIX}_open3d.png"
 OPEN3D_PLY="$OUT_DIR/${OUT_PREFIX}_open3d.ply"
 
 if [[ -f "$VOXELS" ]]; then
+  log "Rendering Open3D from voxel cloud: $VOXELS"
   "$PYTHON" -m python.analytics.window_pca.open3d_render \
     --input-parquet "$VOXELS" \
     --mode voxels \
@@ -75,6 +84,7 @@ if [[ -f "$VOXELS" ]]; then
     --out-image "$OPEN3D_IMG" \
     --out-ply "$OPEN3D_PLY"
 elif [[ -f "$POINTS" ]]; then
+  log "Rendering Open3D from point sample: $POINTS"
   "$PYTHON" -m python.analytics.window_pca.open3d_render \
     --input-parquet "$POINTS" \
     --mode points \
@@ -83,7 +93,9 @@ elif [[ -f "$POINTS" ]]; then
     --out-image "$OPEN3D_IMG" \
     --out-ply "$OPEN3D_PLY"
 else
-  echo "[WARN] no voxels or point sample found for Open3D rendering"
+  log "[WARN] no voxels or point sample found for Open3D rendering"
 fi
 
-echo "[OK] output dir -> $OUT_DIR"
+T1="$(date +%s)"
+ELAPSED="$((T1 - T0))"
+log "Done. Elapsed=${ELAPSED}s output_dir=$OUT_DIR"

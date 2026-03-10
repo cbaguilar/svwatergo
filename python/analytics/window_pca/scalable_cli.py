@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import time
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -374,8 +375,16 @@ def _projection_out_path(out_dir: Path, site: str, src: str) -> Path:
 
 def main() -> None:
     args = _build_argparser().parse_args()
+    t0 = time.time()
     if args.controls_off:
         args.controls_weight = 0.0
+
+    if args.verbose:
+        print(
+            "[start] scalable PCA "
+            f"site={args.site} range={args.date_from}..{args.date_to} "
+            f"window_s={args.window_s} backend={args.backend} render_mode={args.render_mode}"
+        )
 
     sources = _discover_sources(
         local_root=args.local_root,
@@ -426,7 +435,11 @@ def main() -> None:
         if len(sdf):
             sample_parts.append(sdf)
         if args.verbose and ((i + 1) % 25 == 0):
-            print(f"[fit-sample] files={i+1}/{len(sources)} sampled_parts={len(sample_parts)}")
+            elapsed = max(1e-9, time.time() - t0)
+            print(
+                f"[fit-sample] files={i+1}/{len(sources)} sampled_parts={len(sample_parts)} "
+                f"rows_read={n_fit_rows_read} elapsed_s={elapsed:.1f}"
+            )
 
     if not sample_parts:
         raise SystemExit("No rows available for PCA fit sample.")
@@ -447,6 +460,13 @@ def main() -> None:
         controls_weight=float(args.controls_weight),
         control_regex=control_regex,
     )
+    if args.verbose:
+        elapsed = max(1e-9, time.time() - t0)
+        print(
+            f"[fit] rows_used={len(df_fit)} cols={len(cols)} "
+            f"explained_var_sum={float(np.sum(bundle.pca.explained_variance_ratio_)):.4f} "
+            f"elapsed_s={elapsed:.1f}"
+        )
 
     backend, cp_mod = _resolve_backend(str(args.backend))
     components = bundle.pca.components_.astype("float64", copy=False)
@@ -531,7 +551,12 @@ def main() -> None:
 
         project_rows += len(Z)
         if args.verbose and ((i + 1) % 25 == 0):
-            print(f"[project] files={i+1}/{len(sources)} rows={project_rows}")
+            elapsed = max(1e-9, time.time() - t0)
+            rate = project_rows / elapsed
+            print(
+                f"[project] files={i+1}/{len(sources)} rows={project_rows} "
+                f"rows_per_s={rate:.1f} elapsed_s={elapsed:.1f}"
+            )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / f"{args.out_prefix}_model.joblib"
@@ -631,6 +656,10 @@ def main() -> None:
         },
     }
     _save_json(meta, meta_path)
+    if args.verbose:
+        elapsed = max(1e-9, time.time() - t0)
+        rate = (project_rows / elapsed) if project_rows > 0 else 0.0
+        print(f"[done] rows={project_rows} elapsed_s={elapsed:.1f} rows_per_s={rate:.1f}")
 
     print(f"[OK] model -> {model_path}")
     print(f"[OK] meta -> {meta_path}")
