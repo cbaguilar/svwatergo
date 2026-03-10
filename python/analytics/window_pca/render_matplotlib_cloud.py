@@ -26,6 +26,18 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--y-max", type=float, default=None)
     p.add_argument("--z-min", type=float, default=None)
     p.add_argument("--z-max", type=float, default=None)
+    p.add_argument(
+        "--fit-quantile",
+        type=float,
+        default=0.0,
+        help="If in (0,1], keep the central quantile of points (e.g. 0.99).",
+    )
+    p.add_argument(
+        "--fit-method",
+        choices=["axis", "mahal"],
+        default="axis",
+        help="axis=per-axis central quantiles; mahal=Mahalanobis core.",
+    )
     p.add_argument("--elev", type=float, default=24.0)
     p.add_argument("--azim", type=float, default=-60.0)
     p.add_argument("--title", default="PCA bounded scatter")
@@ -91,6 +103,31 @@ def main() -> None:
         work = work[work[z_col] <= float(args.z_max)]
     if len(work) == 0:
         raise SystemExit("no points remain after bounds filtering")
+
+    q = float(args.fit_quantile or 0.0)
+    if 0.0 < q < 1.0:
+        if str(args.fit_method) == "axis":
+            lo = (1.0 - q) / 2.0
+            hi = 1.0 - lo
+            xlo, xhi = work[x_col].quantile([lo, hi]).to_numpy(dtype=np.float64)
+            ylo, yhi = work[y_col].quantile([lo, hi]).to_numpy(dtype=np.float64)
+            zlo, zhi = work[z_col].quantile([lo, hi]).to_numpy(dtype=np.float64)
+            work = work[
+                (work[x_col] >= xlo) & (work[x_col] <= xhi) &
+                (work[y_col] >= ylo) & (work[y_col] <= yhi) &
+                (work[z_col] >= zlo) & (work[z_col] <= zhi)
+            ]
+        else:
+            X = work[[x_col, y_col, z_col]].to_numpy(dtype=np.float64)
+            mu = np.median(X, axis=0)
+            C = np.cov((X - mu).T)
+            Ci = np.linalg.pinv(C)
+            d2 = np.einsum("ij,jk,ik->i", X - mu, Ci, X - mu)
+            thr = float(np.quantile(d2, q))
+            work = work.loc[d2 <= thr]
+
+        if len(work) == 0:
+            raise SystemExit("no points remain after --fit-quantile filtering")
 
     if int(args.max_points) > 0 and len(work) > int(args.max_points):
         work = work.sample(n=int(args.max_points), random_state=int(args.seed))
