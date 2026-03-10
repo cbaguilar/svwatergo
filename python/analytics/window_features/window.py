@@ -478,6 +478,26 @@ def analyze_interarrival(df: pd.DataFrame, ts_col: str):
 
     dt_s = ts.diff().dt.total_seconds().dropna()
 
+    if len(dt_s) == 0:
+        stats = {
+            "n_rows": int(len(ts)),
+            "mean_gap_s": np.nan,
+            "median_gap_s": np.nan,
+            "p90_gap_s": np.nan,
+            "p95_gap_s": np.nan,
+            "p99_gap_s": np.nan,
+            "max_gap_s": np.nan,
+        }
+        print("=== Inter-arrival time statistics (seconds) ===")
+        for k, v in stats.items():
+            if isinstance(v, (int, np.integer)):
+                print(f"{k:>15}: {int(v):8d}")
+            else:
+                vv = float(v) if v is not None else np.nan
+                txt = "nan" if not np.isfinite(vv) else f"{vv:8.3f}"
+                print(f"{k:>15}: {txt}")
+        return dt_s, stats
+
     stats = {
         "n_rows": int(len(ts)),
         "mean_gap_s": float(dt_s.mean()),
