@@ -25,6 +25,9 @@ RENDER_MODE="${RENDER_MODE:-both}" # none|heatmap|points|both
 HIST_BINS_2D="${HIST_BINS_2D:-1200}"
 HIST_BINS_3D="${HIST_BINS_3D:-160}"
 MAX_RENDER_POINTS="${MAX_RENDER_POINTS:-2000000}"
+COLOR_GRID="${COLOR_GRID:-yes}"
+COLOR_MAX_COLS="${COLOR_MAX_COLS:-18}"
+COLOR_COLS="${COLOR_COLS:-}"
 
 OPEN3D_MAX_POINTS="${OPEN3D_MAX_POINTS:-3000000}"
 OPEN3D_POINT_SIZE="${OPEN3D_POINT_SIZE:-1.0}"
@@ -50,6 +53,7 @@ log "Starting noninteractive PCA/Open3D pipeline"
 log "Config: SITE=$SITE DATE_FROM=$DATE_FROM DATE_TO=$DATE_TO WINDOW_S=$WINDOW_S BACKEND=$BACKEND OUT_DIR=$OUT_DIR OUT_PREFIX=$OUT_PREFIX"
 log "Paths: RAW_ROOT=$RAW_ROOT WINDOW_FEATURES_ROOT=$WINDOW_FEATURES_ROOT WINDOW_OUT_ROOT=$WINDOW_OUT_ROOT"
 log "Headless mode: OPEN3D_RENDER=$OPEN3D_RENDER (no=skip Open3D image render)"
+log "Color grid: COLOR_GRID=$COLOR_GRID COLOR_MAX_COLS=$COLOR_MAX_COLS"
 
 if [[ "$GENERATE_MISSING_WINDOWS" == "yes" ]]; then
   mapfile -t DAYS < <("$PYTHON" - <<PY
@@ -150,6 +154,12 @@ args=(
 
 if [[ -n "$STRIDE_S" ]]; then
   args+=(--stride-s "$STRIDE_S")
+fi
+if [[ "$COLOR_GRID" == "yes" ]]; then
+  args+=(--color-grid --color-max-cols "$COLOR_MAX_COLS")
+  if [[ -n "$COLOR_COLS" ]]; then
+    args+=(--color-cols "$COLOR_COLS")
+  fi
 fi
 
 log "Running scalable PCA projection + render artifact generation"

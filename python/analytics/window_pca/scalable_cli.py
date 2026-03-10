@@ -87,6 +87,16 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--range-q-low", type=float, default=0.005)
     p.add_argument("--range-q-high", type=float, default=0.995)
     p.add_argument("--max-render-points", type=int, default=2_000_000)
+    p.add_argument("--color-grid", action="store_true", help="Render 3D color-point grid atlas")
+    p.add_argument(
+        "--color-cols",
+        default="",
+        help="Comma-separated columns for color grid. If empty, regex-based selection is used.",
+    )
+    p.add_argument("--color-include-regex", action="append", default=[])
+    p.add_argument("--color-exclude-regex", action="append", default=[])
+    p.add_argument("--color-max-cols", type=int, default=18, help="Max color columns for grid rendering")
+    p.add_argument("--color-grid-cols-per-page", type=int, default=9, help="Subplots per grid page")
 
     p.add_argument("--out-dir", default="./pca_out")
     p.add_argument("--out-prefix", default="bluerock_alltime")
@@ -268,6 +278,98 @@ def _render_points(sample_points: np.ndarray, *, out_png: Path, title: str) -> N
     plt.close(fig)
 
 
+def _is_discrete_col(name: str, s: pd.Series) -> bool:
+    n = str(name).lower()
+    if ("state" in n) or ("mode" in n):
+        return True
+    if pd.api.types.is_bool_dtype(s):
+        return True
+    if pd.api.types.is_integer_dtype(s):
+        return s.nunique(dropna=True) <= 24
+    return False
+
+
+def _render_color_grid_pages(
+    df: pd.DataFrame,
+    *,
+    color_cols: List[str],
+    cols_per_page: int,
+    out_dir: Path,
+    out_prefix: str,
+    title_prefix: str,
+) -> List[str]:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if len(df) == 0 or len(color_cols) == 0:
+        return []
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    emitted: List[str] = []
+    per_page = max(1, int(cols_per_page))
+    n_pages = (len(color_cols) + per_page - 1) // per_page
+
+    for p in range(n_pages):
+        sub = color_cols[p * per_page : (p + 1) * per_page]
+        n = len(sub)
+        ncol = min(3, n)
+        nrow = (n + ncol - 1) // ncol
+        fig = plt.figure(figsize=(6.0 * ncol, 5.2 * nrow), constrained_layout=True)
+
+        for i, c in enumerate(sub, start=1):
+            ax = fig.add_subplot(nrow, ncol, i, projection="3d")
+            d = df[["pca1", "pca2", "pca3", c]].copy()
+            for x in ("pca1", "pca2", "pca3"):
+                d[x] = pd.to_numeric(d[x], errors="coerce")
+            good = np.isfinite(d["pca1"]) & np.isfinite(d["pca2"]) & np.isfinite(d["pca3"])
+            d = d.loc[good]
+            if len(d) == 0:
+                ax.set_title(f"{c} (no finite points)")
+                continue
+
+            s = d[c]
+            if _is_discrete_col(c, s):
+                codes, _ = pd.factorize(s.astype(str).fillna("nan"), sort=True)
+                ax.scatter(
+                    d["pca1"],
+                    d["pca2"],
+                    d["pca3"],
+                    c=codes,
+                    cmap="tab20",
+                    s=1,
+                    alpha=0.18,
+                    linewidths=0,
+                )
+            else:
+                cnum = pd.to_numeric(s, errors="coerce").to_numpy(dtype=np.float64)
+                sc = ax.scatter(
+                    d["pca1"],
+                    d["pca2"],
+                    d["pca3"],
+                    c=cnum,
+                    cmap="viridis",
+                    s=1,
+                    alpha=0.18,
+                    linewidths=0,
+                )
+                fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02)
+
+            ax.set_title(c)
+            ax.set_xlabel("PC1")
+            ax.set_ylabel("PC2")
+            ax.set_zlabel("PC3")
+
+        fig.suptitle(f"{title_prefix} (page {p+1}/{n_pages})")
+        out = out_dir / f"{out_prefix}_pc123_color_grid_{p+1:02d}.png"
+        fig.savefig(out, dpi=180)
+        plt.close(fig)
+        emitted.append(str(out))
+
+    return emitted
+
+
 def _hist3d_sparse_df(hist3d: np.ndarray, ranges: Dict[str, Tuple[float, float]]) -> pd.DataFrame:
     nz = np.nonzero(hist3d)
     if len(nz[0]) == 0:
@@ -317,6 +419,27 @@ def _update_reservoir(
         return merged
     idx = rng.choice(len(merged), size=max_points, replace=False)
     return merged[idx].copy()
+
+
+def _update_reservoir_df(
+    current: pd.DataFrame,
+    incoming: pd.DataFrame,
+    max_points: int,
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    if max_points <= 0 or len(incoming) == 0:
+        return current
+    if len(current) == 0:
+        if len(incoming) <= max_points:
+            return incoming.copy()
+        idx = rng.choice(len(incoming), size=max_points, replace=False)
+        return incoming.iloc[np.asarray(idx, dtype=np.int64)].copy()
+
+    merged = pd.concat([current, incoming], ignore_index=True, sort=False)
+    if len(merged) <= max_points:
+        return merged
+    idx = rng.choice(len(merged), size=max_points, replace=False)
+    return merged.iloc[np.asarray(idx, dtype=np.int64)].copy()
 
 
 def _filter_rows(df: pd.DataFrame, drop_unknown: bool) -> pd.DataFrame:
@@ -405,6 +528,48 @@ def _projection_out_path(out_dir: Path, site: str, src: str) -> Path:
     return out_dir / "projections" / f"site={site}" / f"date={d}" / "pca_projection.parquet"
 
 
+def _default_color_include_regex() -> List[str]:
+    return [
+        r"^state(__|$)",
+        r"^ropumprun__duty$",
+        r"^wellpumprun__duty$",
+        r"^feedpumprun__duty$",
+        r"flow",
+        r"press|pressure",
+        r"tank.*level|level.*tank",
+        r"daily.*flow",
+        r"dailyperm",
+        r"dailyfeed",
+    ]
+
+
+def _pick_color_cols(
+    schema_cols: Sequence[str],
+    *,
+    explicit_cols: List[str],
+    include_regex: List[str],
+    exclude_regex: List[str],
+    max_cols: int,
+) -> List[str]:
+    if explicit_cols:
+        return [c for c in explicit_cols if c in schema_cols]
+    inc = include_regex[:] if include_regex else _default_color_include_regex()
+    inc_regs = [re.compile(p, re.IGNORECASE) for p in inc]
+    exc_regs = [re.compile(p, re.IGNORECASE) for p in (exclude_regex or [])]
+    picked: List[str] = []
+    for c in schema_cols:
+        if any(r.search(c) for r in inc_regs) and not any(r.search(c) for r in exc_regs):
+            picked.append(c)
+    seen = set()
+    out: List[str] = []
+    for c in picked:
+        if c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return out[: max(0, int(max_cols))]
+
+
 def main() -> None:
     args = _build_argparser().parse_args()
     t0 = time.time()
@@ -451,7 +616,16 @@ def main() -> None:
         raise SystemExit("No PCA columns selected. Use --pca-cols or include regexes.")
 
     preserve_cols = _parse_csv_cols(args.preserve_cols)
-    read_cols = sorted(set(cols + preserve_cols + ["n_rows", "state_unknown"]))
+    color_cols = _pick_color_cols(
+        schema_cols,
+        explicit_cols=_parse_csv_cols(args.color_cols),
+        include_regex=list(args.color_include_regex or []),
+        exclude_regex=list(args.color_exclude_regex or []),
+        max_cols=int(args.color_max_cols),
+    )
+    read_cols = sorted(set(cols + preserve_cols + color_cols + ["n_rows", "state_unknown"]))
+    if args.verbose and args.color_grid:
+        print(f"[color-grid] selected_cols={len(color_cols)} cols={color_cols}")
 
     rng = np.random.default_rng(int(args.fit_seed))
     t_fit_sample0 = time.time()
@@ -532,6 +706,7 @@ def main() -> None:
     hist3d = np.zeros((bins3d, bins3d, bins3d), dtype=np.uint64)
 
     point_sample = np.empty((0, 3), dtype=np.float64)
+    color_sample_df = pd.DataFrame()
     project_rows = 0
     out_dir = Path(args.out_dir)
     projection_manifest: List[Dict[str, object]] = []
@@ -571,6 +746,19 @@ def main() -> None:
 
         if args.render_mode in {"points", "both"}:
             point_sample = _update_reservoir(point_sample, Z[:, :3], int(args.max_render_points), rng)
+            if args.color_grid and color_cols:
+                keep_color = [c for c in color_cols if c in df.columns]
+                if keep_color:
+                    cdf = df[keep_color].copy()
+                    cdf["pca1"] = x.astype("float64")
+                    cdf["pca2"] = y.astype("float64")
+                    cdf["pca3"] = z.astype("float64")
+                    color_sample_df = _update_reservoir_df(
+                        color_sample_df,
+                        cdf,
+                        int(args.max_render_points),
+                        rng,
+                    )
 
         if args.write_projections:
             keep_cols = [c for c in preserve_cols if c in df.columns]
@@ -658,6 +846,18 @@ def main() -> None:
             out_png=scatter_png,
             title=f"{args.site} PCA point sample ({len(point_sample):,} points)",
         )
+
+    color_grid_paths: List[str] = []
+    color_grid_dir = out_dir / f"{args.out_prefix}_color_grids"
+    if args.color_grid and args.render_mode in {"points", "both"} and len(color_sample_df):
+        color_grid_paths = _render_color_grid_pages(
+            color_sample_df,
+            color_cols=[c for c in color_cols if c in color_sample_df.columns],
+            cols_per_page=int(args.color_grid_cols_per_page),
+            out_dir=color_grid_dir,
+            out_prefix=args.out_prefix,
+            title_prefix=f"{args.site} PCA 3D color grid",
+        )
     t_render1 = time.time()
 
     _save_json({"projections": projection_manifest}, projection_manifest_path)
@@ -687,6 +887,9 @@ def main() -> None:
         "drop_unknown": bool(args.drop_unknown),
         "pca_cols_explicit": explicit_cols,
         "preserve_cols": preserve_cols,
+        "color_grid": bool(args.color_grid),
+        "color_cols_selected": color_cols,
+        "color_grid_cols_per_page": int(args.color_grid_cols_per_page),
         "explained_variance_ratio": explained,
         "explained_variance_ratio_sum": float(np.sum(bundle.pca.explained_variance_ratio_)),
         "render_mode": args.render_mode,
@@ -721,6 +924,8 @@ def main() -> None:
             "hist_npz": str(hist_npz) if args.render_mode in {"heatmap", "both"} else "",
             "point_sample_parquet": str(points_parquet) if args.render_mode in {"points", "both"} else "",
             "point_sample_png": str(scatter_png) if args.render_mode in {"points", "both"} else "",
+            "color_grid_dir": str(color_grid_dir) if len(color_grid_paths) else "",
+            "color_grid_pngs": color_grid_paths,
         },
     }
     _save_json(meta, meta_path)
@@ -739,6 +944,8 @@ def main() -> None:
     if args.render_mode in {"points", "both"} and len(point_sample):
         print(f"[OK] point sample -> {points_parquet}")
         print(f"[OK] point plot -> {scatter_png}")
+    if len(color_grid_paths):
+        print(f"[OK] color grid -> {color_grid_dir}")
 
 
 if __name__ == "__main__":
