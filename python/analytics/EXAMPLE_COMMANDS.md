@@ -166,3 +166,55 @@ python3 pca_from_window_features.py \
   --out-prefix bluerock_2025-09-26 \
   --controls-off
 ```
+
+## Noninteractive dense PCA pipeline (month/all-time ready)
+```bash
+python3 -m python.analytics.window_pca.scalable_cli \
+  --local-root ./derived \
+  --site bluerock \
+  --date-from 2025-12-01 \
+  --date-to 2025-12-31 \
+  --window-s 10 \
+  --n-components 3 \
+  --controls-off \
+  --backend auto \
+  --fit-sample-per-file 2000 \
+  --fit-max-samples 2000000 \
+  --write-projections \
+  --render-mode both \
+  --hist-bins-2d 1200 \
+  --hist-bins-3d 160 \
+  --max-render-points 2000000 \
+  --out-dir ./pca_out \
+  --out-prefix bluerock_dec2025_noninteractive
+```
+
+Outputs:
+- `*_pc_heatmaps.png` static 2D density maps (`PC1-PC2`, `PC1-PC3`, `PC2-PC3`)
+- `*_pc123_voxels.parquet` sparse 3D voxel counts for dense-cloud rendering
+- `*_point_sample.parquet` bounded direct-point sample
+
+## Noninteractive Open3D render from voxel cloud
+```bash
+python3 -m python.analytics.window_pca.open3d_render \
+  --input-parquet ./pca_out/bluerock_dec2025_noninteractive_pc123_voxels.parquet \
+  --mode voxels \
+  --x-col pc1 --y-col pc2 --z-col pc3 \
+  --count-col count \
+  --max-points 3000000 \
+  --point-size 1.0 \
+  --out-image ./pca_out/bluerock_dec2025_open3d.png \
+  --out-ply ./pca_out/bluerock_dec2025_open3d.ply
+```
+
+## One-command month run + Open3D screenshot
+```bash
+SITE=bluerock \
+LOCAL_ROOT=/mnt/d/datasets/svwatergo/derived \
+DATE_FROM=2025-12-01 \
+DATE_TO=2025-12-31 \
+WINDOW_S=10 \
+BACKEND=auto \
+OUT_DIR=/mnt/d/datasets/svwatergo/derived/plots/pca_noninteractive \
+scripts/pca_bluerock_noninteractive_open3d.sh
+```
