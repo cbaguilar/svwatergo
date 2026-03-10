@@ -8,6 +8,7 @@ REPO="${REPO:-$REPO_DEFAULT}"
 
 SITE="${SITE:-bluerock}"
 LOCAL_ROOT="${LOCAL_ROOT:-/mnt/d/datasets/svwatergo/derived}"
+RAW_ROOT="${RAW_ROOT:-/mnt/d/datasets/svwatergo/raw/plc}"
 DATE_FROM="${DATE_FROM:-2025-12-01}"
 DATE_TO="${DATE_TO:-2025-12-31}"
 WINDOW_S="${WINDOW_S:-10}"
@@ -27,18 +28,81 @@ MAX_RENDER_POINTS="${MAX_RENDER_POINTS:-2000000}"
 
 OPEN3D_MAX_POINTS="${OPEN3D_MAX_POINTS:-3000000}"
 OPEN3D_POINT_SIZE="${OPEN3D_POINT_SIZE:-1.0}"
+OPEN3D_RENDER="${OPEN3D_RENDER:-no}"
+GENERATE_MISSING_WINDOWS="${GENERATE_MISSING_WINDOWS:-yes}"
+TIMESTAMP_COL="${TIMESTAMP_COL:-plctime}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { echo "[$(ts)] $*"; }
 
 cd "$REPO"
 T0="$(date +%s)"
+if [[ "$LOCAL_ROOT" == *"/dataset=window_features" ]]; then
+  WINDOW_FEATURES_ROOT="$LOCAL_ROOT"
+  WINDOW_OUT_ROOT="${WINDOW_OUT_ROOT:-${LOCAL_ROOT%/dataset=window_features}}"
+else
+  WINDOW_OUT_ROOT="${WINDOW_OUT_ROOT:-$LOCAL_ROOT}"
+  WINDOW_FEATURES_ROOT="$WINDOW_OUT_ROOT/dataset=window_features"
+fi
+
 log "Starting noninteractive PCA/Open3D pipeline"
 log "Config: SITE=$SITE DATE_FROM=$DATE_FROM DATE_TO=$DATE_TO WINDOW_S=$WINDOW_S BACKEND=$BACKEND OUT_DIR=$OUT_DIR OUT_PREFIX=$OUT_PREFIX"
+log "Paths: RAW_ROOT=$RAW_ROOT WINDOW_FEATURES_ROOT=$WINDOW_FEATURES_ROOT WINDOW_OUT_ROOT=$WINDOW_OUT_ROOT"
+log "Headless mode: OPEN3D_RENDER=$OPEN3D_RENDER (no=skip Open3D image render)"
+
+if [[ "$GENERATE_MISSING_WINDOWS" == "yes" ]]; then
+  mapfile -t DAYS < <("$PYTHON" - <<PY
+import datetime as dt
+d0=dt.date.fromisoformat("$DATE_FROM")
+d1=dt.date.fromisoformat("$DATE_TO")
+n=(d1-d0).days
+for i in range(n+1):
+    print((d0+dt.timedelta(days=i)).isoformat())
+PY
+)
+
+  missing=0
+  for DAY in "${DAYS[@]}"; do
+    WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/site=${SITE}/date=${DAY}/window_features.parquet"
+    if [[ -n "$STRIDE_S" && "$STRIDE_S" != "$WINDOW_S" ]]; then
+      WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/stride_s=${STRIDE_S}/site=${SITE}/date=${DAY}/window_features.parquet"
+    fi
+    if [[ ! -f "$WF_PATH" ]]; then
+      missing=$((missing+1))
+    fi
+  done
+  log "Window feature precheck: missing_days=$missing total_days=${#DAYS[@]}"
+
+  if [[ "$missing" -gt 0 ]]; then
+    for DAY in "${DAYS[@]}"; do
+      WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/site=${SITE}/date=${DAY}/window_features.parquet"
+      if [[ -n "$STRIDE_S" && "$STRIDE_S" != "$WINDOW_S" ]]; then
+        WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/stride_s=${STRIDE_S}/site=${SITE}/date=${DAY}/window_features.parquet"
+      fi
+      if [[ -f "$WF_PATH" ]]; then
+        continue
+      fi
+      log "Generating window features for missing day: $DAY"
+      gen_args=(
+        -m python.analytics.s3_day_to_window_features
+        --site "$SITE"
+        --day "$DAY"
+        --local-root "$RAW_ROOT"
+        --out-dir "$WINDOW_OUT_ROOT"
+        --timestamp-col "$TIMESTAMP_COL"
+        --window-seconds "$WINDOW_S"
+      )
+      if [[ -n "$STRIDE_S" ]]; then
+        gen_args+=(--stride-seconds "$STRIDE_S")
+      fi
+      "$PYTHON" "${gen_args[@]}"
+    done
+  fi
+fi
 
 args=(
   -m python.analytics.window_pca.scalable_cli
-  --local-root "$LOCAL_ROOT"
+  --local-root "$WINDOW_FEATURES_ROOT"
   --site "$SITE"
   --date-from "$DATE_FROM"
   --date-to "$DATE_TO"
@@ -70,30 +134,34 @@ POINTS="$OUT_DIR/${OUT_PREFIX}_point_sample.parquet"
 OPEN3D_IMG="$OUT_DIR/${OUT_PREFIX}_open3d.png"
 OPEN3D_PLY="$OUT_DIR/${OUT_PREFIX}_open3d.ply"
 
-if [[ -f "$VOXELS" ]]; then
-  log "Rendering Open3D from voxel cloud: $VOXELS"
-  "$PYTHON" -m python.analytics.window_pca.open3d_render \
-    --input-parquet "$VOXELS" \
-    --mode voxels \
-    --x-col pc1 \
-    --y-col pc2 \
-    --z-col pc3 \
-    --count-col count \
-    --max-points "$OPEN3D_MAX_POINTS" \
-    --point-size "$OPEN3D_POINT_SIZE" \
-    --out-image "$OPEN3D_IMG" \
-    --out-ply "$OPEN3D_PLY"
-elif [[ -f "$POINTS" ]]; then
-  log "Rendering Open3D from point sample: $POINTS"
-  "$PYTHON" -m python.analytics.window_pca.open3d_render \
-    --input-parquet "$POINTS" \
-    --mode points \
-    --max-points "$OPEN3D_MAX_POINTS" \
-    --point-size "$OPEN3D_POINT_SIZE" \
-    --out-image "$OPEN3D_IMG" \
-    --out-ply "$OPEN3D_PLY"
+if [[ "$OPEN3D_RENDER" == "yes" ]]; then
+  if [[ -f "$VOXELS" ]]; then
+    log "Rendering Open3D from voxel cloud: $VOXELS"
+    "$PYTHON" -m python.analytics.window_pca.open3d_render \
+      --input-parquet "$VOXELS" \
+      --mode voxels \
+      --x-col pc1 \
+      --y-col pc2 \
+      --z-col pc3 \
+      --count-col count \
+      --max-points "$OPEN3D_MAX_POINTS" \
+      --point-size "$OPEN3D_POINT_SIZE" \
+      --out-image "$OPEN3D_IMG" \
+      --out-ply "$OPEN3D_PLY" || log "[WARN] Open3D render failed; continuing headless outputs only"
+  elif [[ -f "$POINTS" ]]; then
+    log "Rendering Open3D from point sample: $POINTS"
+    "$PYTHON" -m python.analytics.window_pca.open3d_render \
+      --input-parquet "$POINTS" \
+      --mode points \
+      --max-points "$OPEN3D_MAX_POINTS" \
+      --point-size "$OPEN3D_POINT_SIZE" \
+      --out-image "$OPEN3D_IMG" \
+      --out-ply "$OPEN3D_PLY" || log "[WARN] Open3D render failed; continuing headless outputs only"
+  else
+    log "[WARN] no voxels or point sample found for Open3D rendering"
+  fi
 else
-  log "[WARN] no voxels or point sample found for Open3D rendering"
+  log "Skipping Open3D render (OPEN3D_RENDER=no). Use *_pc_heatmaps.png and *_pc123_points.png outputs."
 fi
 
 T1="$(date +%s)"

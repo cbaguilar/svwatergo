@@ -109,19 +109,51 @@ def _discover_sources(
     days = [d.isoformat() for d in _daterange(_parse_date(date_from), _parse_date(date_to))]
 
     for d in days:
-        patterns: List[str] = []
+        found_for_day = False
         if window_s is not None:
             ws = int(window_s)
+            candidates: List[Path] = []
             if stride_s is not None and int(stride_s) != ws:
-                patterns.append(
-                    f"**/window_s={ws}/stride_s={int(stride_s)}/site={site}/date={d}/window_features.parquet"
+                candidates.append(
+                    root
+                    / f"window_s={ws}"
+                    / f"stride_s={int(stride_s)}"
+                    / f"site={site}"
+                    / f"date={d}"
+                    / "window_features.parquet"
                 )
-            patterns.append(f"**/window_s={ws}/site={site}/date={d}/window_features.parquet")
+            candidates.append(
+                root
+                / f"window_s={ws}"
+                / f"site={site}"
+                / f"date={d}"
+                / "window_features.parquet"
+            )
+            for c in candidates:
+                if c.exists():
+                    out.append(str(c))
+                    found_for_day = True
+                    break
         else:
-            patterns.append(f"**/site={site}/date={d}/window_features.parquet")
-        for pat in patterns:
-            for p in sorted(root.glob(pat)):
-                out.append(str(p))
+            c = root / f"site={site}" / f"date={d}" / "window_features.parquet"
+            if c.exists():
+                out.append(str(c))
+                found_for_day = True
+
+        if not found_for_day:
+            patterns: List[str] = []
+            if window_s is not None:
+                ws = int(window_s)
+                if stride_s is not None and int(stride_s) != ws:
+                    patterns.append(
+                        f"**/window_s={ws}/stride_s={int(stride_s)}/site={site}/date={d}/window_features.parquet"
+                    )
+                patterns.append(f"**/window_s={ws}/site={site}/date={d}/window_features.parquet")
+            else:
+                patterns.append(f"**/site={site}/date={d}/window_features.parquet")
+            for pat in patterns:
+                for p in sorted(root.glob(pat)):
+                    out.append(str(p))
 
     if input_list:
         for ln in Path(input_list).read_text(encoding="utf-8").splitlines():
@@ -376,6 +408,7 @@ def _projection_out_path(out_dir: Path, site: str, src: str) -> Path:
 def main() -> None:
     args = _build_argparser().parse_args()
     t0 = time.time()
+    t_discover0 = t0
     if args.controls_off:
         args.controls_weight = 0.0
 
@@ -397,6 +430,7 @@ def main() -> None:
     )
     if not sources:
         raise SystemExit("No input sources discovered.")
+    t_discover1 = time.time()
 
     if args.verbose:
         print(f"[discover] sources={len(sources)}")
@@ -420,6 +454,7 @@ def main() -> None:
     read_cols = sorted(set(cols + preserve_cols + ["n_rows", "state_unknown"]))
 
     rng = np.random.default_rng(int(args.fit_seed))
+    t_fit_sample0 = time.time()
     sample_parts: List[pd.DataFrame] = []
     n_fit_rows_read = 0
     for i, src in enumerate(sources):
@@ -443,7 +478,9 @@ def main() -> None:
 
     if not sample_parts:
         raise SystemExit("No rows available for PCA fit sample.")
+    t_fit_sample1 = time.time()
 
+    t_fit0 = time.time()
     df_fit = pd.concat(sample_parts, ignore_index=True, sort=False)
     if len(df_fit) > int(args.fit_max_samples):
         df_fit = _sample_df(df_fit, int(args.fit_max_samples), rng)
@@ -460,6 +497,7 @@ def main() -> None:
         controls_weight=float(args.controls_weight),
         control_regex=control_regex,
     )
+    t_fit1 = time.time()
     if args.verbose:
         elapsed = max(1e-9, time.time() - t0)
         print(
@@ -497,6 +535,9 @@ def main() -> None:
     project_rows = 0
     out_dir = Path(args.out_dir)
     projection_manifest: List[Dict[str, object]] = []
+    rows_by_date: Dict[str, int] = {}
+    files_by_date: Dict[str, int] = {}
+    t_project0 = time.time()
 
     for i, src in enumerate(sources):
         src_cols = _source_schema_cols(src)
@@ -550,6 +591,9 @@ def main() -> None:
             )
 
         project_rows += len(Z)
+        d = _source_date(src)
+        rows_by_date[d] = int(rows_by_date.get(d, 0) + len(Z))
+        files_by_date[d] = int(files_by_date.get(d, 0) + 1)
         if args.verbose and ((i + 1) % 25 == 0):
             elapsed = max(1e-9, time.time() - t0)
             rate = project_rows / elapsed
@@ -557,6 +601,7 @@ def main() -> None:
                 f"[project] files={i+1}/{len(sources)} rows={project_rows} "
                 f"rows_per_s={rate:.1f} elapsed_s={elapsed:.1f}"
             )
+    t_project1 = time.time()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / f"{args.out_prefix}_model.joblib"
@@ -613,6 +658,7 @@ def main() -> None:
             out_png=scatter_png,
             title=f"{args.site} PCA point sample ({len(point_sample):,} points)",
         )
+    t_render1 = time.time()
 
     _save_json({"projections": projection_manifest}, projection_manifest_path)
 
@@ -633,7 +679,14 @@ def main() -> None:
         "clip_abs": args.clip_abs,
         "controls_weight": float(bundle.controls_weight),
         "controls_regex": list(bundle.controls_regex),
+        "backend_requested": str(args.backend),
         "backend_used": backend,
+        "fit_sample_per_file": int(args.fit_sample_per_file),
+        "fit_max_samples": int(args.fit_max_samples),
+        "fit_seed": int(args.fit_seed),
+        "drop_unknown": bool(args.drop_unknown),
+        "pca_cols_explicit": explicit_cols,
+        "preserve_cols": preserve_cols,
         "explained_variance_ratio": explained,
         "explained_variance_ratio_sum": float(np.sum(bundle.pca.explained_variance_ratio_)),
         "render_mode": args.render_mode,
@@ -643,6 +696,21 @@ def main() -> None:
             "pc1": [p1_lo, p1_hi],
             "pc2": [p2_lo, p2_hi],
             "pc3": [p3_lo, p3_hi],
+        },
+        "source_stats": {
+            "n_days_with_sources": int(len(files_by_date)),
+            "requested_days": [d.isoformat() for d in _daterange(_parse_date(args.date_from), _parse_date(args.date_to))],
+            "rows_projected_by_date": dict(sorted(rows_by_date.items())),
+            "files_by_date": dict(sorted(files_by_date.items())),
+            "sources_sample": sources[:200],
+        },
+        "timing_sec": {
+            "discover": float(t_discover1 - t_discover0),
+            "fit_sample_read": float(t_fit_sample1 - t_fit_sample0),
+            "fit_pca": float(t_fit1 - t_fit0),
+            "project": float(t_project1 - t_project0),
+            "render_and_write": float(t_render1 - t_project1),
+            "total": float(t_render1 - t0),
         },
         "artifacts": {
             "model_joblib": str(model_path),
