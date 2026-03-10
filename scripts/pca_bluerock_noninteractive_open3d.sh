@@ -25,7 +25,7 @@ FIT_MAX_SAMPLES="${FIT_MAX_SAMPLES:-2000000}"
 BACKEND="${BACKEND:-auto}" # auto|cpu|gpu
 PCA_CONTINUOUS_ONLY="${PCA_CONTINUOUS_ONLY:-yes}"
 PCA_INCLUDE_REGEX="${PCA_INCLUDE_REGEX:-__mean_tw$,__d1$}"
-PCA_EXCLUDE_REGEX="${PCA_EXCLUDE_REGEX:-__duty$,__mode_tw$,__transitions$,^state_unknown$}"
+PCA_EXCLUDE_REGEX="${PCA_EXCLUDE_REGEX:-__duty$,__mode_tw$,__transitions$,^state_unknown$,^residualtank(level|depth)__}"
 
 RENDER_MODE="${RENDER_MODE:-both}" # none|heatmap|points|both
 HIST_BINS_2D="${HIST_BINS_2D:-1200}"

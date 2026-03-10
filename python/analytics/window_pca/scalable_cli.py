@@ -330,7 +330,39 @@ def _render_color_grid_pages(
                 continue
 
             s = d[c]
-            if _is_discrete_col(c, s):
+            c_lower = str(c).lower()
+            # Alarm emphasis panel: make alarm=true points larger/brighter than false.
+            if c_lower.startswith("alarm__"):
+                s_num = pd.to_numeric(s, errors="coerce")
+                # Prefer binary alarm state; if duty is provided, threshold at 0.5.
+                alarm_on = (s_num >= 0.5).fillna(False).to_numpy(dtype=bool)
+                x = d["pca1"].to_numpy(dtype=np.float64)
+                y = d["pca2"].to_numpy(dtype=np.float64)
+                z = d["pca3"].to_numpy(dtype=np.float64)
+
+                off = ~alarm_on
+                if np.any(off):
+                    ax.scatter(
+                        x[off],
+                        y[off],
+                        z[off],
+                        c="#9aa0a6",
+                        s=0.8,
+                        alpha=0.06,
+                        linewidths=0,
+                    )
+                if np.any(alarm_on):
+                    ax.scatter(
+                        x[alarm_on],
+                        y[alarm_on],
+                        z[alarm_on],
+                        c="#ff3b30",
+                        s=7.0,
+                        alpha=0.95,
+                        linewidths=0,
+                    )
+                ax.set_title(f"{c} (alarm emphasis)")
+            elif _is_discrete_col(c, s):
                 codes, _ = pd.factorize(s.astype(str).fillna("nan"), sort=True)
                 ax.scatter(
                     d["pca1"],
@@ -530,6 +562,7 @@ def _projection_out_path(out_dir: Path, site: str, src: str) -> Path:
 
 def _default_color_include_regex() -> List[str]:
     return [
+        r"^alarm(__|$)",
         r"^state(__|$)",
         r"^ropumprun__duty$",
         r"^wellpumprun__duty$",
@@ -568,7 +601,67 @@ def _pick_color_cols(
             continue
         seen.add(c)
         out.append(c)
+
+    # Force an alarm-state panel to appear first when available.
+    alarm_pref = [c for c in schema_cols if c in {"alarm__last", "alarm__mode_tw", "alarm__duty"}]
+    if alarm_pref:
+        a = alarm_pref[0]
+        out = [x for x in out if x != a]
+        out = [a] + out
     return out[: max(0, int(max_cols))]
+
+
+def _build_loadings_tables(bundle) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, object]]:
+    cols = list(bundle.cols)
+    comps = np.asarray(bundle.pca.components_, dtype=np.float64)  # [n_pc, n_feat]
+    evr = np.asarray(bundle.pca.explained_variance_ratio_, dtype=np.float64)
+    n_pc, n_feat = comps.shape
+
+    wide = pd.DataFrame({"feature": cols, "is_control": bundle.control_mask.astype(bool)})
+    for i in range(n_pc):
+        w = comps[i, :]
+        wide[f"pc{i+1}_loading"] = w
+        wide[f"pc{i+1}_abs_loading"] = np.abs(w)
+        wide[f"pc{i+1}_contrib_ratio"] = np.square(w)
+    wide["abs_loading_sum"] = np.sum(np.abs(comps), axis=0)
+
+    long_rows: List[Dict[str, object]] = []
+    top_summary: Dict[str, object] = {}
+    for i in range(n_pc):
+        pc = i + 1
+        w = comps[i, :]
+        absw = np.abs(w)
+        contrib = np.square(w)
+        idx = np.argsort(absw)[::-1]
+        topk = idx[: min(30, len(idx))]
+        top_summary[f"pc{pc}"] = {
+            "explained_variance_ratio": float(evr[i]) if i < len(evr) else None,
+            "top_features_by_abs_loading": [
+                {
+                    "feature": cols[j],
+                    "loading": float(w[j]),
+                    "abs_loading": float(absw[j]),
+                    "contrib_ratio": float(contrib[j]),
+                    "is_control": bool(bundle.control_mask[j]),
+                }
+                for j in topk
+            ],
+        }
+        for j in range(n_feat):
+            long_rows.append(
+                {
+                    "feature": cols[j],
+                    "pc": int(pc),
+                    "explained_variance_ratio": float(evr[i]) if i < len(evr) else np.nan,
+                    "loading": float(w[j]),
+                    "abs_loading": float(absw[j]),
+                    "contrib_ratio": float(contrib[j]),
+                    "is_control": bool(bundle.control_mask[j]),
+                }
+            )
+
+    long = pd.DataFrame(long_rows)
+    return wide, long, top_summary
 
 
 def main() -> None:
@@ -795,6 +888,9 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / f"{args.out_prefix}_model.joblib"
     meta_path = out_dir / f"{args.out_prefix}_metadata.json"
+    loadings_wide_path = out_dir / f"{args.out_prefix}_pc_loadings_wide.parquet"
+    loadings_long_path = out_dir / f"{args.out_prefix}_pc_loadings_long.parquet"
+    loadings_top_json = out_dir / f"{args.out_prefix}_pc_top_contributors.json"
     points_parquet = out_dir / f"{args.out_prefix}_point_sample.parquet"
     heatmap_png = out_dir / f"{args.out_prefix}_pc_heatmaps.png"
     scatter_png = out_dir / f"{args.out_prefix}_pc123_points.png"
@@ -819,6 +915,10 @@ def main() -> None:
         },
         model_path,
     )
+    load_wide, load_long, load_top = _build_loadings_tables(bundle)
+    load_wide.to_parquet(loadings_wide_path, index=False)
+    load_long.to_parquet(loadings_long_path, index=False)
+    _save_json(load_top, loadings_top_json)
 
     if args.render_mode in {"heatmap", "both"}:
         _render_heatmaps(
@@ -919,6 +1019,9 @@ def main() -> None:
         "artifacts": {
             "model_joblib": str(model_path),
             "metadata_json": str(meta_path),
+            "loadings_wide_parquet": str(loadings_wide_path),
+            "loadings_long_parquet": str(loadings_long_path),
+            "loadings_top_json": str(loadings_top_json),
             "projection_manifest_json": str(projection_manifest_path),
             "heatmap_png": str(heatmap_png) if args.render_mode in {"heatmap", "both"} else "",
             "voxel_parquet": str(voxels_parquet) if args.render_mode in {"heatmap", "both"} else "",
@@ -936,6 +1039,9 @@ def main() -> None:
         print(f"[done] rows={project_rows} elapsed_s={elapsed:.1f} rows_per_s={rate:.1f}")
 
     print(f"[OK] model -> {model_path}")
+    print(f"[OK] loadings(wide) -> {loadings_wide_path}")
+    print(f"[OK] loadings(long) -> {loadings_long_path}")
+    print(f"[OK] top contributors -> {loadings_top_json}")
     print(f"[OK] meta -> {meta_path}")
     if args.write_projections:
         print(f"[OK] projections manifest -> {projection_manifest_path}")
