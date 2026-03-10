@@ -16,7 +16,9 @@ STRIDE_S="${STRIDE_S:-}"
 
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/plots/pca_noninteractive}"
 RUN_STAMP="${RUN_STAMP:-$(date +%Y%m%d_%H%M%S)}"
-OUT_PREFIX="${OUT_PREFIX:-${RUN_STAMP}_${SITE}_${DATE_FROM}_to_${DATE_TO}}"
+RUN_DIR_NAME="${RUN_DIR_NAME:-${RUN_STAMP}_${SITE}_${DATE_FROM}_to_${DATE_TO}}"
+OUT_PREFIX="${OUT_PREFIX:-pca}"
+RUN_OUT_DIR="${RUN_OUT_DIR:-$OUT_DIR/$RUN_DIR_NAME}"
 
 FIT_SAMPLE_PER_FILE="${FIT_SAMPLE_PER_FILE:-2000}"
 FIT_MAX_SAMPLES="${FIT_MAX_SAMPLES:-2000000}"
@@ -37,6 +39,7 @@ OPEN3D_MAX_POINTS="${OPEN3D_MAX_POINTS:-3000000}"
 OPEN3D_POINT_SIZE="${OPEN3D_POINT_SIZE:-1.0}"
 OPEN3D_RENDER="${OPEN3D_RENDER:-no}"
 GENERATE_MISSING_WINDOWS="${GENERATE_MISSING_WINDOWS:-yes}"
+REGENERATE_WINDOWS="${REGENERATE_WINDOWS:-no}"
 TIMESTAMP_COL="${TIMESTAMP_COL:-plctime}"
 WINDOW_JOBS="${WINDOW_JOBS:-1}"
 
@@ -54,11 +57,12 @@ else
 fi
 
 log "Starting noninteractive PCA/Open3D pipeline"
-log "Config: RUN_STAMP=$RUN_STAMP SITE=$SITE DATE_FROM=$DATE_FROM DATE_TO=$DATE_TO WINDOW_S=$WINDOW_S BACKEND=$BACKEND OUT_DIR=$OUT_DIR OUT_PREFIX=$OUT_PREFIX"
+log "Config: RUN_STAMP=$RUN_STAMP SITE=$SITE DATE_FROM=$DATE_FROM DATE_TO=$DATE_TO WINDOW_S=$WINDOW_S BACKEND=$BACKEND OUT_DIR=$OUT_DIR RUN_DIR_NAME=$RUN_DIR_NAME OUT_PREFIX=$OUT_PREFIX RUN_OUT_DIR=$RUN_OUT_DIR"
 log "Paths: RAW_ROOT=$RAW_ROOT WINDOW_FEATURES_ROOT=$WINDOW_FEATURES_ROOT WINDOW_OUT_ROOT=$WINDOW_OUT_ROOT"
 log "Headless mode: OPEN3D_RENDER=$OPEN3D_RENDER (no=skip Open3D image render)"
 log "Color grid: COLOR_GRID=$COLOR_GRID COLOR_MAX_COLS=$COLOR_MAX_COLS"
 log "PCA feature mode: PCA_CONTINUOUS_ONLY=$PCA_CONTINUOUS_ONLY"
+log "Window rebuild flags: GENERATE_MISSING_WINDOWS=$GENERATE_MISSING_WINDOWS REGENERATE_WINDOWS=$REGENERATE_WINDOWS"
 
 if [[ "$GENERATE_MISSING_WINDOWS" == "yes" ]]; then
   mapfile -t DAYS < <("$PYTHON" - <<PY
@@ -78,7 +82,10 @@ PY
     if [[ -n "$STRIDE_S" && "$STRIDE_S" != "$WINDOW_S" ]]; then
       WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/stride_s=${STRIDE_S}/site=${SITE}/date=${DAY}/window_features.parquet"
     fi
-    if [[ ! -f "$WF_PATH" ]]; then
+    if [[ "$REGENERATE_WINDOWS" == "yes" ]]; then
+      missing=$((missing+1))
+      MISSING_DAYS+=("$DAY")
+    elif [[ ! -f "$WF_PATH" ]]; then
       missing=$((missing+1))
       MISSING_DAYS+=("$DAY")
     fi
@@ -88,6 +95,13 @@ PY
   if [[ "$missing" -gt 0 ]]; then
     if [[ "$WINDOW_JOBS" -le 1 ]]; then
       for DAY in "${MISSING_DAYS[@]}"; do
+        if [[ "$REGENERATE_WINDOWS" == "yes" ]]; then
+          DAY_DIR="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/site=${SITE}/date=${DAY}"
+          if [[ -n "$STRIDE_S" && "$STRIDE_S" != "$WINDOW_S" ]]; then
+            DAY_DIR="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/stride_s=${STRIDE_S}/site=${SITE}/date=${DAY}"
+          fi
+          rm -rf "$DAY_DIR"
+        fi
         log "Generating window features for missing day: $DAY"
         gen_args=(
           -m python.analytics.s3_day_to_window_features
@@ -108,6 +122,13 @@ PY
       running=0
       for DAY in "${MISSING_DAYS[@]}"; do
         (
+          if [[ "$REGENERATE_WINDOWS" == "yes" ]]; then
+            DAY_DIR="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/site=${SITE}/date=${DAY}"
+            if [[ -n "$STRIDE_S" && "$STRIDE_S" != "$WINDOW_S" ]]; then
+              DAY_DIR="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/stride_s=${STRIDE_S}/site=${SITE}/date=${DAY}"
+            fi
+            rm -rf "$DAY_DIR"
+          fi
           echo "[$(ts)] [wf] start day=$DAY"
           gen_args=(
             -m python.analytics.s3_day_to_window_features
@@ -152,7 +173,7 @@ args=(
   --hist-bins-2d "$HIST_BINS_2D"
   --hist-bins-3d "$HIST_BINS_3D"
   --max-render-points "$MAX_RENDER_POINTS"
-  --out-dir "$OUT_DIR"
+  --out-dir "$RUN_OUT_DIR"
   --out-prefix "$OUT_PREFIX"
   --verbose
 )
@@ -181,10 +202,10 @@ log "Running scalable PCA projection + render artifact generation"
 "$PYTHON" "${args[@]}"
 log "PCA stage complete"
 
-VOXELS="$OUT_DIR/${OUT_PREFIX}_pc123_voxels.parquet"
-POINTS="$OUT_DIR/${OUT_PREFIX}_point_sample.parquet"
-OPEN3D_IMG="$OUT_DIR/${OUT_PREFIX}_open3d.png"
-OPEN3D_PLY="$OUT_DIR/${OUT_PREFIX}_open3d.ply"
+VOXELS="$RUN_OUT_DIR/${OUT_PREFIX}_pc123_voxels.parquet"
+POINTS="$RUN_OUT_DIR/${OUT_PREFIX}_point_sample.parquet"
+OPEN3D_IMG="$RUN_OUT_DIR/${OUT_PREFIX}_open3d.png"
+OPEN3D_PLY="$RUN_OUT_DIR/${OUT_PREFIX}_open3d.ply"
 
 if [[ "$OPEN3D_RENDER" == "yes" ]]; then
   if [[ -f "$VOXELS" ]]; then
@@ -218,4 +239,4 @@ fi
 
 T1="$(date +%s)"
 ELAPSED="$((T1 - T0))"
-log "Done. Elapsed=${ELAPSED}s output_dir=$OUT_DIR"
+log "Done. Elapsed=${ELAPSED}s run_output_dir=$RUN_OUT_DIR"

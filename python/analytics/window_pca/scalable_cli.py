@@ -534,6 +534,7 @@ def _default_color_include_regex() -> List[str]:
         r"^ropumprun__duty$",
         r"^wellpumprun__duty$",
         r"^feedpumprun__duty$",
+        r"sec_since_transition",
         r"flow",
         r"press|pressure",
         r"tank.*level|level.*tank",

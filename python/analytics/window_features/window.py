@@ -80,6 +80,52 @@ def _tw_mode_step_hold(ts_sec: np.ndarray, x: np.ndarray, w1: float) -> Tuple[fl
     return (float(mode_val), transitions)
 
 
+def _transition_times_step_hold(
+    ts_sec: np.ndarray,
+    x: np.ndarray,
+    *,
+    boolean_mode: bool = False,
+) -> np.ndarray:
+    """
+    Return timestamps where the signal transitions to a new value.
+    Transition time is the timestamp of the new value sample.
+    """
+    if len(ts_sec) < 2:
+        return np.empty((0,), dtype="float64")
+
+    if boolean_mode:
+        xv = np.where(np.isfinite(x), x, 0.0)
+        s = (xv != 0.0).astype(np.int8)
+    else:
+        good = np.isfinite(x)
+        if not np.any(good):
+            return np.empty((0,), dtype="float64")
+        s = x.copy()
+        if not np.all(good):
+            # Carry forward finite values over NaNs so missing samples don't look like transitions.
+            idx = np.where(good, np.arange(len(s)), 0)
+            np.maximum.accumulate(idx, out=idx)
+            s = s[idx]
+
+    trans_idx = np.nonzero(s[1:] != s[:-1])[0] + 1
+    if len(trans_idx) == 0:
+        return np.empty((0,), dtype="float64")
+    return ts_sec[trans_idx].astype("float64", copy=False)
+
+
+def _seconds_since_last_transition(
+    transition_ts_sec: np.ndarray,
+    t_sec: float,
+) -> float:
+    if transition_ts_sec.size == 0 or not np.isfinite(t_sec):
+        return np.nan
+    j = int(np.searchsorted(transition_ts_sec, t_sec, side="right") - 1)
+    if j < 0:
+        return np.nan
+    dt = float(t_sec - float(transition_ts_sec[j]))
+    return dt if dt >= 0 else np.nan
+
+
 def _window_start_for_ts(
     ts: pd.Series, *, day_start: pd.Timestamp, window: pd.Timedelta
 ) -> pd.Series:
@@ -151,6 +197,22 @@ def compute_window_features_for_day(
     for c in groups.continuous + groups.boolean + groups.discrete:
         col_arrays[c] = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype="float64", copy=False)
 
+    transition_targets: Dict[str, Tuple[str, bool]] = {
+        "state__sec_since_transition": ("state", False),
+        "ropumprun__sec_since_transition": ("ropumprun", True),
+        "deliveryrun__sec_since_transition": ("deliveryrun", True),
+    }
+    transition_times: Dict[str, np.ndarray] = {}
+    for out_col, (src_col, is_bool) in transition_targets.items():
+        if src_col in col_arrays:
+            transition_times[out_col] = _transition_times_step_hold(
+                ts_sec_all,
+                col_arrays[src_col],
+                boolean_mode=is_bool,
+            )
+        else:
+            transition_times[out_col] = np.empty((0,), dtype="float64")
+
     # Precompute window boundaries in ns and row index ranges via searchsorted
     window_start_ns = window_index.astype("int64", copy=False).to_numpy()
     window_end_ns = (window_index + window).astype("int64", copy=False).to_numpy()
@@ -174,6 +236,9 @@ def compute_window_features_for_day(
             "window_start_ts": w0,
             "window_end_ts": w1,
         }
+        w1_sec = w1.value / 1e9
+        for out_col, tr in transition_times.items():
+            row[out_col] = _seconds_since_last_transition(tr, float(w1_sec))
 
         if i0 == i1:
             consecutive_empty += 1
@@ -287,6 +352,22 @@ def compute_window_features_for_intervals(
     for c in groups.continuous + groups.boolean + groups.discrete:
         col_arrays[c] = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype="float64", copy=False)
 
+    transition_targets: Dict[str, Tuple[str, bool]] = {
+        "state__sec_since_transition": ("state", False),
+        "ropumprun__sec_since_transition": ("ropumprun", True),
+        "deliveryrun__sec_since_transition": ("deliveryrun", True),
+    }
+    transition_times: Dict[str, np.ndarray] = {}
+    for out_col, (src_col, is_bool) in transition_targets.items():
+        if src_col in col_arrays:
+            transition_times[out_col] = _transition_times_step_hold(
+                ts_sec_all,
+                col_arrays[src_col],
+                boolean_mode=is_bool,
+            )
+        else:
+            transition_times[out_col] = np.empty((0,), dtype="float64")
+
     out_rows: List[Dict[str, object]] = []
     for w0, w1 in zip(starts, ends):
         valid = pd.notna(w0) and pd.notna(w1) and (w1 > w0)
@@ -299,6 +380,9 @@ def compute_window_features_for_intervals(
             "window_end_ts": w1,
             "window_match_found": int(bool(valid)),
         }
+        w1_sec = float(w1.value / 1e9) if valid else np.nan
+        for out_col, tr in transition_times.items():
+            row[out_col] = _seconds_since_last_transition(tr, w1_sec)
         if not valid:
             row["n_rows"] = 0
             row["consecutive_empty_windows"] = 0
