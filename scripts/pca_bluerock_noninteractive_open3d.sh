@@ -31,6 +31,7 @@ OPEN3D_POINT_SIZE="${OPEN3D_POINT_SIZE:-1.0}"
 OPEN3D_RENDER="${OPEN3D_RENDER:-no}"
 GENERATE_MISSING_WINDOWS="${GENERATE_MISSING_WINDOWS:-yes}"
 TIMESTAMP_COL="${TIMESTAMP_COL:-plctime}"
+WINDOW_JOBS="${WINDOW_JOBS:-1}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { echo "[$(ts)] $*"; }
@@ -62,6 +63,7 @@ PY
 )
 
   missing=0
+  MISSING_DAYS=()
   for DAY in "${DAYS[@]}"; do
     WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/site=${SITE}/date=${DAY}/window_features.parquet"
     if [[ -n "$STRIDE_S" && "$STRIDE_S" != "$WINDOW_S" ]]; then
@@ -69,34 +71,59 @@ PY
     fi
     if [[ ! -f "$WF_PATH" ]]; then
       missing=$((missing+1))
+      MISSING_DAYS+=("$DAY")
     fi
   done
-  log "Window feature precheck: missing_days=$missing total_days=${#DAYS[@]}"
+  log "Window feature precheck: missing_days=$missing total_days=${#DAYS[@]} window_jobs=$WINDOW_JOBS"
 
   if [[ "$missing" -gt 0 ]]; then
-    for DAY in "${DAYS[@]}"; do
-      WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/site=${SITE}/date=${DAY}/window_features.parquet"
-      if [[ -n "$STRIDE_S" && "$STRIDE_S" != "$WINDOW_S" ]]; then
-        WF_PATH="$WINDOW_FEATURES_ROOT/window_s=${WINDOW_S}/stride_s=${STRIDE_S}/site=${SITE}/date=${DAY}/window_features.parquet"
-      fi
-      if [[ -f "$WF_PATH" ]]; then
-        continue
-      fi
-      log "Generating window features for missing day: $DAY"
-      gen_args=(
-        -m python.analytics.s3_day_to_window_features
-        --site "$SITE"
-        --day "$DAY"
-        --local-root "$RAW_ROOT"
-        --out-dir "$WINDOW_OUT_ROOT"
-        --timestamp-col "$TIMESTAMP_COL"
-        --window-seconds "$WINDOW_S"
-      )
-      if [[ -n "$STRIDE_S" ]]; then
-        gen_args+=(--stride-seconds "$STRIDE_S")
-      fi
-      "$PYTHON" "${gen_args[@]}"
-    done
+    if [[ "$WINDOW_JOBS" -le 1 ]]; then
+      for DAY in "${MISSING_DAYS[@]}"; do
+        log "Generating window features for missing day: $DAY"
+        gen_args=(
+          -m python.analytics.s3_day_to_window_features
+          --site "$SITE"
+          --day "$DAY"
+          --local-root "$RAW_ROOT"
+          --out-dir "$WINDOW_OUT_ROOT"
+          --timestamp-col "$TIMESTAMP_COL"
+          --window-seconds "$WINDOW_S"
+        )
+        if [[ -n "$STRIDE_S" ]]; then
+          gen_args+=(--stride-seconds "$STRIDE_S")
+        fi
+        "$PYTHON" "${gen_args[@]}"
+      done
+    else
+      log "Generating missing window features in parallel"
+      running=0
+      for DAY in "${MISSING_DAYS[@]}"; do
+        (
+          echo "[$(ts)] [wf] start day=$DAY"
+          gen_args=(
+            -m python.analytics.s3_day_to_window_features
+            --site "$SITE"
+            --day "$DAY"
+            --local-root "$RAW_ROOT"
+            --out-dir "$WINDOW_OUT_ROOT"
+            --timestamp-col "$TIMESTAMP_COL"
+            --window-seconds "$WINDOW_S"
+          )
+          if [[ -n "$STRIDE_S" ]]; then
+            gen_args+=(--stride-seconds "$STRIDE_S")
+          fi
+          "$PYTHON" "${gen_args[@]}"
+          echo "[$(ts)] [wf] done day=$DAY"
+        ) &
+        running=$((running + 1))
+        if [[ "$running" -ge "$WINDOW_JOBS" ]]; then
+          wait -n
+          running=$((running - 1))
+        fi
+      done
+      wait
+      log "Parallel window generation complete"
+    fi
   fi
 fi
 
