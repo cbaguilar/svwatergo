@@ -18,6 +18,12 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--max-points", type=int, default=5_000_000, help="Random cap for rendering")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--point-size", type=float, default=1.0)
+    p.add_argument("--x-min", type=float, default=None)
+    p.add_argument("--x-max", type=float, default=None)
+    p.add_argument("--y-min", type=float, default=None)
+    p.add_argument("--y-max", type=float, default=None)
+    p.add_argument("--z-min", type=float, default=None)
+    p.add_argument("--z-max", type=float, default=None)
     p.add_argument("--width", type=int, default=1920)
     p.add_argument("--height", type=int, default=1080)
     p.add_argument("--out-image", required=True, help="Output PNG path")
@@ -80,6 +86,29 @@ def main() -> None:
         colors = _colorize(len(xyz), w)
     else:
         colors = _colorize(len(xyz), None)
+
+    # Optional bound clipping in PCA coordinates.
+    xmin, xmax = args.x_min, args.x_max
+    ymin, ymax = args.y_min, args.y_max
+    zmin, zmax = args.z_min, args.z_max
+    mask = np.ones(len(xyz), dtype=bool)
+    if xmin is not None:
+        mask &= xyz[:, 0] >= float(xmin)
+    if xmax is not None:
+        mask &= xyz[:, 0] <= float(xmax)
+    if ymin is not None:
+        mask &= xyz[:, 1] >= float(ymin)
+    if ymax is not None:
+        mask &= xyz[:, 1] <= float(ymax)
+    if zmin is not None:
+        mask &= xyz[:, 2] >= float(zmin)
+    if zmax is not None:
+        mask &= xyz[:, 2] <= float(zmax)
+    if not np.any(mask):
+        raise SystemExit("No points remain after applying bounds")
+    xyz = xyz[mask]
+    if colors is not None:
+        colors = colors[mask]
 
     xyz, colors = _downsample(xyz, int(args.max_points), int(args.seed), colors)
 
