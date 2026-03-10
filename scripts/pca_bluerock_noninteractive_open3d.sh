@@ -15,11 +15,15 @@ WINDOW_S="${WINDOW_S:-10}"
 STRIDE_S="${STRIDE_S:-}"
 
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/plots/pca_noninteractive}"
-OUT_PREFIX="${OUT_PREFIX:-${SITE}_${DATE_FROM}_to_${DATE_TO}}"
+RUN_STAMP="${RUN_STAMP:-$(date +%Y%m%d_%H%M%S)}"
+OUT_PREFIX="${OUT_PREFIX:-${RUN_STAMP}_${SITE}_${DATE_FROM}_to_${DATE_TO}}"
 
 FIT_SAMPLE_PER_FILE="${FIT_SAMPLE_PER_FILE:-2000}"
 FIT_MAX_SAMPLES="${FIT_MAX_SAMPLES:-2000000}"
 BACKEND="${BACKEND:-auto}" # auto|cpu|gpu
+PCA_CONTINUOUS_ONLY="${PCA_CONTINUOUS_ONLY:-yes}"
+PCA_INCLUDE_REGEX="${PCA_INCLUDE_REGEX:-__mean_tw$,__d1$}"
+PCA_EXCLUDE_REGEX="${PCA_EXCLUDE_REGEX:-__duty$,__mode_tw$,__transitions$,^state_unknown$}"
 
 RENDER_MODE="${RENDER_MODE:-both}" # none|heatmap|points|both
 HIST_BINS_2D="${HIST_BINS_2D:-1200}"
@@ -50,10 +54,11 @@ else
 fi
 
 log "Starting noninteractive PCA/Open3D pipeline"
-log "Config: SITE=$SITE DATE_FROM=$DATE_FROM DATE_TO=$DATE_TO WINDOW_S=$WINDOW_S BACKEND=$BACKEND OUT_DIR=$OUT_DIR OUT_PREFIX=$OUT_PREFIX"
+log "Config: RUN_STAMP=$RUN_STAMP SITE=$SITE DATE_FROM=$DATE_FROM DATE_TO=$DATE_TO WINDOW_S=$WINDOW_S BACKEND=$BACKEND OUT_DIR=$OUT_DIR OUT_PREFIX=$OUT_PREFIX"
 log "Paths: RAW_ROOT=$RAW_ROOT WINDOW_FEATURES_ROOT=$WINDOW_FEATURES_ROOT WINDOW_OUT_ROOT=$WINDOW_OUT_ROOT"
 log "Headless mode: OPEN3D_RENDER=$OPEN3D_RENDER (no=skip Open3D image render)"
 log "Color grid: COLOR_GRID=$COLOR_GRID COLOR_MAX_COLS=$COLOR_MAX_COLS"
+log "PCA feature mode: PCA_CONTINUOUS_ONLY=$PCA_CONTINUOUS_ONLY"
 
 if [[ "$GENERATE_MISSING_WINDOWS" == "yes" ]]; then
   mapfile -t DAYS < <("$PYTHON" - <<PY
@@ -154,6 +159,16 @@ args=(
 
 if [[ -n "$STRIDE_S" ]]; then
   args+=(--stride-s "$STRIDE_S")
+fi
+if [[ "$PCA_CONTINUOUS_ONLY" == "yes" ]]; then
+  IFS=',' read -r -a _inc <<< "$PCA_INCLUDE_REGEX"
+  IFS=',' read -r -a _exc <<< "$PCA_EXCLUDE_REGEX"
+  for x in "${_inc[@]}"; do
+    [[ -n "$x" ]] && args+=(--include-regex "$x")
+  done
+  for x in "${_exc[@]}"; do
+    [[ -n "$x" ]] && args+=(--exclude-regex "$x")
+  done
 fi
 if [[ "$COLOR_GRID" == "yes" ]]; then
   args+=(--color-grid --color-max-cols "$COLOR_MAX_COLS")
