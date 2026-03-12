@@ -157,6 +157,24 @@ Outputs per run:
 - `timeseries_transformer.pt`: model weights + normalization stats.
 - `timeseries_transformer_metrics.json`: train/val/test metrics and training history.
 - `timeseries_transformer_config.json`: feature list and model/data config.
+- `timeseries_transformer_checkpoint_latest.pt`: recoverable latest checkpoint (model + optimizer + history).
+- `timeseries_transformer_checkpoint_best.pt`: best validation checkpoint.
+- `timeseries_transformer_learning_history.json`: epoch-by-epoch learning history (updated during training).
+
+Resume a long run:
+
+```bash
+python -m python.ml.cli.timeseries_transformer_train \
+  --dataset-root data/raw/plc/bluerock \
+  --dataset-filename data.parquet \
+  --date-from 2025-12-01 \
+  --date-to 2025-12-31 \
+  --out-dir data/checkpoints/timeseries_transformer_2025_12_1h_raw \
+  --timestamp-col plctime \
+  --horizon 1h \
+  --epochs 60 \
+  --resume-from data/checkpoints/timeseries_transformer_2025_12_1h_raw/timeseries_transformer_checkpoint_latest.pt
+```
 
 Backtest + plots per horizon:
 

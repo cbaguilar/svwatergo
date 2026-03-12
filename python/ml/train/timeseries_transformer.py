@@ -338,6 +338,9 @@ def fit_timeseries_transformer(
     grad_clip: float = 1.0,
     dataloader_num_workers: int = 0,
     device: str = "auto",
+    resume_from: Optional[Path] = None,
+    save_every_epochs: int = 1,
+    keep_epoch_checkpoints: bool = True,
 ) -> TimeSeriesTransformerResult:
     torch, nn, DataLoader, Dataset = _require_torch()
 
@@ -443,7 +446,37 @@ def fit_timeseries_transformer(
     opt = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=float(weight_decay))
     loss_fn = nn.MSELoss()
 
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_latest_path = out_dir / "timeseries_transformer_checkpoint_latest.pt"
+    checkpoint_best_path = out_dir / "timeseries_transformer_checkpoint_best.pt"
+    history_path = out_dir / "timeseries_transformer_learning_history.json"
+
     best = {"val_rmse": float("inf"), "state": None, "epoch": -1}
+    history: List[Dict[str, Any]] = []
+    start_epoch = 1
+
+    resume_path = Path(resume_from) if resume_from else checkpoint_latest_path
+    if resume_path.exists():
+        ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
+        if isinstance(ckpt, dict) and "model_state_dict" in ckpt and "optimizer_state_dict" in ckpt:
+            model.load_state_dict(ckpt["model_state_dict"])
+            opt.load_state_dict(ckpt["optimizer_state_dict"])
+            history = list(ckpt.get("history", []))
+            best_ck = ckpt.get("best", {})
+            if isinstance(best_ck, dict):
+                best["val_rmse"] = float(best_ck.get("val_rmse", best["val_rmse"]))
+                best["epoch"] = int(best_ck.get("epoch", best["epoch"]))
+                if "state" in best_ck and best_ck["state"] is not None:
+                    best["state"] = best_ck["state"]
+            start_epoch = int(ckpt.get("epoch", 0)) + 1
+    elif history_path.exists():
+        try:
+            hist_obj = json.loads(history_path.read_text(encoding="utf-8"))
+            if isinstance(hist_obj, list):
+                history = hist_obj
+        except Exception:
+            pass
 
     def _eval(dloader):
         model.eval()
@@ -462,8 +495,7 @@ def fit_timeseries_transformer(
         y_pred = np.concatenate(yp, axis=0)
         return _compute_metrics(y_true, y_pred)
 
-    history: List[Dict[str, Any]] = []
-    for ep in range(1, int(epochs) + 1):
+    for ep in range(int(start_epoch), int(epochs) + 1):
         model.train()
         losses = []
         for xb, yb in train_dl:
@@ -482,6 +514,7 @@ def fit_timeseries_transformer(
         val_metrics = _eval(val_dl)
         row = {"epoch": ep, "train_loss": train_loss, **{f"val_{k}": float(v) for k, v in val_metrics.items()}}
         history.append(row)
+        history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
 
         if val_metrics["rmse"] < best["val_rmse"]:
             best = {
@@ -489,6 +522,62 @@ def fit_timeseries_transformer(
                 "state": {k: v.detach().cpu() for k, v in model.state_dict().items()},
                 "epoch": int(ep),
             }
+            torch.save(
+                {
+                    "epoch": int(ep),
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": opt.state_dict(),
+                    "history": history,
+                    "best": best,
+                    "model_config": {
+                        "input_dim": int(feat_n.shape[1]),
+                        "lookback": int(lookback),
+                        "horizon": str(horizon),
+                        "horizon_steps": int(horizon_steps),
+                        "target_mode": str(target_mode),
+                        "d_model": int(d_model),
+                        "nhead": int(nhead),
+                        "num_layers": int(num_layers),
+                        "ff_dim": int(ff_dim),
+                        "dropout": float(dropout),
+                    },
+                    "normalization": {
+                        "feature_cols": list(cols),
+                        "mean": mu.astype(np.float32),
+                        "std": sigma.astype(np.float32),
+                    },
+                },
+                checkpoint_best_path,
+            )
+
+        if int(save_every_epochs) > 0 and (ep % int(save_every_epochs) == 0):
+            ckpt_payload = {
+                "epoch": int(ep),
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "history": history,
+                "best": best,
+                "model_config": {
+                    "input_dim": int(feat_n.shape[1]),
+                    "lookback": int(lookback),
+                    "horizon": str(horizon),
+                    "horizon_steps": int(horizon_steps),
+                    "target_mode": str(target_mode),
+                    "d_model": int(d_model),
+                    "nhead": int(nhead),
+                    "num_layers": int(num_layers),
+                    "ff_dim": int(ff_dim),
+                    "dropout": float(dropout),
+                },
+                "normalization": {
+                    "feature_cols": list(cols),
+                    "mean": mu.astype(np.float32),
+                    "std": sigma.astype(np.float32),
+                },
+            }
+            torch.save(ckpt_payload, checkpoint_latest_path)
+            if keep_epoch_checkpoints:
+                torch.save(ckpt_payload, out_dir / f"timeseries_transformer_checkpoint_epoch_{int(ep):04d}.pt")
 
     if best["state"] is not None:
         model.load_state_dict(best["state"])
@@ -496,8 +585,6 @@ def fit_timeseries_transformer(
     val_metrics = _eval(val_dl)
     test_metrics = _eval(test_dl)
 
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / "timeseries_transformer.pt"
     metrics_path = out_dir / "timeseries_transformer_metrics.json"
     config_path = out_dir / "timeseries_transformer_config.json"

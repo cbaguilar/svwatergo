@@ -27,6 +27,9 @@ NUM_LAYERS="${NUM_LAYERS:-2}"
 FF_DIM="${FF_DIM:-256}"
 DROPOUT="${DROPOUT:-0.1}"
 DEVICE="${DEVICE:-auto}"
+RESUME_FROM="${RESUME_FROM:-}"
+SAVE_EVERY_EPOCHS="${SAVE_EVERY_EPOCHS:-1}"
+KEEP_EPOCH_CHECKPOINTS="${KEEP_EPOCH_CHECKPOINTS:-yes}"
 
 if [[ -z "$DATASETS" && -z "$DATASET_ROOT" ]]; then
   echo "Set DATASETS and/or DATASET_ROOT."
@@ -61,7 +64,12 @@ for H in 1m 1h 6h 24h; do
     --ff-dim "$FF_DIM"
     --dropout "$DROPOUT"
     --device "$DEVICE"
+    --save-every-epochs "$SAVE_EVERY_EPOCHS"
+    --keep-epoch-checkpoints "$KEEP_EPOCH_CHECKPOINTS"
   )
+  if [[ -n "$RESUME_FROM" ]]; then
+    CMD+=(--resume-from "$RESUME_FROM")
+  fi
 
   if [[ -n "$DATASETS" ]]; then
     # shellcheck disable=SC2206

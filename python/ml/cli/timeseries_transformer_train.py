@@ -50,6 +50,14 @@ def main() -> int:
 
     p.add_argument("--dataloader-num-workers", type=int, default=0)
     p.add_argument("--device", default="auto", help="auto, cpu, or cuda")
+    p.add_argument("--resume-from", default="", help="Optional checkpoint path to resume from")
+    p.add_argument("--save-every-epochs", type=int, default=1, help="Save latest checkpoint every N epochs (0 disables)")
+    p.add_argument(
+        "--keep-epoch-checkpoints",
+        default="yes",
+        choices=["yes", "no"],
+        help="Keep per-epoch checkpoint files in addition to latest/best",
+    )
 
     args = p.parse_args()
 
@@ -105,6 +113,9 @@ def main() -> int:
         grad_clip=float(args.grad_clip),
         dataloader_num_workers=int(args.dataloader_num_workers),
         device=str(args.device),
+        resume_from=(Path(args.resume_from) if str(args.resume_from).strip() else None),
+        save_every_epochs=int(args.save_every_epochs),
+        keep_epoch_checkpoints=(str(args.keep_epoch_checkpoints) == "yes"),
     )
 
     print(f"Model   -> {res.model_path}")
