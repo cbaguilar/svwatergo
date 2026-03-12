@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from './backend'
+import { getApiBaseUrl, getBackendRoutingHeaderKey } from './backend'
 import { getAuthToken } from '../auth/session'
 
 function toWsUrl(path) {
@@ -16,6 +16,9 @@ export function subscribeLatestState(site, { onMessage, onError, onOpen, soft = 
   const safeSite = encodeURIComponent(site)
   const params = new URLSearchParams()
   if (soft) params.set('soft', 'include')
+  if (getBackendRoutingHeaderKey() === 'dev') {
+    params.set('backend', 'dev')
+  }
   const token = getAuthToken()
   if (token) params.set('access_token', token)
   const query = params.toString() ? `?${params.toString()}` : ''

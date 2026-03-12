@@ -9,7 +9,12 @@ import {
 } from '@coreui/react'
 import CIcon from '@coreui/icons-react'
 import { cilMenu } from '@coreui/icons'
-import { BACKEND_OPTIONS, setBackendKey } from '../api/backend'
+import {
+  BACKEND_OPTIONS,
+  ROUTING_HEADER_OPTIONS,
+  setBackendKey,
+  setBackendRoutingHeaderKey,
+} from '../api/backend'
 import { useHeaderContent } from './header/HeaderContentContext'
 
 import { AppBreadcrumb } from './index'
@@ -22,6 +27,7 @@ const AppHeader = ({ currentUser, onLogout }) => {
   const sidebarShow = useSelector((state) => state.sidebarShow)
   const selectedSystem = useSelector((state) => state.selectedSystem)
   const apiBackend = useSelector((state) => state.apiBackend)
+  const apiRoutingHeader = useSelector((state) => state.apiRoutingHeader)
   const { headerContent } = useHeaderContent()
 
   useEffect(() => {
@@ -78,6 +84,25 @@ const AppHeader = ({ currentUser, onLogout }) => {
             }}
           >
             {BACKEND_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </CFormSelect>
+          <span className="me-2 small text-body-secondary app-header-label">Route:</span>
+          <CFormSelect
+            size="sm"
+            className="me-3 app-header-select"
+            aria-label="API route header"
+            value={apiRoutingHeader}
+            onChange={(event) => {
+              const value = event.target.value
+              setBackendRoutingHeaderKey(value)
+              dispatch({ type: 'set', apiRoutingHeader: value })
+              window.location.reload()
+            }}
+          >
+            {ROUTING_HEADER_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>

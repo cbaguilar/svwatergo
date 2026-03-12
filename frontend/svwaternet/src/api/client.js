@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from './backend'
+import { getApiBaseUrl, getRoutingHeaderValue } from './backend'
 import { getAuthToken } from '../auth/session'
 
 const DEFAULT_HEADERS = {
@@ -39,6 +39,17 @@ function buildHeaders(options = {}, isJSON = false) {
     ...(isJSON ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers || {}),
   }
+
+  const routingHeader = getRoutingHeaderValue()
+  if (routingHeader) {
+    const hasBackendHeader = Object.keys(headers).some(
+      (k) => k.toLowerCase() === 'x-svwater-backend',
+    )
+    if (!hasBackendHeader) {
+      headers['X-SVWater-Backend'] = routingHeader
+    }
+  }
+
   if (!options.skipAuth) {
     const token = getAuthToken()
     if (token && !headers.Authorization) {

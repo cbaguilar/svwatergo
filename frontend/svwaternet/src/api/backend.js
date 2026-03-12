@@ -1,8 +1,14 @@
 const STORAGE_KEY = 'svwaternet_api_backend'
+const ROUTING_HEADER_STORAGE_KEY = 'svwaternet_api_routing_header'
 
 export const BACKEND_OPTIONS = [
   { value: 'local', label: 'Localhost', baseUrl: 'http://localhost:8080' },
   { value: 'remote', label: 'svwaternet.org', baseUrl: 'https://svwaternet.org' },
+]
+
+export const ROUTING_HEADER_OPTIONS = [
+  { value: 'off', label: 'Real (default)' },
+  { value: 'dev', label: 'Force dev header' },
 ]
 
 function browserStorage() {
@@ -22,6 +28,26 @@ export function setBackendKey(value) {
   const storage = browserStorage()
   if (!storage) return
   storage.setItem(STORAGE_KEY, value)
+}
+
+export function getBackendRoutingHeaderKey() {
+  const storage = browserStorage()
+  if (!storage) return 'off'
+  const key = storage.getItem(ROUTING_HEADER_STORAGE_KEY)
+  if (!key) return 'off'
+  return ROUTING_HEADER_OPTIONS.some((opt) => opt.value === key) ? key : 'off'
+}
+
+export function setBackendRoutingHeaderKey(value) {
+  const storage = browserStorage()
+  if (!storage) return
+  storage.setItem(ROUTING_HEADER_STORAGE_KEY, value)
+}
+
+export function getRoutingHeaderValue() {
+  const key = getBackendRoutingHeaderKey()
+  if (key === 'dev') return 'dev'
+  return ''
 }
 
 export function getApiBaseUrl() {

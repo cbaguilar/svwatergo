@@ -1,11 +1,12 @@
 import { legacy_createStore as createStore } from 'redux'
-import { getBackendKey } from './api/backend'
+import { getBackendKey, getBackendRoutingHeaderKey } from './api/backend'
 
 const initialState = {
   sidebarShow: true,
   theme: 'auto',
   selectedSystem: 'Bluerock',
   apiBackend: getBackendKey(),
+  apiRoutingHeader: getBackendRoutingHeaderKey(),
 }
 
 const changeState = (state = initialState, { type, ...rest }) => {
