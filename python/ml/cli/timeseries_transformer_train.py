@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import pandas as pd
+
+from ..train.timeseries_transformer import fit_timeseries_transformer
+from ..utils.parquet_discovery import discover_date_partitioned_parquets
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Train small Transformer for parquet time-series forecasting")
+    p.add_argument("--dataset", nargs="*", default=None, help="Input parquet path(s)")
+    p.add_argument("--dataset-root", default="", help="Optional root with date partitions (date=YYYY-MM-DD)")
+    p.add_argument("--dataset-filename", default="data.parquet", help="Filename inside each date partition")
+    p.add_argument("--date-from", default="", help="Inclusive lower date bound for --dataset-root (YYYY-MM-DD)")
+    p.add_argument("--date-to", default="", help="Inclusive upper date bound for --dataset-root (YYYY-MM-DD)")
+    p.add_argument("--out-dir", required=True, help="Output directory")
+    p.add_argument("--timestamp-col", required=True, help="Timestamp column")
+    p.add_argument("--group-col", default="", help="Optional grouping column (e.g., site/sensor)")
+    p.add_argument("--feature-cols", default="", help="Optional comma-separated feature columns")
+
+    p.add_argument("--horizon", default="1h", help="Prediction horizon duration, e.g. 1m, 1h, 6h, 24h")
+    p.add_argument("--lookback", type=int, default=256, help="Input sequence length in timesteps")
+    p.add_argument("--stride", type=int, default=1, help="Window stride for sample generation")
+    p.add_argument(
+        "--max-gap-seconds",
+        type=float,
+        default=0.0,
+        help="Optional max timestamp gap before segment reset (0 disables)",
+    )
+    p.add_argument("--target-mode", choices=["mean", "last"], default="mean")
+
+    p.add_argument("--train-frac", type=float, default=0.7)
+    p.add_argument("--val-frac", type=float, default=0.15)
+    p.add_argument("--random-state", type=int, default=42)
+
+    p.add_argument("--epochs", type=int, default=20)
+    p.add_argument("--batch-size", type=int, default=128)
+    p.add_argument("--learning-rate", type=float, default=1e-3)
+    p.add_argument("--weight-decay", type=float, default=1e-4)
+    p.add_argument("--grad-clip", type=float, default=1.0)
+
+    p.add_argument("--d-model", type=int, default=128)
+    p.add_argument("--nhead", type=int, default=4)
+    p.add_argument("--num-layers", type=int, default=2)
+    p.add_argument("--ff-dim", type=int, default=256)
+    p.add_argument("--dropout", type=float, default=0.1)
+
+    p.add_argument("--dataloader-num-workers", type=int, default=0)
+    p.add_argument("--device", default="auto", help="auto, cpu, or cuda")
+
+    args = p.parse_args()
+
+    dataset_paths = [str(p) for p in (args.dataset or []) if str(p).strip()]
+    if str(args.dataset_root).strip():
+        found = discover_date_partitioned_parquets(
+            Path(args.dataset_root),
+            filename=str(args.dataset_filename),
+            date_from=str(args.date_from),
+            date_to=str(args.date_to),
+        )
+        dataset_paths.extend(str(p) for p in found)
+    if not dataset_paths:
+        raise SystemExit("No datasets resolved. Provide --dataset and/or --dataset-root")
+
+    # De-duplicate while preserving order.
+    seen = set()
+    dataset_paths_unique = []
+    for pth in dataset_paths:
+        if pth not in seen:
+            dataset_paths_unique.append(pth)
+            seen.add(pth)
+
+    print(f"Resolved {len(dataset_paths_unique)} parquet file(s)")
+    dfs = [pd.read_parquet(pth) for pth in dataset_paths_unique]
+    df = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
+
+    feature_cols = [c.strip() for c in str(args.feature_cols).split(",") if c.strip()]
+
+    res = fit_timeseries_transformer(
+        df,
+        Path(args.out_dir),
+        timestamp_col=str(args.timestamp_col),
+        feature_cols=(feature_cols if feature_cols else None),
+        group_col=str(args.group_col),
+        horizon=str(args.horizon),
+        lookback=int(args.lookback),
+        stride=int(args.stride),
+        max_gap_seconds=float(args.max_gap_seconds),
+        target_mode=str(args.target_mode),
+        train_frac=float(args.train_frac),
+        val_frac=float(args.val_frac),
+        random_state=int(args.random_state),
+        batch_size=int(args.batch_size),
+        epochs=int(args.epochs),
+        learning_rate=float(args.learning_rate),
+        weight_decay=float(args.weight_decay),
+        d_model=int(args.d_model),
+        nhead=int(args.nhead),
+        num_layers=int(args.num_layers),
+        ff_dim=int(args.ff_dim),
+        dropout=float(args.dropout),
+        grad_clip=float(args.grad_clip),
+        dataloader_num_workers=int(args.dataloader_num_workers),
+        device=str(args.device),
+    )
+
+    print(f"Model   -> {res.model_path}")
+    print(f"Metrics -> {res.metrics_path}")
+    print(f"Config  -> {res.config_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
