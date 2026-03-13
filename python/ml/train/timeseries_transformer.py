@@ -48,6 +48,14 @@ class TimeSeriesTransformerMultiHorizonBacktestResult:
     feature_cols: List[str]
 
 
+TIME_CYC_COLUMNS = (
+    "time_hour_sin",
+    "time_hour_cos",
+    "time_dow_sin",
+    "time_dow_cos",
+)
+
+
 class _WindowDataset:
     def __init__(
         self,
@@ -231,6 +239,95 @@ def _select_auto_feature_columns(
             continue
         cols.append(cs)
     return cols, excluded
+
+
+def _is_binary_like_series(s: pd.Series) -> bool:
+    vals = pd.to_numeric(s, errors="coerce").dropna()
+    if len(vals) == 0:
+        return False
+    uniq = np.unique(vals.to_numpy(dtype=np.float64))
+    return bool(np.all(np.isin(uniq, np.asarray([0.0, 1.0], dtype=np.float64))))
+
+
+def _prepare_mixed_task_frame(
+    df: pd.DataFrame,
+    *,
+    selected_cols: Sequence[str],
+    state_col: str = "state",
+    word_cols: Sequence[str] = ("alarmword", "warnword0", "warnword1"),
+    word_num_bits: int = 16,
+    spec: Optional[Dict[str, Any]] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    out = df.copy()
+    if spec is None:
+        sel = [str(c) for c in selected_cols]
+        reg_cols: List[str] = []
+        binary_cols: List[str] = []
+        time_cols: List[str] = [c for c in sel if c in TIME_CYC_COLUMNS]
+        use_state_col = str(state_col) if str(state_col) in sel else ""
+        use_word_cols = [c for c in word_cols if c in sel]
+        for c in sel:
+            if c in time_cols or c in use_word_cols or c == use_state_col:
+                continue
+            if _is_binary_like_series(out[c]):
+                binary_cols.append(c)
+            else:
+                reg_cols.append(c)
+        state_classes: List[int] = []
+        if use_state_col:
+            s = pd.to_numeric(out[use_state_col], errors="coerce").dropna().astype(int)
+            state_classes = sorted(s.unique().tolist())
+        spec = {
+            "input_feature_cols": [],
+            "reg_target_cols": reg_cols,
+            "binary_target_cols": binary_cols,
+            "time_feature_cols": time_cols,
+            "state_target_col": use_state_col,
+            "state_classes": state_classes,
+            "word_cols": use_word_cols,
+            "word_num_bits": int(word_num_bits),
+            "mixed_targets": True,
+        }
+    else:
+        spec = dict(spec)
+
+    input_cols: List[str] = []
+    for c in spec.get("reg_target_cols", []):
+        if c in out.columns:
+            input_cols.append(str(c))
+    for c in spec.get("binary_target_cols", []):
+        if c in out.columns:
+            input_cols.append(str(c))
+    for c in spec.get("time_feature_cols", []):
+        if c in out.columns:
+            input_cols.append(str(c))
+
+    state_onehot_cols: List[str] = []
+    state_target_col = str(spec.get("state_target_col", "")).strip()
+    state_classes = [int(x) for x in spec.get("state_classes", [])]
+    if state_target_col and state_target_col in out.columns:
+        state_ser = pd.to_numeric(out[state_target_col], errors="coerce")
+        for cls in state_classes:
+            col = f"{state_target_col}__onehot_{int(cls)}"
+            out[col] = (state_ser == int(cls)).astype(np.float32)
+            state_onehot_cols.append(col)
+            input_cols.append(col)
+
+    word_bit_cols: List[str] = []
+    for word_col in [str(c) for c in spec.get("word_cols", [])]:
+        if word_col not in out.columns:
+            continue
+        vals = pd.to_numeric(out[word_col], errors="coerce").fillna(0).astype(np.int64)
+        for bit in range(int(spec.get("word_num_bits", 16))):
+            col = f"{word_col}__bit_{int(bit):02d}"
+            out[col] = ((vals.to_numpy(dtype=np.int64) >> int(bit)) & 1).astype(np.float32)
+            word_bit_cols.append(col)
+            input_cols.append(col)
+
+    spec["input_feature_cols"] = input_cols
+    spec["state_onehot_input_cols"] = state_onehot_cols
+    spec["word_bit_input_cols"] = word_bit_cols
+    return out, spec
 
 
 def _build_end_indices(
@@ -808,6 +905,58 @@ class _MultiHorizonWindowDataset:
         return x.astype(np.float32, copy=False), y_stack
 
 
+class _MultiTaskWindowDataset:
+    def __init__(
+        self,
+        x_input: np.ndarray,
+        y_reg: np.ndarray,
+        y_bin: np.ndarray,
+        y_state: np.ndarray,
+        end_idx: np.ndarray,
+        lookback: int,
+        horizon_steps: Sequence[int],
+        target_mode: str,
+    ) -> None:
+        self.x_input = np.asarray(x_input, dtype=np.float32)
+        self.y_reg = np.asarray(y_reg, dtype=np.float32)
+        self.y_bin = np.asarray(y_bin, dtype=np.float32)
+        self.y_state = np.asarray(y_state, dtype=np.int64)
+        self.end_idx = np.asarray(end_idx, dtype=np.int64)
+        self.lookback = int(lookback)
+        self.horizon_steps = [int(x) for x in horizon_steps]
+        self.target_mode = str(target_mode)
+
+    def __len__(self) -> int:
+        return int(self.end_idx.shape[0])
+
+    def __getitem__(self, i: int):
+        end = int(self.end_idx[i])
+        x = self.x_input[end - self.lookback + 1 : end + 1]
+
+        reg_list: List[np.ndarray] = []
+        if self.y_reg.shape[1] > 0:
+            for hs in self.horizon_steps:
+                if self.target_mode == "last":
+                    yr = self.y_reg[end + hs]
+                else:
+                    yr = self.y_reg[end + 1 : end + hs + 1].mean(axis=0)
+                reg_list.append(np.asarray(yr, dtype=np.float32))
+            y_reg = np.stack(reg_list, axis=0)
+        else:
+            y_reg = np.zeros((len(self.horizon_steps), 0), dtype=np.float32)
+
+        if self.y_bin.shape[1] > 0:
+            y_bin = np.stack([self.y_bin[end + hs] for hs in self.horizon_steps], axis=0).astype(np.float32)
+        else:
+            y_bin = np.zeros((len(self.horizon_steps), 0), dtype=np.float32)
+
+        if self.y_state.size > 0:
+            y_state = np.asarray([self.y_state[end + hs] for hs in self.horizon_steps], dtype=np.int64)
+        else:
+            y_state = np.zeros((len(self.horizon_steps),), dtype=np.int64)
+        return x.astype(np.float32, copy=False), y_reg, y_bin, y_state
+
+
 class _MultiHorizonTransformerRegressor:
     def __init__(
         self,
@@ -855,6 +1004,74 @@ class _MultiHorizonTransformerRegressor:
                 h = self.encoder(h)
                 out = self.head(h[:, -1, :])
                 return out.view(b, self.num_horizons, self.input_dim)
+
+        self.model = _Model()
+
+
+class _MultiTaskTransformer:
+    def __init__(
+        self,
+        nn,
+        *,
+        input_dim: int,
+        d_model: int,
+        nhead: int,
+        num_layers: int,
+        dropout: float,
+        ff_dim: int,
+        max_lookback: int,
+        num_horizons: int,
+        reg_dim: int,
+        bin_dim: int,
+        state_classes: int,
+    ):
+        class _Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.reg_dim = int(reg_dim)
+                self.bin_dim = int(bin_dim)
+                self.state_classes = int(state_classes)
+                self.num_horizons = int(num_horizons)
+                self.in_proj = nn.Linear(input_dim, d_model)
+                self.pos_emb = nn.Embedding(max_lookback, d_model)
+                enc_layer = nn.TransformerEncoderLayer(
+                    d_model=d_model,
+                    nhead=nhead,
+                    dim_feedforward=ff_dim,
+                    dropout=dropout,
+                    batch_first=True,
+                    activation="gelu",
+                )
+                self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+                self.trunk = nn.Sequential(
+                    nn.LayerNorm(d_model),
+                    nn.Linear(d_model, d_model),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                )
+                self.reg_head = nn.Linear(d_model, reg_dim * num_horizons) if reg_dim > 0 else None
+                self.bin_head = nn.Linear(d_model, bin_dim * num_horizons) if bin_dim > 0 else None
+                self.state_head = nn.Linear(d_model, state_classes * num_horizons) if state_classes > 0 else None
+
+            def forward(self, x):
+                import torch  # type: ignore
+
+                b, t, _ = x.shape
+                pos = torch.arange(t, device=x.device).unsqueeze(0).expand(b, t)
+                h = self.in_proj(x) + self.pos_emb(pos)
+                h = self.encoder(h)
+                z = self.trunk(h[:, -1, :])
+
+                reg_out = None
+                if self.reg_head is not None:
+                    reg_out = self.reg_head(z).view(b, self.num_horizons, self.reg_dim)
+                bin_out = None
+                if self.bin_head is not None:
+                    bin_out = self.bin_head(z).view(b, self.num_horizons, self.bin_dim)
+                state_out = None
+                if self.state_head is not None:
+                    state_out = self.state_head(z).view(b, self.num_horizons, self.state_classes)
+                return reg_out, bin_out, state_out
 
         self.model = _Model()
 
@@ -928,20 +1145,58 @@ def fit_timeseries_transformer_multihorizon(
         )
     if not cols:
         raise ValueError("No numeric feature columns available")
-    _log_progress(
-        f"[train] rows={len(df2)} features={len(cols)} horizons={','.join(hz_list)} "
-        f"lookback={int(lookback)} stride={int(stride)} time_cyc_features={bool(time_cyc_features)}"
-    )
     if excluded_auto_cols:
         _log_progress(
             f"[train] auto-excluded features={','.join(sorted(excluded_auto_cols))}"
         )
+    df2, mixed_spec = _prepare_mixed_task_frame(df2, selected_cols=cols)
+    input_cols = [str(c) for c in mixed_spec.get("input_feature_cols", [])]
+    reg_cols = [str(c) for c in mixed_spec.get("reg_target_cols", [])]
+    bin_cols = [str(c) for c in mixed_spec.get("binary_target_cols", [])]
+    state_col = str(mixed_spec.get("state_target_col", "")).strip()
+    state_classes = [int(x) for x in mixed_spec.get("state_classes", [])]
+    _log_progress(
+        f"[train] rows={len(df2)} inputs={len(input_cols)} reg_targets={len(reg_cols)} "
+        f"binary_targets={len(bin_cols)} state_classes={len(state_classes)} "
+        f"horizons={','.join(hz_list)} lookback={int(lookback)} stride={int(stride)} "
+        f"time_cyc_features={bool(time_cyc_features)}"
+    )
 
-    feat = df2[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
-    valid_row = np.all(np.isfinite(feat), axis=1)
-    if valid_row.mean() < 1.0:
-        df2 = df2.loc[valid_row].reset_index(drop=True)
-        feat = feat[valid_row]
+    x_input = df2[input_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+    y_reg = (
+        df2[reg_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+        if reg_cols
+        else np.zeros((len(df2), 0), dtype=np.float32)
+    )
+    y_bin = (
+        df2[bin_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+        if bin_cols
+        else np.zeros((len(df2), 0), dtype=np.float32)
+    )
+    if state_col:
+        state_to_idx = {int(v): i for i, v in enumerate(state_classes)}
+        s_raw = pd.to_numeric(df2[state_col], errors="coerce")
+        y_state = np.full((len(df2),), -100, dtype=np.int64)
+        valid_state = s_raw.notna().to_numpy()
+        if np.any(valid_state):
+            vals = s_raw[valid_state].astype(int).to_numpy()
+            mapped = np.asarray([state_to_idx.get(int(v), -100) for v in vals], dtype=np.int64)
+            y_state[np.where(valid_state)[0]] = mapped
+    else:
+        y_state = np.zeros((0,), dtype=np.int64)
+
+    valid_mask = np.all(np.isfinite(x_input), axis=1)
+    if y_reg.shape[1] > 0:
+        valid_mask &= np.all(np.isfinite(y_reg), axis=1)
+    if y_bin.shape[1] > 0:
+        valid_mask &= np.all(np.isfinite(y_bin), axis=1)
+    if valid_mask.mean() < 1.0:
+        df2 = df2.loc[valid_mask].reset_index(drop=True)
+        x_input = x_input[valid_mask]
+        y_reg = y_reg[valid_mask]
+        y_bin = y_bin[valid_mask]
+        if y_state.size > 0:
+            y_state = y_state[valid_mask]
 
     sample_period_seconds = _infer_sample_period_seconds(df2[timestamp_col])
     horizon_seconds = [_parse_duration_seconds(h) for h in hz_list]
@@ -982,14 +1237,32 @@ def fit_timeseries_transformer_multihorizon(
     )
 
     train_rows = np.unique(np.concatenate([np.arange(e - lookback + 1, e + 1) for e in train_end]))
-    mu = feat[train_rows].mean(axis=0)
-    sigma = feat[train_rows].std(axis=0)
-    sigma = np.where(sigma > 1e-6, sigma, 1.0)
-    feat_n = ((feat - mu) / sigma).astype(np.float32, copy=False)
+    x_mu = x_input[train_rows].mean(axis=0)
+    x_sigma = x_input[train_rows].std(axis=0)
+    x_sigma = np.where(x_sigma > 1e-6, x_sigma, 1.0)
+    x_input_n = ((x_input - x_mu) / x_sigma).astype(np.float32, copy=False)
+    if y_reg.shape[1] > 0:
+        y_reg_mu = y_reg[train_rows].mean(axis=0)
+        y_reg_sigma = y_reg[train_rows].std(axis=0)
+        y_reg_sigma = np.where(y_reg_sigma > 1e-6, y_reg_sigma, 1.0)
+        y_reg_n = ((y_reg - y_reg_mu) / y_reg_sigma).astype(np.float32, copy=False)
+    else:
+        y_reg_mu = np.zeros((0,), dtype=np.float32)
+        y_reg_sigma = np.ones((0,), dtype=np.float32)
+        y_reg_n = y_reg.astype(np.float32, copy=False)
 
     class WindowDataset(Dataset):
-        def __init__(self, features, ends, lookback_v, horizon_steps_v, target_mode_v):
-            self.impl = _MultiHorizonWindowDataset(features, ends, lookback_v, horizon_steps_v, target_mode_v)
+        def __init__(self, x_in, y_reg_in, y_bin_in, y_state_in, ends, lookback_v, horizon_steps_v, target_mode_v):
+            self.impl = _MultiTaskWindowDataset(
+                x_in,
+                y_reg_in,
+                y_bin_in,
+                y_state_in,
+                ends,
+                lookback_v,
+                horizon_steps_v,
+                target_mode_v,
+            )
 
         def __len__(self):
             return len(self.impl)
@@ -997,9 +1270,9 @@ def fit_timeseries_transformer_multihorizon(
         def __getitem__(self, i):
             return self.impl[i]
 
-    train_ds = WindowDataset(feat_n, train_end, lookback, horizon_steps, target_mode)
-    val_ds = WindowDataset(feat_n, val_end, lookback, horizon_steps, target_mode)
-    test_ds = WindowDataset(feat_n, test_end, lookback, horizon_steps, target_mode)
+    train_ds = WindowDataset(x_input_n, y_reg_n, y_bin, y_state, train_end, lookback, horizon_steps, target_mode)
+    val_ds = WindowDataset(x_input_n, y_reg_n, y_bin, y_state, val_end, lookback, horizon_steps, target_mode)
+    test_ds = WindowDataset(x_input_n, y_reg_n, y_bin, y_state, test_end, lookback, horizon_steps, target_mode)
 
     pin_memory = bool(torch.cuda.is_available())
     train_dl = DataLoader(train_ds, batch_size=int(batch_size), shuffle=True, num_workers=int(dataloader_num_workers), pin_memory=pin_memory)
@@ -1018,9 +1291,9 @@ def fit_timeseries_transformer_multihorizon(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(random_state))
 
-    model = _MultiHorizonTransformerRegressor(
+    model = _MultiTaskTransformer(
         nn,
-        input_dim=feat_n.shape[1],
+        input_dim=x_input_n.shape[1],
         d_model=int(d_model),
         nhead=int(nhead),
         num_layers=int(num_layers),
@@ -1028,10 +1301,15 @@ def fit_timeseries_transformer_multihorizon(
         ff_dim=int(ff_dim),
         max_lookback=int(lookback),
         num_horizons=len(hz_list),
+        reg_dim=int(y_reg_n.shape[1]),
+        bin_dim=int(y_bin.shape[1]),
+        state_classes=int(len(state_classes)),
     ).model.to(dev)
 
     opt = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=float(weight_decay))
-    loss_fn = nn.MSELoss(reduction="mean")
+    reg_loss_fn = nn.MSELoss(reduction="mean")
+    bin_loss_fn = nn.BCEWithLogitsLoss(reduction="mean")
+    state_loss_fn = nn.CrossEntropyLoss(ignore_index=-100, reduction="mean")
     hz_w_t = torch.tensor(hz_w, dtype=torch.float32, device=dev)
 
     out_dir = Path(out_dir)
@@ -1069,30 +1347,58 @@ def fit_timeseries_transformer_multihorizon(
 
     def _eval(dloader):
         model.eval()
-        ys = []
-        yp = []
+        reg_true_list = []
+        reg_pred_list = []
+        bin_true_list = []
+        bin_prob_list = []
+        state_true_list = []
+        state_pred_list = []
         with torch.no_grad():
-            for xb, yb in dloader:
+            for xb, y_reg_b, y_bin_b, y_state_b in dloader:
                 xb = xb.to(dev)
-                yb = yb.to(dev)
-                pred = model(xb)
-                ys.append(yb.detach().cpu().numpy())
-                yp.append(pred.detach().cpu().numpy())
-        if not ys:
+                reg_out, bin_out, state_out = model(xb)
+                if reg_out is not None:
+                    reg_true_list.append(y_reg_b.numpy())
+                    reg_pred_list.append(reg_out.detach().cpu().numpy())
+                if bin_out is not None:
+                    bin_true_list.append(y_bin_b.numpy())
+                    bin_prob_list.append(torch.sigmoid(bin_out).detach().cpu().numpy())
+                if state_out is not None:
+                    state_true_list.append(y_state_b.numpy())
+                    state_pred_list.append(torch.argmax(state_out, dim=-1).detach().cpu().numpy())
+        if not reg_true_list and not bin_true_list and not state_true_list:
             raise ValueError("Evaluation split is empty. Lower lookback/horizon or add more rows.")
-        y_true_n = np.concatenate(ys, axis=0)
-        y_pred_n = np.concatenate(yp, axis=0)
-        y_true = (y_true_n * sigma[None, None, :]) + mu[None, None, :]
-        y_pred = (y_pred_n * sigma[None, None, :]) + mu[None, None, :]
 
         per_h_metrics = {}
         weighted_loss = 0.0
         for i, hz in enumerate(hz_list):
-            m = _compute_metrics(y_true[:, i, :].astype(np.float32), y_pred[:, i, :].astype(np.float32))
-            per_h_metrics[str(hz)] = m
-            err_n = y_pred_n[:, i, :] - y_true_n[:, i, :]
-            mse_n = float(np.mean(np.square(err_n)))
-            weighted_loss += float(hz_w[i]) * mse_n
+            hz_metrics: Dict[str, Any] = {}
+            hz_loss = 0.0
+            if reg_true_list:
+                y_true_n = np.concatenate(reg_true_list, axis=0)
+                y_pred_n = np.concatenate(reg_pred_list, axis=0)
+                y_true = (y_true_n * y_reg_sigma[None, None, :]) + y_reg_mu[None, None, :]
+                y_pred = (y_pred_n * y_reg_sigma[None, None, :]) + y_reg_mu[None, None, :]
+                hz_metrics["regression"] = _compute_metrics(
+                    y_true[:, i, :].astype(np.float32),
+                    y_pred[:, i, :].astype(np.float32),
+                )
+                err_n = y_pred_n[:, i, :] - y_true_n[:, i, :]
+                hz_loss += float(np.mean(np.square(err_n)))
+            if bin_true_list:
+                yb_true = np.concatenate(bin_true_list, axis=0)[:, i, :]
+                yb_prob = np.concatenate(bin_prob_list, axis=0)[:, i, :]
+                yb_pred = (yb_prob >= 0.5).astype(np.float32)
+                hz_metrics["binary_accuracy"] = float(np.mean(yb_pred == yb_true))
+                hz_loss += float(np.mean(-(yb_true * np.log(np.clip(yb_prob, 1e-6, 1.0)) + (1.0 - yb_true) * np.log(np.clip(1.0 - yb_prob, 1e-6, 1.0)))))
+            if state_true_list:
+                ys_true = np.concatenate(state_true_list, axis=0)[:, i]
+                ys_pred = np.concatenate(state_pred_list, axis=0)[:, i]
+                mask = ys_true >= 0
+                if np.any(mask):
+                    hz_metrics["state_accuracy"] = float(np.mean(ys_true[mask] == ys_pred[mask]))
+            per_h_metrics[str(hz)] = hz_metrics
+            weighted_loss += float(hz_w[i]) * float(hz_loss)
         return {
             "per_horizon": per_h_metrics,
             "weighted_loss": float(weighted_loss),
@@ -1101,12 +1407,23 @@ def fit_timeseries_transformer_multihorizon(
     for ep in range(int(start_epoch), int(epochs) + 1):
         model.train()
         losses = []
-        for xb, yb in train_dl:
+        for xb, y_reg_b, y_bin_b, y_state_b in train_dl:
             xb = xb.to(dev)
-            yb = yb.to(dev)
+            y_reg_b = y_reg_b.to(dev)
+            y_bin_b = y_bin_b.to(dev)
+            y_state_b = y_state_b.to(dev)
             opt.zero_grad(set_to_none=True)
-            pred = model(xb)
-            per_h_losses = [loss_fn(pred[:, i, :], yb[:, i, :]) for i in range(len(hz_list))]
+            reg_out, bin_out, state_out = model(xb)
+            per_h_losses = []
+            for i in range(len(hz_list)):
+                hz_loss = torch.tensor(0.0, device=dev)
+                if reg_out is not None:
+                    hz_loss = hz_loss + reg_loss_fn(reg_out[:, i, :], y_reg_b[:, i, :])
+                if bin_out is not None:
+                    hz_loss = hz_loss + bin_loss_fn(bin_out[:, i, :], y_bin_b[:, i, :])
+                if state_out is not None:
+                    hz_loss = hz_loss + state_loss_fn(state_out[:, i, :], y_state_b[:, i])
+                per_h_losses.append(hz_loss)
             loss = torch.sum(hz_w_t * torch.stack(per_h_losses))
             loss.backward()
             if float(grad_clip) > 0:
@@ -1123,12 +1440,22 @@ def fit_timeseries_transformer_multihorizon(
         }
         for hz in hz_list:
             hz_m = val_eval["per_horizon"][hz]
-            row[f"val_rmse_{hz}"] = float(hz_m["rmse"])
-            row[f"val_r2_{hz}"] = float(hz_m["r2"])
+            if "regression" in hz_m:
+                row[f"val_rmse_{hz}"] = float(hz_m["regression"]["rmse"])
+                row[f"val_r2_{hz}"] = float(hz_m["regression"]["r2"])
+            if "binary_accuracy" in hz_m:
+                row[f"val_bin_acc_{hz}"] = float(hz_m["binary_accuracy"])
+            if "state_accuracy" in hz_m:
+                row[f"val_state_acc_{hz}"] = float(hz_m["state_accuracy"])
         history.append(row)
         history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
         hz_summary = " ".join(
-            f"{hz}:rmse={float(val_eval['per_horizon'][hz]['rmse']):.4f},r2={float(val_eval['per_horizon'][hz]['r2']):.4f}"
+            (
+                f"{hz}:rmse={float(val_eval['per_horizon'][hz]['regression']['rmse']):.4f},"
+                f"r2={float(val_eval['per_horizon'][hz]['regression']['r2']):.4f}"
+                if "regression" in val_eval["per_horizon"][hz]
+                else f"{hz}:bin_acc={float(val_eval['per_horizon'][hz].get('binary_accuracy', 0.0)):.4f}"
+            )
             for hz in hz_list
         )
         _log_progress(
@@ -1150,7 +1477,9 @@ def fit_timeseries_transformer_multihorizon(
                     "history": history,
                     "best": best,
                     "model_config": {
-                        "input_dim": int(feat_n.shape[1]),
+                        "input_dim": int(x_input_n.shape[1]),
+                        "input_feature_cols": list(input_cols),
+                        "mixed_target_spec": mixed_spec,
                         "lookback": int(lookback),
                         "horizons": hz_list,
                         "horizon_seconds": [int(x) for x in horizon_seconds],
@@ -1164,11 +1493,15 @@ def fit_timeseries_transformer_multihorizon(
                         "ff_dim": int(ff_dim),
                         "dropout": float(dropout),
                         "multihorizon": True,
+                        "mixed_targets": True,
                     },
                     "normalization": {
-                        "feature_cols": list(cols),
-                        "mean": mu.astype(np.float32),
-                        "std": sigma.astype(np.float32),
+                        "feature_cols": list(input_cols),
+                        "mean": x_mu.astype(np.float32),
+                        "std": x_sigma.astype(np.float32),
+                        "reg_target_cols": list(reg_cols),
+                        "reg_mean": y_reg_mu.astype(np.float32),
+                        "reg_std": y_reg_sigma.astype(np.float32),
                     },
                 },
                 checkpoint_best_path,
@@ -1182,7 +1515,9 @@ def fit_timeseries_transformer_multihorizon(
                 "history": history,
                 "best": best,
                 "model_config": {
-                    "input_dim": int(feat_n.shape[1]),
+                    "input_dim": int(x_input_n.shape[1]),
+                    "input_feature_cols": list(input_cols),
+                    "mixed_target_spec": mixed_spec,
                     "lookback": int(lookback),
                     "horizons": hz_list,
                     "horizon_seconds": [int(x) for x in horizon_seconds],
@@ -1196,11 +1531,15 @@ def fit_timeseries_transformer_multihorizon(
                     "ff_dim": int(ff_dim),
                     "dropout": float(dropout),
                     "multihorizon": True,
+                    "mixed_targets": True,
                 },
                 "normalization": {
-                    "feature_cols": list(cols),
-                    "mean": mu.astype(np.float32),
-                    "std": sigma.astype(np.float32),
+                    "feature_cols": list(input_cols),
+                    "mean": x_mu.astype(np.float32),
+                    "std": x_sigma.astype(np.float32),
+                    "reg_target_cols": list(reg_cols),
+                    "reg_mean": y_reg_mu.astype(np.float32),
+                    "reg_std": y_reg_sigma.astype(np.float32),
                 },
             }
             torch.save(ckpt_payload, checkpoint_latest_path)
@@ -1220,12 +1559,17 @@ def fit_timeseries_transformer_multihorizon(
     payload = {
         "model_state_dict": model.state_dict(),
         "normalization": {
-            "feature_cols": list(cols),
-            "mean": mu.astype(np.float32),
-            "std": sigma.astype(np.float32),
+            "feature_cols": list(input_cols),
+            "mean": x_mu.astype(np.float32),
+            "std": x_sigma.astype(np.float32),
+            "reg_target_cols": list(reg_cols),
+            "reg_mean": y_reg_mu.astype(np.float32),
+            "reg_std": y_reg_sigma.astype(np.float32),
         },
         "model_config": {
-            "input_dim": int(feat_n.shape[1]),
+            "input_dim": int(x_input_n.shape[1]),
+            "input_feature_cols": list(input_cols),
+            "mixed_target_spec": mixed_spec,
             "lookback": int(lookback),
             "horizons": hz_list,
             "horizon_seconds": [int(x) for x in horizon_seconds],
@@ -1239,6 +1583,7 @@ def fit_timeseries_transformer_multihorizon(
             "ff_dim": int(ff_dim),
             "dropout": float(dropout),
             "multihorizon": True,
+            "mixed_targets": True,
         },
     }
     torch.save(payload, model_path)
@@ -1253,7 +1598,10 @@ def fit_timeseries_transformer_multihorizon(
         "test": test_eval,
         "data": {
             "rows": int(len(df2)),
-            "num_features": int(len(cols)),
+            "num_features": int(len(input_cols)),
+            "num_regression_targets": int(len(reg_cols)),
+            "num_binary_targets": int(len(bin_cols)),
+            "num_state_classes": int(len(state_classes)),
             "timestamp_col": str(timestamp_col),
             "group_col": str(group_col),
             "sample_period_seconds": float(sample_period_seconds),
@@ -1269,7 +1617,11 @@ def fit_timeseries_transformer_multihorizon(
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     config = {
-        "feature_cols": list(cols),
+        "feature_cols": list(input_cols),
+        "reg_target_cols": list(reg_cols),
+        "binary_target_cols": list(bin_cols),
+        "state_target_col": str(state_col),
+        "state_classes": [int(x) for x in state_classes],
         "timestamp_col": str(timestamp_col),
         "group_col": str(group_col),
         "lookback": int(lookback),
@@ -1281,8 +1633,10 @@ def fit_timeseries_transformer_multihorizon(
         "time_cyc_features": bool(time_cyc_features),
         "sample_period_seconds": float(sample_period_seconds),
         "normalization": {
-            "mean": [float(x) for x in mu.tolist()],
-            "std": [float(x) for x in sigma.tolist()],
+            "mean": [float(x) for x in x_mu.tolist()],
+            "std": [float(x) for x in x_sigma.tolist()],
+            "reg_mean": [float(x) for x in y_reg_mu.tolist()],
+            "reg_std": [float(x) for x in y_reg_sigma.tolist()],
         },
     }
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -1327,6 +1681,7 @@ def backtest_timeseries_transformer_multihorizon(
     norm_cfg = dict(bundle.get("normalization", {}))
     if not bool(model_cfg.get("multihorizon", False)):
         raise ValueError("Provided model is not marked as multihorizon")
+    mixed_targets = bool(model_cfg.get("mixed_targets", False))
 
     feature_cols = [str(c) for c in norm_cfg.get("feature_cols", [])]
     if not feature_cols:
@@ -1375,18 +1730,90 @@ def backtest_timeseries_transformer_multihorizon(
     sort_cols = [group_col, timestamp_col] if group_col else [timestamp_col]
     df2 = df2.sort_values(sort_cols).reset_index(drop=True)
 
-    feat = df2[feature_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
-    valid_row = np.all(np.isfinite(feat), axis=1)
-    if valid_row.mean() < 1.0:
-        df2 = df2.loc[valid_row].reset_index(drop=True)
-        feat = feat[valid_row]
+    reg_target_cols = [str(c) for c in norm_cfg.get("reg_target_cols", [])]
+    mixed_spec = dict(model_cfg.get("mixed_target_spec", {}))
+    if mixed_targets:
+        df2, mixed_spec = _prepare_mixed_task_frame(
+            df2,
+            selected_cols=feature_cols,
+            spec=mixed_spec,
+        )
+        input_cols = [str(c) for c in mixed_spec.get("input_feature_cols", [])]
+        reg_target_cols = [str(c) for c in mixed_spec.get("reg_target_cols", [])]
+        bin_target_cols = [str(c) for c in mixed_spec.get("binary_target_cols", [])]
+        state_target_col = str(mixed_spec.get("state_target_col", "")).strip()
+        state_classes = [int(x) for x in mixed_spec.get("state_classes", [])]
 
-    mu = np.asarray(norm_cfg.get("mean", []), dtype=np.float32)
-    sigma = np.asarray(norm_cfg.get("std", []), dtype=np.float32)
-    if mu.shape[0] != feat.shape[1] or sigma.shape[0] != feat.shape[1]:
-        raise ValueError("Bundle normalization shape does not match input feature count")
-    sigma = np.where(np.abs(sigma) > 1e-6, sigma, 1.0).astype(np.float32)
-    feat_n = ((feat - mu) / sigma).astype(np.float32, copy=False)
+        x_input = df2[input_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+        y_reg = (
+            df2[reg_target_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+            if reg_target_cols
+            else np.zeros((len(df2), 0), dtype=np.float32)
+        )
+        y_bin = (
+            df2[bin_target_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+            if bin_target_cols
+            else np.zeros((len(df2), 0), dtype=np.float32)
+        )
+        if state_target_col:
+            state_to_idx = {int(v): i for i, v in enumerate(state_classes)}
+            state_raw = pd.to_numeric(df2[state_target_col], errors="coerce")
+            y_state = np.full((len(df2),), -100, dtype=np.int64)
+            valid_state = state_raw.notna().to_numpy()
+            if np.any(valid_state):
+                state_vals = state_raw[valid_state].astype(int).to_numpy()
+                y_state[np.where(valid_state)[0]] = np.asarray(
+                    [state_to_idx.get(int(v), -100) for v in state_vals],
+                    dtype=np.int64,
+                )
+        else:
+            y_state = np.zeros((0,), dtype=np.int64)
+
+        valid_row = np.all(np.isfinite(x_input), axis=1)
+        if y_reg.shape[1] > 0:
+            valid_row &= np.all(np.isfinite(y_reg), axis=1)
+        if y_bin.shape[1] > 0:
+            valid_row &= np.all(np.isfinite(y_bin), axis=1)
+        if valid_row.mean() < 1.0:
+            df2 = df2.loc[valid_row].reset_index(drop=True)
+            x_input = x_input[valid_row]
+            y_reg = y_reg[valid_row]
+            y_bin = y_bin[valid_row]
+            if y_state.size > 0:
+                y_state = y_state[valid_row]
+
+        mu = np.asarray(norm_cfg.get("mean", []), dtype=np.float32)
+        sigma = np.asarray(norm_cfg.get("std", []), dtype=np.float32)
+        if mu.shape[0] != x_input.shape[1] or sigma.shape[0] != x_input.shape[1]:
+            raise ValueError("Bundle normalization shape does not match mixed input feature count")
+        sigma = np.where(np.abs(sigma) > 1e-6, sigma, 1.0).astype(np.float32)
+        x_input_n = ((x_input - mu) / sigma).astype(np.float32, copy=False)
+
+        reg_mu = np.asarray(norm_cfg.get("reg_mean", []), dtype=np.float32)
+        reg_sigma = np.asarray(norm_cfg.get("reg_std", []), dtype=np.float32)
+        if reg_target_cols and (reg_mu.shape[0] != len(reg_target_cols) or reg_sigma.shape[0] != len(reg_target_cols)):
+            raise ValueError("Bundle normalization reg_mean/reg_std shape does not match regression target count")
+        reg_sigma = np.where(np.abs(reg_sigma) > 1e-6, reg_sigma, 1.0).astype(np.float32)
+        if y_reg.shape[1] > 0:
+            y_reg_n = ((y_reg - reg_mu) / reg_sigma).astype(np.float32, copy=False)
+        else:
+            y_reg_n = y_reg.astype(np.float32, copy=False)
+    else:
+        bin_target_cols = []
+        state_target_col = ""
+        state_classes = []
+        feat = df2[feature_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+        valid_row = np.all(np.isfinite(feat), axis=1)
+        if valid_row.mean() < 1.0:
+            df2 = df2.loc[valid_row].reset_index(drop=True)
+            feat = feat[valid_row]
+
+        mu = np.asarray(norm_cfg.get("mean", []), dtype=np.float32)
+        sigma = np.asarray(norm_cfg.get("std", []), dtype=np.float32)
+        if mu.shape[0] != feat.shape[1] or sigma.shape[0] != feat.shape[1]:
+            raise ValueError("Bundle normalization shape does not match input feature count")
+        sigma = np.where(np.abs(sigma) > 1e-6, sigma, 1.0).astype(np.float32)
+        feat_n = ((feat - mu) / sigma).astype(np.float32, copy=False)
     _log_progress("[backtest] generating rolling windows")
 
     max_horizon_steps = int(max(run_horizon_steps))
@@ -1401,8 +1828,26 @@ def backtest_timeseries_transformer_multihorizon(
     )
 
     class WindowDataset(Dataset):
-        def __init__(self, features, ends, lookback_v, horizon_steps_v, target_mode_v):
-            self.impl = _MultiHorizonWindowDataset(features, ends, lookback_v, horizon_steps_v, target_mode_v)
+        def __init__(self):
+            if mixed_targets:
+                self.impl = _MultiTaskWindowDataset(
+                    x_input_n,
+                    y_reg_n,
+                    y_bin,
+                    y_state,
+                    end_idx,
+                    use_lookback,
+                    run_horizon_steps,
+                    use_target_mode,
+                )
+            else:
+                self.impl = _MultiHorizonWindowDataset(
+                    feat_n,
+                    end_idx,
+                    use_lookback,
+                    run_horizon_steps,
+                    use_target_mode,
+                )
 
         def __len__(self):
             return len(self.impl)
@@ -1410,7 +1855,7 @@ def backtest_timeseries_transformer_multihorizon(
         def __getitem__(self, i):
             return self.impl[i]
 
-    ds = WindowDataset(feat_n, end_idx, use_lookback, run_horizon_steps, use_target_mode)
+    ds = WindowDataset()
     if len(ds) == 0:
         raise ValueError("No backtest samples generated for this configuration")
     _log_progress(f"[backtest] generated_samples={len(ds)}")
@@ -1425,36 +1870,87 @@ def backtest_timeseries_transformer_multihorizon(
         f"[backtest] device={dev} batch_size={int(batch_size)} dataloader_workers={int(dataloader_num_workers)}"
     )
 
-    model = _MultiHorizonTransformerRegressor(
-        nn,
-        input_dim=int(model_cfg.get("input_dim", feat_n.shape[1])),
-        d_model=int(model_cfg.get("d_model", 128)),
-        nhead=int(model_cfg.get("nhead", 4)),
-        num_layers=int(model_cfg.get("num_layers", 2)),
-        ff_dim=int(model_cfg.get("ff_dim", 256)),
-        dropout=float(model_cfg.get("dropout", 0.1)),
-        max_lookback=use_lookback,
-        num_horizons=len(run_hz_list),
-    ).model.to(dev)
+    if mixed_targets:
+        model = _MultiTaskTransformer(
+            nn,
+            input_dim=int(model_cfg.get("input_dim", len(feature_cols))),
+            d_model=int(model_cfg.get("d_model", 128)),
+            nhead=int(model_cfg.get("nhead", 4)),
+            num_layers=int(model_cfg.get("num_layers", 2)),
+            ff_dim=int(model_cfg.get("ff_dim", 256)),
+            dropout=float(model_cfg.get("dropout", 0.1)),
+            max_lookback=use_lookback,
+            num_horizons=len(run_hz_list),
+            reg_dim=len(reg_target_cols),
+            bin_dim=len(bin_target_cols),
+            state_classes=len(state_classes),
+        ).model.to(dev)
+    else:
+        model = _MultiHorizonTransformerRegressor(
+            nn,
+            input_dim=int(model_cfg.get("input_dim", feat_n.shape[1])),
+            d_model=int(model_cfg.get("d_model", 128)),
+            nhead=int(model_cfg.get("nhead", 4)),
+            num_layers=int(model_cfg.get("num_layers", 2)),
+            ff_dim=int(model_cfg.get("ff_dim", 256)),
+            dropout=float(model_cfg.get("dropout", 0.1)),
+            max_lookback=use_lookback,
+            num_horizons=len(run_hz_list),
+        ).model.to(dev)
     model.load_state_dict(bundle["model_state_dict"])
     model.eval()
 
-    ys = []
-    yp = []
+    reg_true_batches = []
+    reg_pred_batches = []
+    bin_true_batches = []
+    bin_prob_batches = []
+    state_true_batches = []
+    state_pred_batches = []
     _log_progress("[backtest] running model inference")
     with torch.no_grad():
-        for xb, yb in dl:
-            xb = xb.to(dev)
-            pred = model(xb)
-            ys.append(yb.detach().cpu().numpy())
-            yp.append(pred.detach().cpu().numpy())
-    y_true_n = np.concatenate(ys, axis=0)
-    y_pred_n = np.concatenate(yp, axis=0)
-    y_true = (y_true_n * sigma[None, None, :]) + mu[None, None, :]
-    y_pred = (y_pred_n * sigma[None, None, :]) + mu[None, None, :]
+        if mixed_targets:
+            for xb, y_reg_b, y_bin_b, y_state_b in dl:
+                xb = xb.to(dev)
+                reg_out, bin_out, state_out = model(xb)
+                if reg_out is not None:
+                    reg_true_batches.append(y_reg_b.detach().cpu().numpy())
+                    reg_pred_batches.append(reg_out.detach().cpu().numpy())
+                if bin_out is not None:
+                    bin_true_batches.append(y_bin_b.detach().cpu().numpy())
+                    bin_prob_batches.append(torch.sigmoid(bin_out).detach().cpu().numpy())
+                if state_out is not None:
+                    state_true_batches.append(y_state_b.detach().cpu().numpy())
+                    state_pred_batches.append(torch.argmax(state_out, dim=-1).detach().cpu().numpy())
+        else:
+            ys = []
+            yp = []
+            for xb, yb in dl:
+                xb = xb.to(dev)
+                pred = model(xb)
+                ys.append(yb.detach().cpu().numpy())
+                yp.append(pred.detach().cpu().numpy())
+            y_true_n = np.concatenate(ys, axis=0)
+            y_pred_n = np.concatenate(yp, axis=0)
+            y_true = (y_true_n * sigma[None, None, :]) + mu[None, None, :]
+            y_pred = (y_pred_n * sigma[None, None, :]) + mu[None, None, :]
+
+    if mixed_targets and reg_true_batches:
+        y_reg_true_n = np.concatenate(reg_true_batches, axis=0)
+        y_reg_pred_n = np.concatenate(reg_pred_batches, axis=0)
+        y_reg_true = (y_reg_true_n * reg_sigma[None, None, :]) + reg_mu[None, None, :]
+        y_reg_pred = (y_reg_pred_n * reg_sigma[None, None, :]) + reg_mu[None, None, :]
+    else:
+        y_reg_true_n = np.zeros((len(end_idx), len(run_hz_list), 0), dtype=np.float32)
+        y_reg_pred_n = np.zeros((len(end_idx), len(run_hz_list), 0), dtype=np.float32)
+        y_reg_true = y_reg_true_n
+        y_reg_pred = y_reg_pred_n
+    y_bin_true = np.concatenate(bin_true_batches, axis=0) if bin_true_batches else np.zeros((len(end_idx), len(run_hz_list), 0), dtype=np.float32)
+    y_bin_prob = np.concatenate(bin_prob_batches, axis=0) if bin_prob_batches else np.zeros((len(end_idx), len(run_hz_list), 0), dtype=np.float32)
+    y_state_true = np.concatenate(state_true_batches, axis=0) if state_true_batches else np.zeros((len(end_idx), len(run_hz_list)), dtype=np.int64)
+    y_state_pred = np.concatenate(state_pred_batches, axis=0) if state_pred_batches else np.zeros((len(end_idx), len(run_hz_list)), dtype=np.int64)
 
     preds_by_h: Dict[str, pd.DataFrame] = {}
-    per_h_metrics: Dict[str, Dict[str, float]] = {}
+    per_h_metrics: Dict[str, Dict[str, Any]] = {}
     for i in keep_idx:
         hz = run_hz_list[i]
         hs = int(run_horizon_steps[i])
@@ -1469,22 +1965,80 @@ def backtest_timeseries_transformer_multihorizon(
         out["timestamp"] = df2[timestamp_col].iloc[target_idx].to_numpy()
         if group_col:
             out[group_col] = df2[group_col].iloc[target_idx].astype(str).to_numpy()
-        for j, c in enumerate(feature_cols):
-            out[f"true_{c}"] = y_true[:, i, j].astype(np.float32)
-            out[f"pred_{c}"] = y_pred[:, i, j].astype(np.float32)
-            out[f"err_{c}"] = (y_pred[:, i, j] - y_true[:, i, j]).astype(np.float32)
-        preds_by_h[str(hz)] = out
-        per_h_metrics[str(hz)] = _compute_metrics(y_true[:, i, :].astype(np.float32), y_pred[:, i, :].astype(np.float32))
-        _log_progress(
-            f"[backtest] horizon={hz} samples={len(out)} rmse={float(per_h_metrics[str(hz)]['rmse']):.6f} "
-            f"r2={float(per_h_metrics[str(hz)]['r2']):.6f}"
-        )
+        hz_metrics: Dict[str, Any] = {}
+        if mixed_targets:
+            for j, c in enumerate(reg_target_cols):
+                out[f"true_{c}"] = y_reg_true[:, i, j].astype(np.float32)
+                out[f"pred_{c}"] = y_reg_pred[:, i, j].astype(np.float32)
+                out[f"err_{c}"] = (y_reg_pred[:, i, j] - y_reg_true[:, i, j]).astype(np.float32)
+            if y_reg_true.shape[2] > 0:
+                hz_metrics["regression"] = _compute_metrics(
+                    y_reg_true[:, i, :].astype(np.float32),
+                    y_reg_pred[:, i, :].astype(np.float32),
+                )
+            for j, c in enumerate(bin_target_cols):
+                out[f"true_{c}"] = y_bin_true[:, i, j].astype(np.float32)
+                out[f"pred_{c}"] = y_bin_prob[:, i, j].astype(np.float32)
+                out[f"err_{c}"] = (y_bin_prob[:, i, j] - y_bin_true[:, i, j]).astype(np.float32)
+            if y_bin_true.shape[2] > 0:
+                hz_metrics["binary_accuracy"] = float(
+                    np.mean((y_bin_prob[:, i, :] >= 0.5).astype(np.float32) == y_bin_true[:, i, :])
+                )
+            if state_target_col:
+                true_state_idx = y_state_true[:, i]
+                pred_state_idx = y_state_pred[:, i]
+                true_state = np.full_like(true_state_idx, fill_value=np.nan, dtype=np.float64)
+                pred_state = np.full_like(pred_state_idx, fill_value=np.nan, dtype=np.float64)
+                valid_state = true_state_idx >= 0
+                if np.any(valid_state):
+                    cls_arr = np.asarray(state_classes, dtype=np.int64)
+                    true_state[valid_state] = cls_arr[true_state_idx[valid_state]].astype(np.float64)
+                    pred_ok = pred_state_idx[valid_state]
+                    pred_in_range = (pred_ok >= 0) & (pred_ok < len(state_classes))
+                    pred_state_valid = np.full(pred_ok.shape, np.nan, dtype=np.float64)
+                    pred_state_valid[pred_in_range] = cls_arr[pred_ok[pred_in_range]].astype(np.float64)
+                    pred_state[valid_state] = pred_state_valid
+                    hz_metrics["state_accuracy"] = float(np.mean(true_state_idx[valid_state] == pred_state_idx[valid_state]))
+                out[f"true_{state_target_col}"] = true_state.astype(np.float32)
+                out[f"pred_{state_target_col}"] = pred_state.astype(np.float32)
+                out[f"err_{state_target_col}"] = (
+                    pd.to_numeric(out[f"pred_{state_target_col}"], errors="coerce")
+                    - pd.to_numeric(out[f"true_{state_target_col}"], errors="coerce")
+                ).to_numpy(dtype=np.float32)
+            preds_by_h[str(hz)] = out
+            per_h_metrics[str(hz)] = hz_metrics
+            if "regression" in hz_metrics:
+                _log_progress(
+                    f"[backtest] horizon={hz} samples={len(out)} "
+                    f"rmse={float(hz_metrics['regression']['rmse']):.6f} "
+                    f"r2={float(hz_metrics['regression']['r2']):.6f}"
+                )
+            else:
+                _log_progress(
+                    f"[backtest] horizon={hz} samples={len(out)} "
+                    f"bin_acc={float(hz_metrics.get('binary_accuracy', 0.0)):.6f} "
+                    f"state_acc={float(hz_metrics.get('state_accuracy', 0.0)):.6f}"
+                )
+        else:
+            for j, c in enumerate(feature_cols):
+                out[f"true_{c}"] = y_true[:, i, j].astype(np.float32)
+                out[f"pred_{c}"] = y_pred[:, i, j].astype(np.float32)
+                out[f"err_{c}"] = (y_pred[:, i, j] - y_true[:, i, j]).astype(np.float32)
+            preds_by_h[str(hz)] = out
+            per_h_metrics[str(hz)] = _compute_metrics(y_true[:, i, :].astype(np.float32), y_pred[:, i, :].astype(np.float32))
+            _log_progress(
+                f"[backtest] horizon={hz} samples={len(out)} rmse={float(per_h_metrics[str(hz)]['rmse']):.6f} "
+                f"r2={float(per_h_metrics[str(hz)]['r2']):.6f}"
+            )
 
     metrics = {
         "per_horizon": per_h_metrics,
         "data": {
             "num_samples": int(len(end_idx)),
             "num_features": int(len(feature_cols)),
+            "num_regression_targets": int(len(reg_target_cols)),
+            "num_binary_targets": int(len(bin_target_cols)),
+            "state_target_col": str(state_target_col),
             "timestamp_col": str(timestamp_col),
             "group_col": str(group_col),
             "horizons": hz_list,
@@ -1497,7 +2051,13 @@ def backtest_timeseries_transformer_multihorizon(
     return TimeSeriesTransformerMultiHorizonBacktestResult(
         predictions_by_horizon=preds_by_h,
         metrics=metrics,
-        feature_cols=feature_cols,
+        feature_cols=(
+            list(reg_target_cols)
+            + list(bin_target_cols)
+            + ([state_target_col] if state_target_col else [])
+            if mixed_targets
+            else feature_cols
+        ),
     )
 
 
