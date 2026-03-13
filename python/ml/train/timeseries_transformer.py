@@ -483,6 +483,22 @@ def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]
     return {"mse": mse, "rmse": rmse, "mae": mae, "r2": r2}
 
 
+def _compute_per_feature_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    feature_names: Sequence[str],
+) -> Dict[str, Dict[str, float]]:
+    out: Dict[str, Dict[str, float]] = {}
+    if y_true.ndim != 2 or y_pred.ndim != 2:
+        raise ValueError("Per-feature metrics expect 2D arrays shaped [samples, features]")
+    for i, c in enumerate(feature_names):
+        out[str(c)] = _compute_metrics(
+            y_true[:, i : i + 1].astype(np.float32),
+            y_pred[:, i : i + 1].astype(np.float32),
+        )
+    return out
+
+
 def expected_plc_window_feature_columns(
     *,
     site: str,
@@ -1471,6 +1487,11 @@ def fit_timeseries_transformer_multihorizon(
                     y_true[:, i, :].astype(np.float32),
                     y_pred[:, i, :].astype(np.float32),
                 )
+                hz_metrics["regression_per_target"] = _compute_per_feature_metrics(
+                    y_true[:, i, :].astype(np.float32),
+                    y_pred[:, i, :].astype(np.float32),
+                    reg_cols,
+                )
                 err_n = y_pred_n[:, i, :] - y_true_n[:, i, :]
                 hz_loss += reg_task_w * float(np.mean(np.square(err_n)))
             if bin_true_list:
@@ -1533,6 +1554,9 @@ def fit_timeseries_transformer_multihorizon(
             if "regression" in hz_m:
                 row[f"val_rmse_{hz}"] = float(hz_m["regression"]["rmse"])
                 row[f"val_r2_{hz}"] = float(hz_m["regression"]["r2"])
+                for target_name, target_metrics in hz_m.get("regression_per_target", {}).items():
+                    safe_name = str(target_name).replace(":", "_").replace("/", "_")
+                    row[f"val_r2_{hz}_{safe_name}"] = float(target_metrics["r2"])
             if "binary_accuracy" in hz_m:
                 row[f"val_bin_acc_{hz}"] = float(hz_m["binary_accuracy"])
             if "state_accuracy" in hz_m:
@@ -2109,6 +2133,11 @@ def backtest_timeseries_transformer_multihorizon(
                     y_reg_true[:, i, :].astype(np.float32),
                     y_reg_pred[:, i, :].astype(np.float32),
                 )
+                hz_metrics["regression_per_target"] = _compute_per_feature_metrics(
+                    y_reg_true[:, i, :].astype(np.float32),
+                    y_reg_pred[:, i, :].astype(np.float32),
+                    reg_target_cols,
+                )
             for j, c in enumerate(bin_target_cols):
                 out[f"true_{c}"] = y_bin_true[:, i, j].astype(np.float32)
                 out[f"pred_{c}"] = y_bin_prob[:, i, j].astype(np.float32)
@@ -2159,6 +2188,11 @@ def backtest_timeseries_transformer_multihorizon(
                 out[f"err_{c}"] = (y_pred[:, i, j] - y_true[:, i, j]).astype(np.float32)
             preds_by_h[str(hz)] = out
             per_h_metrics[str(hz)] = _compute_metrics(y_true[:, i, :].astype(np.float32), y_pred[:, i, :].astype(np.float32))
+            per_h_metrics[str(hz)]["per_feature"] = _compute_per_feature_metrics(
+                y_true[:, i, :].astype(np.float32),
+                y_pred[:, i, :].astype(np.float32),
+                feature_cols,
+            )
             _log_progress(
                 f"[backtest] horizon={hz} samples={len(out)} rmse={float(per_h_metrics[str(hz)]['rmse']):.6f} "
                 f"r2={float(per_h_metrics[str(hz)]['r2']):.6f}"
