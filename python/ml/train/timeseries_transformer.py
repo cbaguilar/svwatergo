@@ -352,6 +352,10 @@ def expected_plc_raw_feature_columns(*, site: str) -> List[str]:
     return sorted(list(spec.continuous) + list(spec.boolean) + list(spec.discrete))
 
 
+def _log_progress(msg: str) -> None:
+    print(msg, flush=True)
+
+
 def fit_timeseries_transformer(
     df: pd.DataFrame,
     out_dir: Path,
@@ -385,6 +389,7 @@ def fit_timeseries_transformer(
     keep_epoch_checkpoints: bool = True,
 ) -> TimeSeriesTransformerResult:
     torch, nn, DataLoader, Dataset = _require_torch()
+    _log_progress(f"[train] starting single-horizon run out_dir={out_dir}")
 
     if timestamp_col not in df.columns:
         raise ValueError(f"timestamp_col not found: {timestamp_col}")
@@ -416,6 +421,10 @@ def fit_timeseries_transformer(
         cols = [c for c in df2.columns if c not in blocked and pd.api.types.is_numeric_dtype(df2[c])]
     if not cols:
         raise ValueError("No numeric feature columns available")
+    _log_progress(
+        f"[train] rows={len(df2)} features={len(cols)} horizon={horizon} lookback={int(lookback)} "
+        f"stride={int(stride)} time_cyc_features={bool(time_cyc_features)}"
+    )
 
     feat = df2[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
     valid_row = np.all(np.isfinite(feat), axis=1)
@@ -426,7 +435,12 @@ def fit_timeseries_transformer(
     sample_period_seconds = _infer_sample_period_seconds(df2[timestamp_col])
     horizon_seconds = _parse_duration_seconds(horizon)
     horizon_steps = max(1, int(round(horizon_seconds / max(1e-9, sample_period_seconds))))
+    _log_progress(
+        f"[train] sample_period_s={sample_period_seconds:.6f} horizon_s={int(horizon_seconds)} "
+        f"horizon_steps={int(horizon_steps)}"
+    )
 
+    _log_progress("[train] generating training windows")
     end_idx, sample_times = _build_end_indices(
         df2,
         timestamp_col=timestamp_col,
@@ -441,6 +455,9 @@ def fit_timeseries_transformer(
     train_end = end_idx[tr_s]
     val_end = end_idx[va_s]
     test_end = end_idx[te_s]
+    _log_progress(
+        f"[train] window samples train={len(train_end)} val={len(val_end)} test={len(test_end)}"
+    )
 
     train_rows = np.unique(np.concatenate([np.arange(e - lookback + 1, e + 1) for e in train_end]))
     mu = feat[train_rows].mean(axis=0)
@@ -471,6 +488,9 @@ def fit_timeseries_transformer(
         dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         dev = torch.device(device)
+    _log_progress(
+        f"[train] device={dev} batch_size={int(batch_size)} dataloader_workers={int(dataloader_num_workers)}"
+    )
 
     torch.manual_seed(int(random_state))
     if torch.cuda.is_available():
@@ -502,6 +522,7 @@ def fit_timeseries_transformer(
 
     resume_path = Path(resume_from) if resume_from else checkpoint_latest_path
     if resume_path.exists():
+        _log_progress(f"[train] resuming from checkpoint {resume_path}")
         ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
         if isinstance(ckpt, dict) and "model_state_dict" in ckpt and "optimizer_state_dict" in ckpt:
             model.load_state_dict(ckpt["model_state_dict"])
@@ -521,6 +542,7 @@ def fit_timeseries_transformer(
                 history = hist_obj
         except Exception:
             pass
+    _log_progress(f"[train] epoch_start={int(start_epoch)} epoch_end={int(epochs)}")
 
     def _eval(dloader):
         model.eval()
@@ -559,6 +581,10 @@ def fit_timeseries_transformer(
         row = {"epoch": ep, "train_loss": train_loss, **{f"val_{k}": float(v) for k, v in val_metrics.items()}}
         history.append(row)
         history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        _log_progress(
+            f"[train] epoch={int(ep)}/{int(epochs)} train_loss={train_loss:.6f} "
+            f"val_rmse={float(val_metrics['rmse']):.6f} val_r2={float(val_metrics['r2']):.6f}"
+        )
 
         if val_metrics["rmse"] < best["val_rmse"]:
             best = {
@@ -823,6 +849,7 @@ def fit_timeseries_transformer_multihorizon(
     keep_epoch_checkpoints: bool = True,
 ) -> TimeSeriesTransformerMultiHorizonResult:
     torch, nn, DataLoader, Dataset = _require_torch()
+    _log_progress(f"[train] starting multihorizon run out_dir={out_dir}")
 
     if timestamp_col not in df.columns:
         raise ValueError(f"timestamp_col not found: {timestamp_col}")
@@ -855,6 +882,10 @@ def fit_timeseries_transformer_multihorizon(
         cols = [c for c in df2.columns if c not in blocked and pd.api.types.is_numeric_dtype(df2[c])]
     if not cols:
         raise ValueError("No numeric feature columns available")
+    _log_progress(
+        f"[train] rows={len(df2)} features={len(cols)} horizons={','.join(hz_list)} "
+        f"lookback={int(lookback)} stride={int(stride)} time_cyc_features={bool(time_cyc_features)}"
+    )
 
     feat = df2[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
     valid_row = np.all(np.isfinite(feat), axis=1)
@@ -866,6 +897,10 @@ def fit_timeseries_transformer_multihorizon(
     horizon_seconds = [_parse_duration_seconds(h) for h in hz_list]
     horizon_steps = [max(1, int(round(hs / max(1e-9, sample_period_seconds)))) for hs in horizon_seconds]
     max_horizon_steps = int(max(horizon_steps))
+    _log_progress(
+        f"[train] sample_period_s={sample_period_seconds:.6f} horizon_steps="
+        f"{','.join(str(int(x)) for x in horizon_steps)}"
+    )
 
     if horizon_weights is None:
         hz_w = np.ones((len(hz_list),), dtype=np.float32)
@@ -874,7 +909,11 @@ def fit_timeseries_transformer_multihorizon(
         if hz_w.shape[0] != len(hz_list):
             raise ValueError(f"horizon_weights length ({hz_w.shape[0]}) must match horizons length ({len(hz_list)})")
     hz_w = np.where(np.isfinite(hz_w) & (hz_w > 0), hz_w, 1.0).astype(np.float32)
+    _log_progress(
+        f"[train] horizon_weights={','.join(f'{float(x):.3f}' for x in hz_w.tolist())}"
+    )
 
+    _log_progress("[train] generating training windows")
     end_idx, sample_times = _build_end_indices(
         df2,
         timestamp_col=timestamp_col,
@@ -888,6 +927,9 @@ def fit_timeseries_transformer_multihorizon(
     train_end = end_idx[tr_s]
     val_end = end_idx[va_s]
     test_end = end_idx[te_s]
+    _log_progress(
+        f"[train] window samples train={len(train_end)} val={len(val_end)} test={len(test_end)}"
+    )
 
     train_rows = np.unique(np.concatenate([np.arange(e - lookback + 1, e + 1) for e in train_end]))
     mu = feat[train_rows].mean(axis=0)
@@ -918,6 +960,9 @@ def fit_timeseries_transformer_multihorizon(
         dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         dev = torch.device(device)
+    _log_progress(
+        f"[train] device={dev} batch_size={int(batch_size)} dataloader_workers={int(dataloader_num_workers)}"
+    )
 
     torch.manual_seed(int(random_state))
     if torch.cuda.is_available():
@@ -950,6 +995,7 @@ def fit_timeseries_transformer_multihorizon(
     start_epoch = 1
     resume_path = Path(resume_from) if resume_from else checkpoint_latest_path
     if resume_path.exists():
+        _log_progress(f"[train] resuming from checkpoint {resume_path}")
         ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
         if isinstance(ckpt, dict) and "model_state_dict" in ckpt and "optimizer_state_dict" in ckpt:
             model.load_state_dict(ckpt["model_state_dict"])
@@ -969,6 +1015,7 @@ def fit_timeseries_transformer_multihorizon(
                 history = hist_obj
         except Exception:
             pass
+    _log_progress(f"[train] epoch_start={int(start_epoch)} epoch_end={int(epochs)}")
 
     def _eval(dloader):
         model.eval()
@@ -1030,6 +1077,14 @@ def fit_timeseries_transformer_multihorizon(
             row[f"val_r2_{hz}"] = float(hz_m["r2"])
         history.append(row)
         history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        hz_summary = " ".join(
+            f"{hz}:rmse={float(val_eval['per_horizon'][hz]['rmse']):.4f},r2={float(val_eval['per_horizon'][hz]['r2']):.4f}"
+            for hz in hz_list
+        )
+        _log_progress(
+            f"[train] epoch={int(ep)}/{int(epochs)} train_weighted_loss={train_loss:.6f} "
+            f"val_weighted_loss={float(val_eval['weighted_loss']):.6f} {hz_summary}"
+        )
 
         if float(val_eval["weighted_loss"]) < best["val_weighted_loss"]:
             best = {
