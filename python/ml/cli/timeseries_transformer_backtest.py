@@ -156,8 +156,10 @@ def main() -> int:
             seen.add(pth)
 
     print(f"Resolved {len(dataset_paths_unique)} parquet file(s)")
+    print("[backtest-cli] reading parquet files", flush=True)
     dfs = [pd.read_parquet(pth) for pth in dataset_paths_unique]
     df = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
+    print(f"[backtest-cli] concatenated rows={len(df)}", flush=True)
 
     horizons = [h.strip() for h in str(args.horizons).split(",") if h.strip()]
     if str(args.model).strip():
@@ -171,6 +173,7 @@ def main() -> int:
         model_path = Path(args.model) if str(args.model).strip() else _resolve_model_path(Path(args.checkpoint_root), h)
         out_h = out_root / f"horizon_{h}"
         out_h.mkdir(parents=True, exist_ok=True)
+        print(f"[backtest-cli] running horizon={h} model={model_path}", flush=True)
 
         bt = backtest_timeseries_transformer(
             df,
@@ -200,6 +203,7 @@ def main() -> int:
             plot_features = _select_focus_features(bt.feature_cols, int(args.plot_max_features))
         metrics["focus_plot_features"] = list(plot_features)
         metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        print(f"[backtest-cli] writing horizon={h} predictions", flush=True)
 
         _make_plot(
             bt.predictions,
@@ -209,6 +213,7 @@ def main() -> int:
             max_points=int(args.plot_max_points),
             max_features=int(args.plot_max_features),
         )
+        print(f"[backtest-cli] rendering horizon={h} plot", flush=True)
 
         print(f"[{h}] model   -> {model_path}")
         print(f"[{h}] pred    -> {pred_path}")

@@ -1320,6 +1320,7 @@ def backtest_timeseries_transformer_multihorizon(
     device: str = "auto",
 ) -> TimeSeriesTransformerMultiHorizonBacktestResult:
     torch, nn, DataLoader, Dataset = _require_torch()
+    _log_progress(f"[backtest] starting multihorizon model_path={model_path}")
 
     bundle = load_timeseries_transformer_bundle(Path(model_path))
     model_cfg = dict(bundle.get("model_config", {}))
@@ -1356,6 +1357,10 @@ def backtest_timeseries_transformer_multihorizon(
     if use_lookback <= 0:
         raise ValueError("lookback must be > 0 (either argument or bundle model_config.lookback)")
     use_target_mode = str(target_mode).strip() if str(target_mode).strip() else str(model_cfg.get("target_mode", "mean"))
+    _log_progress(
+        f"[backtest] rows={len(df)} features={len(feature_cols)} horizons={','.join(hz_list)} "
+        f"lookback={int(use_lookback)} stride={int(stride)}"
+    )
 
     df2 = df.copy()
     if bool(model_cfg.get("time_cyc_features", False)):
@@ -1382,6 +1387,7 @@ def backtest_timeseries_transformer_multihorizon(
         raise ValueError("Bundle normalization shape does not match input feature count")
     sigma = np.where(np.abs(sigma) > 1e-6, sigma, 1.0).astype(np.float32)
     feat_n = ((feat - mu) / sigma).astype(np.float32, copy=False)
+    _log_progress("[backtest] generating rolling windows")
 
     max_horizon_steps = int(max(run_horizon_steps))
     end_idx, _ = _build_end_indices(
@@ -1407,6 +1413,7 @@ def backtest_timeseries_transformer_multihorizon(
     ds = WindowDataset(feat_n, end_idx, use_lookback, run_horizon_steps, use_target_mode)
     if len(ds) == 0:
         raise ValueError("No backtest samples generated for this configuration")
+    _log_progress(f"[backtest] generated_samples={len(ds)}")
 
     pin_memory = bool(torch.cuda.is_available())
     dl = DataLoader(ds, batch_size=int(batch_size), shuffle=False, num_workers=int(dataloader_num_workers), pin_memory=pin_memory)
@@ -1414,6 +1421,9 @@ def backtest_timeseries_transformer_multihorizon(
         dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         dev = torch.device(device)
+    _log_progress(
+        f"[backtest] device={dev} batch_size={int(batch_size)} dataloader_workers={int(dataloader_num_workers)}"
+    )
 
     model = _MultiHorizonTransformerRegressor(
         nn,
@@ -1431,6 +1441,7 @@ def backtest_timeseries_transformer_multihorizon(
 
     ys = []
     yp = []
+    _log_progress("[backtest] running model inference")
     with torch.no_grad():
         for xb, yb in dl:
             xb = xb.to(dev)
@@ -1464,6 +1475,10 @@ def backtest_timeseries_transformer_multihorizon(
             out[f"err_{c}"] = (y_pred[:, i, j] - y_true[:, i, j]).astype(np.float32)
         preds_by_h[str(hz)] = out
         per_h_metrics[str(hz)] = _compute_metrics(y_true[:, i, :].astype(np.float32), y_pred[:, i, :].astype(np.float32))
+        _log_progress(
+            f"[backtest] horizon={hz} samples={len(out)} rmse={float(per_h_metrics[str(hz)]['rmse']):.6f} "
+            f"r2={float(per_h_metrics[str(hz)]['r2']):.6f}"
+        )
 
     metrics = {
         "per_horizon": per_h_metrics,
@@ -1502,6 +1517,7 @@ def backtest_timeseries_transformer(
     device: str = "auto",
 ) -> TimeSeriesTransformerBacktestResult:
     torch, nn, DataLoader, Dataset = _require_torch()
+    _log_progress(f"[backtest] starting single-horizon model_path={model_path}")
 
     bundle = load_timeseries_transformer_bundle(Path(model_path))
     model_cfg = dict(bundle.get("model_config", {}))
@@ -1523,6 +1539,10 @@ def backtest_timeseries_transformer(
     if use_lookback <= 0:
         raise ValueError("lookback must be > 0 (either argument or bundle model_config.lookback)")
     use_target_mode = str(target_mode).strip() if str(target_mode).strip() else str(model_cfg.get("target_mode", "mean"))
+    _log_progress(
+        f"[backtest] rows={len(df)} features={len(feature_cols)} horizon={use_horizon} "
+        f"lookback={int(use_lookback)} stride={int(stride)}"
+    )
 
     df2 = df.copy()
     if bool(model_cfg.get("time_cyc_features", False)):
@@ -1549,6 +1569,7 @@ def backtest_timeseries_transformer(
         raise ValueError("Bundle normalization shape does not match input feature count")
     sigma = np.where(np.abs(sigma) > 1e-6, sigma, 1.0).astype(np.float32)
     feat_n = ((feat - mu) / sigma).astype(np.float32, copy=False)
+    _log_progress("[backtest] generating rolling windows")
 
     sample_period_seconds = _infer_sample_period_seconds(df2[timestamp_col])
     horizon_seconds = _parse_duration_seconds(use_horizon)
@@ -1576,6 +1597,7 @@ def backtest_timeseries_transformer(
     ds = WindowDataset(feat_n, end_idx, use_lookback, horizon_steps, use_target_mode)
     if len(ds) == 0:
         raise ValueError("No backtest samples generated for this horizon/configuration")
+    _log_progress(f"[backtest] generated_samples={len(ds)}")
 
     pin_memory = bool(torch.cuda.is_available())
     dl = DataLoader(ds, batch_size=int(batch_size), shuffle=False, num_workers=int(dataloader_num_workers), pin_memory=pin_memory)
@@ -1584,6 +1606,9 @@ def backtest_timeseries_transformer(
         dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         dev = torch.device(device)
+    _log_progress(
+        f"[backtest] device={dev} batch_size={int(batch_size)} dataloader_workers={int(dataloader_num_workers)}"
+    )
 
     model = _TransformerRegressor(
         nn,
@@ -1600,6 +1625,7 @@ def backtest_timeseries_transformer(
 
     ys = []
     yp = []
+    _log_progress("[backtest] running model inference")
     with torch.no_grad():
         for xb, yb in dl:
             xb = xb.to(dev)
@@ -1649,4 +1675,8 @@ def backtest_timeseries_transformer(
             "sample_period_seconds": float(sample_period_seconds),
         },
     }
+    _log_progress(
+        f"[backtest] horizon={use_horizon} samples={len(out)} rmse={float(metrics['overall']['rmse']):.6f} "
+        f"r2={float(metrics['overall']['r2']):.6f}"
+    )
     return TimeSeriesTransformerBacktestResult(predictions=out, metrics=metrics, feature_cols=feature_cols)

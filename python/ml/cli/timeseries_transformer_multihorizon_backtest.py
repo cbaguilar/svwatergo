@@ -119,10 +119,13 @@ def main() -> int:
             seen.add(pth)
 
     print(f"Resolved {len(unique_paths)} parquet file(s)")
+    print("[backtest-cli] reading parquet files", flush=True)
     dfs = [pd.read_parquet(pth) for pth in unique_paths]
     df = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
+    print(f"[backtest-cli] concatenated rows={len(df)}", flush=True)
 
     hz_subset = [h.strip() for h in str(args.horizons).split(",") if h.strip()]
+    print("[backtest-cli] running model backtest", flush=True)
     bt = backtest_timeseries_transformer_multihorizon(
         df,
         Path(args.model),
@@ -150,13 +153,16 @@ def main() -> int:
         plot_features = _select_focus_features(bt.feature_cols, int(args.plot_max_features))
     metrics_payload["focus_plot_features"] = list(plot_features)
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
+    print(f"[backtest-cli] metrics -> {metrics_path}", flush=True)
 
     for hz, pred_df in bt.predictions_by_horizon.items():
         out_h = out_root / f"horizon_{hz}"
         out_h.mkdir(parents=True, exist_ok=True)
         pred_path = out_h / "backtest_predictions.parquet"
         plot_path = out_h / "backtest_plot.png"
+        print(f"[backtest-cli] writing horizon={hz} predictions", flush=True)
         pred_df.to_parquet(pred_path, index=False)
+        print(f"[backtest-cli] rendering horizon={hz} plot", flush=True)
         _make_plot(
             pred_df,
             plot_features,
