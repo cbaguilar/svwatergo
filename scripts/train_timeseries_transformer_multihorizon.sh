@@ -10,6 +10,7 @@ DATE_TO="${DATE_TO:-}"
 TIMESTAMP_COL="${TIMESTAMP_COL:-timestamp}"
 GROUP_COL="${GROUP_COL:-}"
 FEATURE_COLS="${FEATURE_COLS:-}"
+EXCLUDE_COLS="${EXCLUDE_COLS:-}"
 FEATURE_PRESET="${FEATURE_PRESET:-auto}"
 SITE="${SITE:-}"
 OUT_DIR="${OUT_DIR:-data/checkpoints/timeseries_transformer_multihorizon}"
@@ -92,6 +93,9 @@ if [[ -n "$GROUP_COL" ]]; then
 fi
 if [[ -n "$FEATURE_COLS" ]]; then
   CMD+=(--feature-cols "$FEATURE_COLS")
+fi
+if [[ -n "$EXCLUDE_COLS" ]]; then
+  CMD+=(--exclude-cols "$EXCLUDE_COLS")
 fi
 if [[ -n "$SITE" ]]; then
   CMD+=(--site "$SITE")

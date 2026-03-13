@@ -1164,6 +1164,7 @@ def fit_timeseries_transformer_multihorizon(
     *,
     timestamp_col: str,
     feature_cols: Optional[Sequence[str]] = None,
+    exclude_cols: Optional[Sequence[str]] = None,
     feature_preset: str = "auto",
     site: str = "",
     group_col: str = "",
@@ -1226,6 +1227,12 @@ def fit_timeseries_transformer_multihorizon(
         feature_preset=feature_preset,
         site=site,
     )
+    excluded_manual_cols: List[str] = []
+    if exclude_cols:
+        exclude_set = {str(c).strip() for c in exclude_cols if str(c).strip()}
+        if exclude_set:
+            excluded_manual_cols = [c for c in cols if c in exclude_set]
+            cols = [c for c in cols if c not in exclude_set]
     if not cols:
         raise ValueError("No numeric feature columns available")
     if excluded_auto_cols:
@@ -1247,6 +1254,10 @@ def fit_timeseries_transformer_multihorizon(
             _log_progress(
                 f"[train] feature_preset_missing_cols={','.join(missing_preset_cols[:32])}"
             )
+    if excluded_manual_cols:
+        _log_progress(
+            f"[train] manually_excluded_cols={','.join(sorted(excluded_manual_cols))}"
+        )
     df2, mixed_spec = _prepare_mixed_task_frame(df2, selected_cols=cols)
     input_cols = [str(c) for c in mixed_spec.get("input_feature_cols", [])]
     reg_cols = [str(c) for c in mixed_spec.get("reg_target_cols", [])]
