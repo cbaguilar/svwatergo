@@ -1109,7 +1109,7 @@ def fit_timeseries_transformer_multihorizon(
     lookback: int = 256,
     stride: int = 1,
     max_gap_seconds: float = 0.0,
-    target_mode: str = "mean",
+    target_mode: str = "last",
     train_frac: float = 0.7,
     val_frac: float = 0.15,
     random_state: int = 42,
@@ -1418,6 +1418,8 @@ def fit_timeseries_transformer_multihorizon(
                 mask = ys_true >= 0
                 if np.any(mask):
                     hz_metrics["state_accuracy"] = float(np.mean(ys_true[mask] == ys_pred[mask]))
+                    state_err = (ys_pred[mask] != ys_true[mask]).astype(np.float32)
+                    hz_loss += float(np.mean(state_err))
             per_h_metrics[str(hz)] = hz_metrics
             weighted_loss += float(hz_w[i]) * float(hz_loss)
         return {

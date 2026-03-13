@@ -27,7 +27,7 @@ def main() -> int:
     p.add_argument("--lookback", type=int, default=256)
     p.add_argument("--stride", type=int, default=1)
     p.add_argument("--max-gap-seconds", type=float, default=0.0)
-    p.add_argument("--target-mode", choices=["mean", "last"], default="mean")
+    p.add_argument("--target-mode", choices=["mean", "last"], default="last")
 
     p.add_argument("--train-frac", type=float, default=0.7)
     p.add_argument("--val-frac", type=float, default=0.15)
