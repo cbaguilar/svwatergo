@@ -222,6 +222,36 @@ Multi-horizon outputs:
 - `timeseries_transformer_multihorizon_checkpoint_latest.pt`
 - `timeseries_transformer_multihorizon_checkpoint_best.pt`
 
+Split short/long multi-horizon runs with explicit task weights and window features:
+
+```bash
+DATASET_ROOT=/mnt/d/datasets/svwatergo/derived/dataset=window_features/window_s=10/site=bluerock \
+DATASET_FILENAME=window_features.parquet \
+DATE_FROM=2025-01-01 \
+DATE_TO=2025-06-30 \
+TIMESTAMP_COL=window_end_ts \
+SITE=bluerock \
+FEATURE_PRESET=window \
+OUT_ROOT=/mnt/d/datasets/svwatergo/derived/checkpoints/timeseries_transformer_multihorizon_2025_h1_split \
+SHORT_HORIZONS=1m,1h \
+SHORT_TARGET_MODE=last \
+SHORT_LOOKBACK=256 \
+LONG_HORIZONS=6h,24h \
+LONG_TARGET_MODE=mean \
+LONG_LOOKBACK=512 \
+REGRESSION_TASK_WEIGHT=1.0 \
+BINARY_TASK_WEIGHT=0.5 \
+STATE_TASK_WEIGHT=0.5 \
+EPOCHS=10 \
+DEVICE=cuda \
+bash scripts/train_timeseries_transformer_multihorizon_split.sh
+```
+
+Feature presets for the multi-horizon trainer:
+- `FEATURE_PRESET=auto`: current numeric auto-selection.
+- `FEATURE_PRESET=raw`: expected raw PLC columns for `SITE`.
+- `FEATURE_PRESET=window`: expected window-feature columns for `SITE`.
+
 Multi-horizon backtest (single model -> per-horizon plots):
 
 ```bash

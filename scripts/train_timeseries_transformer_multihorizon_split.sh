@@ -12,14 +12,19 @@ GROUP_COL="${GROUP_COL:-}"
 FEATURE_COLS="${FEATURE_COLS:-}"
 FEATURE_PRESET="${FEATURE_PRESET:-auto}"
 SITE="${SITE:-}"
-OUT_DIR="${OUT_DIR:-data/checkpoints/timeseries_transformer_multihorizon}"
+OUT_ROOT="${OUT_ROOT:-data/checkpoints/timeseries_transformer_multihorizon_split}"
 
-HORIZONS="${HORIZONS:-1m,1h,6h,24h}"
-HORIZON_WEIGHTS="${HORIZON_WEIGHTS:-1.0,1.0,1.5,2.0}"
-LOOKBACK="${LOOKBACK:-256}"
-STRIDE="${STRIDE:-1}"
-MAX_GAP_SECONDS="${MAX_GAP_SECONDS:-0}"
-TARGET_MODE="${TARGET_MODE:-last}"
+SHORT_HORIZONS="${SHORT_HORIZONS:-1m,1h}"
+SHORT_HORIZON_WEIGHTS="${SHORT_HORIZON_WEIGHTS:-1.0,1.0}"
+SHORT_LOOKBACK="${SHORT_LOOKBACK:-512}"
+SHORT_STRIDE="${SHORT_STRIDE:-10}"
+SHORT_TARGET_MODE="${SHORT_TARGET_MODE:-last}"
+
+LONG_HORIZONS="${LONG_HORIZONS:-6h,24h}"
+LONG_HORIZON_WEIGHTS="${LONG_HORIZON_WEIGHTS:-1.0,2.0}"
+LONG_LOOKBACK="${LONG_LOOKBACK:-512}"
+LONG_STRIDE="${LONG_STRIDE:-10}"
+LONG_TARGET_MODE="${LONG_TARGET_MODE:-mean}"
 
 EPOCHS="${EPOCHS:-10}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
@@ -32,9 +37,6 @@ FF_DIM="${FF_DIM:-256}"
 DROPOUT="${DROPOUT:-0.1}"
 DEVICE="${DEVICE:-auto}"
 DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-8}"
-RESUME_FROM="${RESUME_FROM:-}"
-SAVE_EVERY_EPOCHS="${SAVE_EVERY_EPOCHS:-1}"
-KEEP_EPOCH_CHECKPOINTS="${KEEP_EPOCH_CHECKPOINTS:-yes}"
 REGRESSION_TASK_WEIGHT="${REGRESSION_TASK_WEIGHT:-1.0}"
 BINARY_TASK_WEIGHT="${BINARY_TASK_WEIGHT:-1.0}"
 STATE_TASK_WEIGHT="${STATE_TASK_WEIGHT:-1.0}"
@@ -44,17 +46,8 @@ if [[ -z "$DATASETS" && -z "$DATASET_ROOT" ]]; then
   exit 1
 fi
 
-CMD=(
-  "$PYTHON_BIN" -m python.ml.cli.timeseries_transformer_multihorizon_train
-  --out-dir "$OUT_DIR"
+COMMON_ARGS=(
   --timestamp-col "$TIMESTAMP_COL"
-  --feature-preset "$FEATURE_PRESET"
-  --horizons "$HORIZONS"
-  --horizon-weights "$HORIZON_WEIGHTS"
-  --lookback "$LOOKBACK"
-  --stride "$STRIDE"
-  --max-gap-seconds "$MAX_GAP_SECONDS"
-  --target-mode "$TARGET_MODE"
   --epochs "$EPOCHS"
   --batch-size "$BATCH_SIZE"
   --learning-rate "$LEARNING_RATE"
@@ -66,8 +59,7 @@ CMD=(
   --dropout "$DROPOUT"
   --device "$DEVICE"
   --dataloader-num-workers "$DATALOADER_NUM_WORKERS"
-  --save-every-epochs "$SAVE_EVERY_EPOCHS"
-  --keep-epoch-checkpoints "$KEEP_EPOCH_CHECKPOINTS"
+  --feature-preset "$FEATURE_PRESET"
   --regression-task-weight "$REGRESSION_TASK_WEIGHT"
   --binary-task-weight "$BINARY_TASK_WEIGHT"
   --state-task-weight "$STATE_TASK_WEIGHT"
@@ -76,29 +68,45 @@ CMD=(
 if [[ -n "$DATASETS" ]]; then
   # shellcheck disable=SC2206
   DATASET_ARR=($DATASETS)
-  CMD+=(--dataset "${DATASET_ARR[@]}")
+  COMMON_ARGS+=(--dataset "${DATASET_ARR[@]}")
 fi
 if [[ -n "$DATASET_ROOT" ]]; then
-  CMD+=(--dataset-root "$DATASET_ROOT" --dataset-filename "$DATASET_FILENAME")
+  COMMON_ARGS+=(--dataset-root "$DATASET_ROOT" --dataset-filename "$DATASET_FILENAME")
   if [[ -n "$DATE_FROM" ]]; then
-    CMD+=(--date-from "$DATE_FROM")
+    COMMON_ARGS+=(--date-from "$DATE_FROM")
   fi
   if [[ -n "$DATE_TO" ]]; then
-    CMD+=(--date-to "$DATE_TO")
+    COMMON_ARGS+=(--date-to "$DATE_TO")
   fi
 fi
 if [[ -n "$GROUP_COL" ]]; then
-  CMD+=(--group-col "$GROUP_COL")
+  COMMON_ARGS+=(--group-col "$GROUP_COL")
 fi
 if [[ -n "$FEATURE_COLS" ]]; then
-  CMD+=(--feature-cols "$FEATURE_COLS")
+  COMMON_ARGS+=(--feature-cols "$FEATURE_COLS")
 fi
 if [[ -n "$SITE" ]]; then
-  CMD+=(--site "$SITE")
-fi
-if [[ -n "$RESUME_FROM" ]]; then
-  CMD+=(--resume-from "$RESUME_FROM")
+  COMMON_ARGS+=(--site "$SITE")
 fi
 
-echo "[RUN] multihorizon out=$OUT_DIR"
-"${CMD[@]}"
+mkdir -p "$OUT_ROOT"
+
+echo "[RUN] split multihorizon short out=$OUT_ROOT/short"
+"$PYTHON_BIN" -m python.ml.cli.timeseries_transformer_multihorizon_train \
+  "${COMMON_ARGS[@]}" \
+  --out-dir "$OUT_ROOT/short" \
+  --horizons "$SHORT_HORIZONS" \
+  --horizon-weights "$SHORT_HORIZON_WEIGHTS" \
+  --lookback "$SHORT_LOOKBACK" \
+  --stride "$SHORT_STRIDE" \
+  --target-mode "$SHORT_TARGET_MODE"
+
+echo "[RUN] split multihorizon long out=$OUT_ROOT/long"
+"$PYTHON_BIN" -m python.ml.cli.timeseries_transformer_multihorizon_train \
+  "${COMMON_ARGS[@]}" \
+  --out-dir "$OUT_ROOT/long" \
+  --horizons "$LONG_HORIZONS" \
+  --horizon-weights "$LONG_HORIZON_WEIGHTS" \
+  --lookback "$LONG_LOOKBACK" \
+  --stride "$LONG_STRIDE" \
+  --target-mode "$LONG_TARGET_MODE"

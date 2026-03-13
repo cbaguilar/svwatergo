@@ -344,6 +344,51 @@ def _prepare_mixed_task_frame(
     return out, spec
 
 
+def resolve_timeseries_feature_columns(
+    df: pd.DataFrame,
+    *,
+    timestamp_col: str,
+    group_col: str,
+    feature_cols: Optional[Sequence[str]] = None,
+    feature_preset: str = "auto",
+    site: str = "",
+) -> Tuple[List[str], List[str]]:
+    preset = str(feature_preset).strip().lower() or "auto"
+    if feature_cols:
+        cols = [str(c) for c in feature_cols if str(c) in df.columns]
+        missing = [str(c) for c in feature_cols if str(c) not in df.columns]
+        if missing:
+            raise ValueError(f"feature_cols missing from dataframe: {', '.join(missing)}")
+        return cols, []
+
+    if preset == "auto":
+        return _select_auto_feature_columns(
+            df,
+            timestamp_col=timestamp_col,
+            group_col=group_col,
+        )
+
+    site_key = str(site).strip().lower()
+    if not site_key:
+        raise ValueError(f"feature_preset={preset!r} requires --site")
+
+    if preset == "raw":
+        expected = expected_plc_raw_feature_columns(site=site_key)
+    elif preset == "window":
+        expected = expected_plc_window_feature_columns(site=site_key)
+    else:
+        raise ValueError(f"Unsupported feature_preset: {feature_preset!r}")
+
+    cols = [c for c in expected if c in df.columns]
+    missing = [c for c in expected if c not in df.columns]
+    if not cols:
+        raise ValueError(
+            f"feature_preset={preset!r} resolved no columns for site={site_key}. "
+            f"Expected examples: {', '.join(expected[:8])}"
+        )
+    return cols, missing
+
+
 def _build_end_indices(
     df: pd.DataFrame,
     *,
@@ -1103,6 +1148,8 @@ def fit_timeseries_transformer_multihorizon(
     *,
     timestamp_col: str,
     feature_cols: Optional[Sequence[str]] = None,
+    feature_preset: str = "auto",
+    site: str = "",
     group_col: str = "",
     horizons: Sequence[str] = ("1m", "1h", "6h", "24h"),
     horizon_weights: Optional[Sequence[float]] = None,
@@ -1129,6 +1176,9 @@ def fit_timeseries_transformer_multihorizon(
     resume_from: Optional[Path] = None,
     save_every_epochs: int = 1,
     keep_epoch_checkpoints: bool = True,
+    regression_task_weight: float = 1.0,
+    binary_task_weight: float = 1.0,
+    state_task_weight: float = 1.0,
 ) -> TimeSeriesTransformerMultiHorizonResult:
     torch, nn, DataLoader, Dataset = _require_torch()
     _log_progress(f"[train] starting multihorizon run out_dir={out_dir}")
@@ -1152,24 +1202,35 @@ def fit_timeseries_transformer_multihorizon(
     sort_cols = [group_col, timestamp_col] if group_col else [timestamp_col]
     df2 = df2.sort_values(sort_cols).reset_index(drop=True)
 
-    if feature_cols:
-        cols = [c for c in feature_cols if c in df2.columns]
-        missing = [c for c in feature_cols if c not in df2.columns]
-        if missing:
-            raise ValueError(f"feature_cols missing from dataframe: {', '.join(missing)}")
-        excluded_auto_cols = []
-    else:
-        cols, excluded_auto_cols = _select_auto_feature_columns(
-            df2,
-            timestamp_col=timestamp_col,
-            group_col=group_col,
-        )
+    cols, excluded_auto_cols = resolve_timeseries_feature_columns(
+        df2,
+        timestamp_col=timestamp_col,
+        group_col=group_col,
+        feature_cols=feature_cols,
+        feature_preset=feature_preset,
+        site=site,
+    )
     if not cols:
         raise ValueError("No numeric feature columns available")
     if excluded_auto_cols:
         _log_progress(
             f"[train] auto-excluded features={','.join(sorted(excluded_auto_cols))}"
         )
+    preset = str(feature_preset).strip().lower()
+    if preset in {"raw", "window"}:
+        _log_progress(
+            f"[train] feature_preset={preset} site={str(site).strip().lower()} matched_cols={len(cols)}"
+        )
+        expected_cols = (
+            expected_plc_raw_feature_columns(site=str(site).strip().lower())
+            if preset == "raw"
+            else expected_plc_window_feature_columns(site=str(site).strip().lower())
+        )
+        missing_preset_cols = [c for c in expected_cols if c not in cols]
+        if missing_preset_cols:
+            _log_progress(
+                f"[train] feature_preset_missing_cols={','.join(missing_preset_cols[:32])}"
+            )
     df2, mixed_spec = _prepare_mixed_task_frame(df2, selected_cols=cols)
     input_cols = [str(c) for c in mixed_spec.get("input_feature_cols", [])]
     reg_cols = [str(c) for c in mixed_spec.get("reg_target_cols", [])]
@@ -1235,8 +1296,14 @@ def fit_timeseries_transformer_multihorizon(
         if hz_w.shape[0] != len(hz_list):
             raise ValueError(f"horizon_weights length ({hz_w.shape[0]}) must match horizons length ({len(hz_list)})")
     hz_w = np.where(np.isfinite(hz_w) & (hz_w > 0), hz_w, 1.0).astype(np.float32)
+    reg_task_w = float(regression_task_weight) if np.isfinite(regression_task_weight) and float(regression_task_weight) > 0 else 1.0
+    bin_task_w = float(binary_task_weight) if np.isfinite(binary_task_weight) and float(binary_task_weight) > 0 else 1.0
+    state_task_w = float(state_task_weight) if np.isfinite(state_task_weight) and float(state_task_weight) > 0 else 1.0
     _log_progress(
         f"[train] horizon_weights={','.join(f'{float(x):.3f}' for x in hz_w.tolist())}"
+    )
+    _log_progress(
+        f"[train] task_weights=regression:{reg_task_w:.3f},binary:{bin_task_w:.3f},state:{state_task_w:.3f}"
     )
 
     _log_progress("[train] generating training windows")
@@ -1405,13 +1472,13 @@ def fit_timeseries_transformer_multihorizon(
                     y_pred[:, i, :].astype(np.float32),
                 )
                 err_n = y_pred_n[:, i, :] - y_true_n[:, i, :]
-                hz_loss += float(np.mean(np.square(err_n)))
+                hz_loss += reg_task_w * float(np.mean(np.square(err_n)))
             if bin_true_list:
                 yb_true = np.concatenate(bin_true_list, axis=0)[:, i, :]
                 yb_prob = np.concatenate(bin_prob_list, axis=0)[:, i, :]
                 yb_pred = (yb_prob >= 0.5).astype(np.float32)
                 hz_metrics["binary_accuracy"] = float(np.mean(yb_pred == yb_true))
-                hz_loss += float(np.mean(-(yb_true * np.log(np.clip(yb_prob, 1e-6, 1.0)) + (1.0 - yb_true) * np.log(np.clip(1.0 - yb_prob, 1e-6, 1.0)))))
+                hz_loss += bin_task_w * float(np.mean(-(yb_true * np.log(np.clip(yb_prob, 1e-6, 1.0)) + (1.0 - yb_true) * np.log(np.clip(1.0 - yb_prob, 1e-6, 1.0)))))
             if state_true_list:
                 ys_true = np.concatenate(state_true_list, axis=0)[:, i]
                 ys_pred = np.concatenate(state_pred_list, axis=0)[:, i]
@@ -1419,7 +1486,7 @@ def fit_timeseries_transformer_multihorizon(
                 if np.any(mask):
                     hz_metrics["state_accuracy"] = float(np.mean(ys_true[mask] == ys_pred[mask]))
                     state_err = (ys_pred[mask] != ys_true[mask]).astype(np.float32)
-                    hz_loss += float(np.mean(state_err))
+                    hz_loss += state_task_w * float(np.mean(state_err))
             per_h_metrics[str(hz)] = hz_metrics
             weighted_loss += float(hz_w[i]) * float(hz_loss)
         return {
@@ -1441,11 +1508,11 @@ def fit_timeseries_transformer_multihorizon(
             for i in range(len(hz_list)):
                 hz_loss = torch.tensor(0.0, device=dev)
                 if reg_out is not None:
-                    hz_loss = hz_loss + reg_loss_fn(reg_out[:, i, :], y_reg_b[:, i, :])
+                    hz_loss = hz_loss + (reg_task_w * reg_loss_fn(reg_out[:, i, :], y_reg_b[:, i, :]))
                 if bin_out is not None:
-                    hz_loss = hz_loss + bin_loss_fn(bin_out[:, i, :], y_bin_b[:, i, :])
+                    hz_loss = hz_loss + (bin_task_w * bin_loss_fn(bin_out[:, i, :], y_bin_b[:, i, :]))
                 if state_out is not None:
-                    hz_loss = hz_loss + state_loss_fn(state_out[:, i, :], y_state_b[:, i])
+                    hz_loss = hz_loss + (state_task_w * state_loss_fn(state_out[:, i, :], y_state_b[:, i]))
                 per_h_losses.append(hz_loss)
             loss = torch.sum(hz_w_t * torch.stack(per_h_losses))
             loss.backward()
@@ -1508,6 +1575,11 @@ def fit_timeseries_transformer_multihorizon(
                         "horizon_seconds": [int(x) for x in horizon_seconds],
                         "horizon_steps": [int(x) for x in horizon_steps],
                         "horizon_weights": [float(x) for x in hz_w.tolist()],
+                        "task_weights": {
+                            "regression": float(reg_task_w),
+                            "binary": float(bin_task_w),
+                            "state": float(state_task_w),
+                        },
                         "target_mode": str(target_mode),
                         "time_cyc_features": bool(time_cyc_features),
                         "d_model": int(d_model),
@@ -1546,6 +1618,11 @@ def fit_timeseries_transformer_multihorizon(
                     "horizon_seconds": [int(x) for x in horizon_seconds],
                     "horizon_steps": [int(x) for x in horizon_steps],
                     "horizon_weights": [float(x) for x in hz_w.tolist()],
+                    "task_weights": {
+                        "regression": float(reg_task_w),
+                        "binary": float(bin_task_w),
+                        "state": float(state_task_w),
+                    },
                     "target_mode": str(target_mode),
                     "time_cyc_features": bool(time_cyc_features),
                     "d_model": int(d_model),
@@ -1598,6 +1675,11 @@ def fit_timeseries_transformer_multihorizon(
             "horizon_seconds": [int(x) for x in horizon_seconds],
             "horizon_steps": [int(x) for x in horizon_steps],
             "horizon_weights": [float(x) for x in hz_w.tolist()],
+            "task_weights": {
+                "regression": float(reg_task_w),
+                "binary": float(bin_task_w),
+                "state": float(state_task_w),
+            },
             "target_mode": str(target_mode),
             "time_cyc_features": bool(time_cyc_features),
             "d_model": int(d_model),
@@ -1652,6 +1734,11 @@ def fit_timeseries_transformer_multihorizon(
         "horizon_seconds": [int(x) for x in horizon_seconds],
         "horizon_steps": [int(x) for x in horizon_steps],
         "horizon_weights": [float(x) for x in hz_w.tolist()],
+        "task_weights": {
+            "regression": float(reg_task_w),
+            "binary": float(bin_task_w),
+            "state": float(state_task_w),
+        },
         "target_mode": str(target_mode),
         "time_cyc_features": bool(time_cyc_features),
         "sample_period_seconds": float(sample_period_seconds),

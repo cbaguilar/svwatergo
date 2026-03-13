@@ -21,6 +21,8 @@ def main() -> int:
     p.add_argument("--timestamp-col", required=True, help="Timestamp column")
     p.add_argument("--group-col", default="", help="Optional grouping column")
     p.add_argument("--feature-cols", default="", help="Optional comma-separated feature columns")
+    p.add_argument("--feature-preset", default="auto", choices=["auto", "raw", "window"], help="Feature selection preset")
+    p.add_argument("--site", default="", help="Required with --feature-preset raw/window")
 
     p.add_argument("--horizons", default="1m,1h,6h,24h", help="Comma-separated horizons")
     p.add_argument("--horizon-weights", default="", help="Comma-separated positive weights (same order as horizons)")
@@ -51,6 +53,9 @@ def main() -> int:
     p.add_argument("--resume-from", default="", help="Optional checkpoint path to resume from")
     p.add_argument("--save-every-epochs", type=int, default=1)
     p.add_argument("--keep-epoch-checkpoints", default="yes", choices=["yes", "no"])
+    p.add_argument("--regression-task-weight", type=float, default=1.0)
+    p.add_argument("--binary-task-weight", type=float, default=1.0)
+    p.add_argument("--state-task-weight", type=float, default=1.0)
 
     args = p.parse_args()
 
@@ -86,6 +91,8 @@ def main() -> int:
         Path(args.out_dir),
         timestamp_col=str(args.timestamp_col),
         feature_cols=(feature_cols if feature_cols else None),
+        feature_preset=str(args.feature_preset),
+        site=str(args.site),
         group_col=str(args.group_col),
         horizons=horizons,
         horizon_weights=(horizon_weights if horizon_weights else None),
@@ -112,6 +119,9 @@ def main() -> int:
         resume_from=(Path(args.resume_from) if str(args.resume_from).strip() else None),
         save_every_epochs=int(args.save_every_epochs),
         keep_epoch_checkpoints=(str(args.keep_epoch_checkpoints) == "yes"),
+        regression_task_weight=float(args.regression_task_weight),
+        binary_task_weight=float(args.binary_task_weight),
+        state_task_weight=float(args.state_task_weight),
     )
 
     print(f"Model   -> {res.model_path}")
