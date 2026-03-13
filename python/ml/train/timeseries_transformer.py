@@ -291,6 +291,16 @@ def _prepare_mixed_task_frame(
         }
     else:
         spec = dict(spec)
+        spec["reg_target_cols"] = [
+            str(c) for c in spec.get("reg_target_cols", [])
+            if str(c) not in TIME_CYC_COLUMNS
+        ]
+        spec["binary_target_cols"] = [
+            str(c) for c in spec.get("binary_target_cols", [])
+            if str(c) not in TIME_CYC_COLUMNS
+        ]
+        if str(spec.get("state_target_col", "")).strip() in TIME_CYC_COLUMNS:
+            spec["state_target_col"] = ""
 
     input_cols: List[str] = []
     for c in spec.get("reg_target_cols", []):
@@ -326,6 +336,9 @@ def _prepare_mixed_task_frame(
             input_cols.append(col)
 
     spec["input_feature_cols"] = input_cols
+    spec["input_only_feature_cols"] = [
+        str(c) for c in list(spec.get("time_feature_cols", []))
+    ]
     spec["state_onehot_input_cols"] = state_onehot_cols
     spec["word_bit_input_cols"] = word_bit_cols
     return out, spec
