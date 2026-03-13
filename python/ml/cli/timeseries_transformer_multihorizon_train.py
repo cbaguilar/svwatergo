@@ -45,7 +45,7 @@ def main() -> int:
     p.add_argument("--ff-dim", type=int, default=256)
     p.add_argument("--dropout", type=float, default=0.1)
 
-    p.add_argument("--dataloader-num-workers", type=int, default=0)
+    p.add_argument("--dataloader-num-workers", type=int, default=8)
     p.add_argument("--device", default="auto", help="auto, cpu, or cuda")
     p.add_argument("--time-cyc-features", default="yes", choices=["yes", "no"], help="Add sin/cos hour-of-day and day-of-week features")
     p.add_argument("--resume-from", default="", help="Optional checkpoint path to resume from")
