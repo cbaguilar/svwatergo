@@ -14,6 +14,22 @@ from ..train.timeseries_transformer import (
 from ..utils.parquet_discovery import discover_date_partitioned_parquets
 
 
+def _select_focus_features(feature_cols: List[str], max_features: int) -> List[str]:
+    want = max(1, int(max_features))
+    preferred = [
+        c for c in feature_cols
+        if any(tok in str(c).lower() for tok in ("flow", "pressure", "tanklevel", "tankdepth"))
+    ]
+    ordered = preferred + [c for c in feature_cols if c not in preferred]
+    out: List[str] = []
+    for c in ordered:
+        if c not in out:
+            out.append(c)
+        if len(out) >= want:
+            break
+    return out
+
+
 def _resolve_model_path(checkpoint_root: Path, horizon: str) -> Path:
     candidates = [
         checkpoint_root / f"horizon_{horizon}" / "timeseries_transformer.pt",
@@ -179,11 +195,11 @@ def main() -> int:
         metrics = dict(bt.metrics)
         metrics["model_path"] = str(model_path)
 
-        metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-
         plot_features = [c.strip() for c in str(args.plot_features).split(",") if c.strip()]
         if not plot_features:
-            plot_features = list(bt.feature_cols[: max(1, int(args.plot_max_features))])
+            plot_features = _select_focus_features(bt.feature_cols, int(args.plot_max_features))
+        metrics["focus_plot_features"] = list(plot_features)
+        metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
         _make_plot(
             bt.predictions,
@@ -198,6 +214,7 @@ def main() -> int:
         print(f"[{h}] pred    -> {pred_path}")
         print(f"[{h}] metrics -> {metrics_path}")
         print(f"[{h}] plot    -> {plot_path}")
+        print(f"[{h}] focus   -> {','.join(plot_features)}")
 
     return 0
 

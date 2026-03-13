@@ -195,6 +195,44 @@ def _add_time_cyc_features(df: pd.DataFrame, *, timestamp_col: str) -> pd.DataFr
     return out
 
 
+def _is_excluded_auto_feature(col: str) -> bool:
+    c = str(col).strip().lower()
+    if not c:
+        return True
+    if c == "powermeter":
+        return True
+    if c.startswith("total"):
+        return True
+    if c.startswith("daily"):
+        return True
+    return False
+
+
+def _select_auto_feature_columns(
+    df: pd.DataFrame,
+    *,
+    timestamp_col: str,
+    group_col: str,
+) -> Tuple[List[str], List[str]]:
+    blocked = {str(timestamp_col)}
+    if group_col:
+        blocked.add(str(group_col))
+
+    cols: List[str] = []
+    excluded: List[str] = []
+    for c in df.columns:
+        cs = str(c)
+        if cs in blocked:
+            continue
+        if not pd.api.types.is_numeric_dtype(df[c]):
+            continue
+        if _is_excluded_auto_feature(cs):
+            excluded.append(cs)
+            continue
+        cols.append(cs)
+    return cols, excluded
+
+
 def _build_end_indices(
     df: pd.DataFrame,
     *,
@@ -414,17 +452,23 @@ def fit_timeseries_transformer(
         missing = [c for c in feature_cols if c not in df2.columns]
         if missing:
             raise ValueError(f"feature_cols missing from dataframe: {', '.join(missing)}")
+        excluded_auto_cols: List[str] = []
     else:
-        blocked = {timestamp_col}
-        if group_col:
-            blocked.add(group_col)
-        cols = [c for c in df2.columns if c not in blocked and pd.api.types.is_numeric_dtype(df2[c])]
+        cols, excluded_auto_cols = _select_auto_feature_columns(
+            df2,
+            timestamp_col=timestamp_col,
+            group_col=group_col,
+        )
     if not cols:
         raise ValueError("No numeric feature columns available")
     _log_progress(
         f"[train] rows={len(df2)} features={len(cols)} horizon={horizon} lookback={int(lookback)} "
         f"stride={int(stride)} time_cyc_features={bool(time_cyc_features)}"
     )
+    if excluded_auto_cols:
+        _log_progress(
+            f"[train] auto-excluded features={','.join(sorted(excluded_auto_cols))}"
+        )
 
     feat = df2[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
     valid_row = np.all(np.isfinite(feat), axis=1)
@@ -875,17 +919,23 @@ def fit_timeseries_transformer_multihorizon(
         missing = [c for c in feature_cols if c not in df2.columns]
         if missing:
             raise ValueError(f"feature_cols missing from dataframe: {', '.join(missing)}")
+        excluded_auto_cols = []
     else:
-        blocked = {timestamp_col}
-        if group_col:
-            blocked.add(group_col)
-        cols = [c for c in df2.columns if c not in blocked and pd.api.types.is_numeric_dtype(df2[c])]
+        cols, excluded_auto_cols = _select_auto_feature_columns(
+            df2,
+            timestamp_col=timestamp_col,
+            group_col=group_col,
+        )
     if not cols:
         raise ValueError("No numeric feature columns available")
     _log_progress(
         f"[train] rows={len(df2)} features={len(cols)} horizons={','.join(hz_list)} "
         f"lookback={int(lookback)} stride={int(stride)} time_cyc_features={bool(time_cyc_features)}"
     )
+    if excluded_auto_cols:
+        _log_progress(
+            f"[train] auto-excluded features={','.join(sorted(excluded_auto_cols))}"
+        )
 
     feat = df2[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
     valid_row = np.all(np.isfinite(feat), axis=1)

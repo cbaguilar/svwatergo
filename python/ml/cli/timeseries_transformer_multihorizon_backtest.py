@@ -12,6 +12,22 @@ from ..train.timeseries_transformer import backtest_timeseries_transformer_multi
 from ..utils.parquet_discovery import discover_date_partitioned_parquets
 
 
+def _select_focus_features(feature_cols: List[str], max_features: int) -> List[str]:
+    want = max(1, int(max_features))
+    preferred = [
+        c for c in feature_cols
+        if any(tok in str(c).lower() for tok in ("flow", "pressure", "tanklevel", "tankdepth"))
+    ]
+    ordered = preferred + [c for c in feature_cols if c not in preferred]
+    out: List[str] = []
+    for c in ordered:
+        if c not in out:
+            out.append(c)
+        if len(out) >= want:
+            break
+    return out
+
+
 def _downsample_idx(n: int, max_points: int) -> np.ndarray:
     if n <= max_points:
         return np.arange(n, dtype=np.int64)
@@ -128,11 +144,12 @@ def main() -> int:
     metrics_path = out_root / "timeseries_transformer_multihorizon_backtest_metrics.json"
     metrics_payload = dict(bt.metrics)
     metrics_payload["model_path"] = str(Path(args.model))
-    metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
 
     plot_features = [c.strip() for c in str(args.plot_features).split(",") if c.strip()]
     if not plot_features:
-        plot_features = list(bt.feature_cols[: max(1, int(args.plot_max_features))])
+        plot_features = _select_focus_features(bt.feature_cols, int(args.plot_max_features))
+    metrics_payload["focus_plot_features"] = list(plot_features)
+    metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
 
     for hz, pred_df in bt.predictions_by_horizon.items():
         out_h = out_root / f"horizon_{hz}"
@@ -150,6 +167,7 @@ def main() -> int:
         )
         print(f"[{hz}] pred -> {pred_path}")
         print(f"[{hz}] plot -> {plot_path}")
+        print(f"[{hz}] focus -> {','.join(plot_features)}")
 
     print(f"Metrics -> {metrics_path}")
     return 0
