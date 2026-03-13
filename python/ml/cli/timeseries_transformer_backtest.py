@@ -17,8 +17,14 @@ from ..utils.parquet_discovery import discover_date_partitioned_parquets
 def _resolve_model_path(checkpoint_root: Path, horizon: str) -> Path:
     candidates = [
         checkpoint_root / f"horizon_{horizon}" / "timeseries_transformer.pt",
+        checkpoint_root / f"horizon_{horizon}" / "timeseries_transformer_checkpoint_best.pt",
+        checkpoint_root / f"horizon_{horizon}" / "timeseries_transformer_checkpoint_latest.pt",
         checkpoint_root / horizon / "timeseries_transformer.pt",
+        checkpoint_root / horizon / "timeseries_transformer_checkpoint_best.pt",
+        checkpoint_root / horizon / "timeseries_transformer_checkpoint_latest.pt",
         checkpoint_root / "timeseries_transformer.pt",
+        checkpoint_root / "timeseries_transformer_checkpoint_best.pt",
+        checkpoint_root / "timeseries_transformer_checkpoint_latest.pt",
     ]
     for p in candidates:
         if p.exists():
@@ -88,7 +94,11 @@ def main() -> int:
     p.add_argument("--group-col", default="")
 
     p.add_argument("--checkpoint-root", default="", help="Root containing horizon_* subdirs with timeseries_transformer.pt")
-    p.add_argument("--model", default="", help="Single model checkpoint path (.pt). If set, runs one horizon only.")
+    p.add_argument(
+        "--model",
+        default="",
+        help="Single model path. Accepts final bundle (`timeseries_transformer.pt`) or training checkpoints (`...checkpoint_best.pt`/`...checkpoint_latest.pt`). If set, runs one horizon only.",
+    )
     p.add_argument("--horizons", default="1m,1h,6h,24h", help="Comma-separated horizons")
 
     p.add_argument("--lookback", type=int, default=0, help="Override lookback (0 uses bundle config)")

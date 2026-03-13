@@ -190,6 +190,9 @@ python -m python.ml.cli.timeseries_transformer_backtest \
   --horizons 1m,1h,6h,24h
 ```
 
+Note: `--model` accepts either `timeseries_transformer.pt` or training checkpoints like
+`timeseries_transformer_checkpoint_best.pt` / `timeseries_transformer_checkpoint_latest.pt`.
+
 Backtest outputs per horizon:
 - `backtest_predictions.parquet`
 - `backtest_metrics.json`
