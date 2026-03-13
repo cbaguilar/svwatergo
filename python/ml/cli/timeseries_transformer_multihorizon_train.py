@@ -22,6 +22,9 @@ def main() -> int:
     p.add_argument("--group-col", default="", help="Optional grouping column")
     p.add_argument("--feature-cols", default="", help="Optional comma-separated feature columns")
     p.add_argument("--exclude-cols", default="", help="Optional comma-separated columns to exclude after feature selection")
+    p.add_argument("--reg-target-cols", default="", help="Optional comma-separated regression target columns")
+    p.add_argument("--binary-target-cols", default="", help="Optional comma-separated binary target columns")
+    p.add_argument("--state-target-col", default="", help="Optional state target column")
     p.add_argument("--feature-preset", default="auto", choices=["auto", "raw", "window"], help="Feature selection preset")
     p.add_argument("--site", default="", help="Required with --feature-preset raw/window")
 
@@ -85,6 +88,8 @@ def main() -> int:
 
     feature_cols = [c.strip() for c in str(args.feature_cols).split(",") if c.strip()]
     exclude_cols = [c.strip() for c in str(args.exclude_cols).split(",") if c.strip()]
+    reg_target_cols = [c.strip() for c in str(args.reg_target_cols).split(",") if c.strip()]
+    binary_target_cols = [c.strip() for c in str(args.binary_target_cols).split(",") if c.strip()]
     horizons = [h.strip() for h in str(args.horizons).split(",") if h.strip()]
     horizon_weights = [float(x.strip()) for x in str(args.horizon_weights).split(",") if x.strip()]
 
@@ -94,6 +99,9 @@ def main() -> int:
         timestamp_col=str(args.timestamp_col),
         feature_cols=(feature_cols if feature_cols else None),
         exclude_cols=(exclude_cols if exclude_cols else None),
+        reg_target_cols=(reg_target_cols if reg_target_cols else None),
+        binary_target_cols=(binary_target_cols if binary_target_cols else None),
+        state_target_col=str(args.state_target_col),
         feature_preset=str(args.feature_preset),
         site=str(args.site),
         group_col=str(args.group_col),

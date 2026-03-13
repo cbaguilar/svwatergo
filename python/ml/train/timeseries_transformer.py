@@ -309,6 +309,9 @@ def _prepare_mixed_task_frame(
     for c in spec.get("binary_target_cols", []):
         if c in out.columns:
             input_cols.append(str(c))
+    for c in spec.get("input_only_feature_cols", []):
+        if c in out.columns:
+            input_cols.append(str(c))
     for c in spec.get("time_feature_cols", []):
         if c in out.columns:
             input_cols.append(str(c))
@@ -337,7 +340,7 @@ def _prepare_mixed_task_frame(
 
     spec["input_feature_cols"] = input_cols
     spec["input_only_feature_cols"] = [
-        str(c) for c in list(spec.get("time_feature_cols", []))
+        str(c) for c in list(spec.get("input_only_feature_cols", []))
     ]
     spec["state_onehot_input_cols"] = state_onehot_cols
     spec["word_bit_input_cols"] = word_bit_cols
@@ -1165,6 +1168,9 @@ def fit_timeseries_transformer_multihorizon(
     timestamp_col: str,
     feature_cols: Optional[Sequence[str]] = None,
     exclude_cols: Optional[Sequence[str]] = None,
+    reg_target_cols: Optional[Sequence[str]] = None,
+    binary_target_cols: Optional[Sequence[str]] = None,
+    state_target_col: str = "",
     feature_preset: str = "auto",
     site: str = "",
     group_col: str = "",
@@ -1258,7 +1264,40 @@ def fit_timeseries_transformer_multihorizon(
         _log_progress(
             f"[train] manually_excluded_cols={','.join(sorted(excluded_manual_cols))}"
         )
-    df2, mixed_spec = _prepare_mixed_task_frame(df2, selected_cols=cols)
+    reg_target_override = [str(c).strip() for c in (reg_target_cols or []) if str(c).strip()]
+    bin_target_override = [str(c).strip() for c in (binary_target_cols or []) if str(c).strip()]
+    state_target_override = str(state_target_col).strip()
+    if reg_target_override or bin_target_override or state_target_override:
+        missing_override = [
+            c for c in (reg_target_override + bin_target_override + ([state_target_override] if state_target_override else []))
+            if c not in df2.columns
+        ]
+        if missing_override:
+            raise ValueError(f"Requested target columns missing from dataframe: {', '.join(missing_override)}")
+        time_cols = [c for c in cols if c in TIME_CYC_COLUMNS]
+        word_cols = [c for c in ("alarmword", "warnword0", "warnword1") if c in cols]
+        state_classes: List[int] = []
+        if state_target_override:
+            s = pd.to_numeric(df2[state_target_override], errors="coerce").dropna().astype(int)
+            state_classes = sorted(s.unique().tolist())
+        non_input_reserved = set(reg_target_override) | set(bin_target_override) | set(time_cols) | set(word_cols)
+        if state_target_override:
+            non_input_reserved.add(state_target_override)
+        input_only_cols = [c for c in cols if c not in non_input_reserved]
+        override_spec = {
+            "reg_target_cols": reg_target_override,
+            "binary_target_cols": bin_target_override,
+            "time_feature_cols": time_cols,
+            "input_only_feature_cols": input_only_cols,
+            "state_target_col": state_target_override,
+            "state_classes": state_classes,
+            "word_cols": word_cols,
+            "word_num_bits": 16,
+            "mixed_targets": True,
+        }
+        df2, mixed_spec = _prepare_mixed_task_frame(df2, selected_cols=cols, spec=override_spec)
+    else:
+        df2, mixed_spec = _prepare_mixed_task_frame(df2, selected_cols=cols)
     input_cols = [str(c) for c in mixed_spec.get("input_feature_cols", [])]
     reg_cols = [str(c) for c in mixed_spec.get("reg_target_cols", [])]
     bin_cols = [str(c) for c in mixed_spec.get("binary_target_cols", [])]
