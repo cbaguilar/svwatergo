@@ -194,3 +194,40 @@ Backtest outputs per horizon:
 - `backtest_predictions.parquet`
 - `backtest_metrics.json`
 - `backtest_plot.png`
+
+## Multi-Horizon Transformer (Single Shared Model)
+Train one shared Transformer with multi-horizon outputs (`1m,1h,6h,24h`) and weighted loss.
+
+```bash
+DATASET_ROOT=/mnt/d/datasets/svwatergo/raw/plc/site=bluerock \
+DATASET_FILENAME=data.parquet \
+DATE_FROM=2025-12-01 \
+DATE_TO=2025-12-31 \
+TIMESTAMP_COL=plctime \
+OUT_DIR=/mnt/d/datasets/svwatergo/derived/checkpoints/timeseries_transformer_multihorizon_2025_12_raw \
+EPOCHS=10 \
+HORIZONS=1m,1h,6h,24h \
+HORIZON_WEIGHTS=1.0,1.0,1.5,2.0 \
+bash scripts/train_timeseries_transformer_multihorizon.sh
+```
+
+Multi-horizon outputs:
+- `timeseries_transformer_multihorizon.pt`
+- `timeseries_transformer_multihorizon_metrics.json`
+- `timeseries_transformer_multihorizon_config.json`
+- `timeseries_transformer_multihorizon_learning_history.json`
+- `timeseries_transformer_multihorizon_checkpoint_latest.pt`
+- `timeseries_transformer_multihorizon_checkpoint_best.pt`
+
+Multi-horizon backtest (single model -> per-horizon plots):
+
+```bash
+python -m python.ml.cli.timeseries_transformer_multihorizon_backtest \
+  --model /mnt/d/datasets/svwatergo/derived/checkpoints/timeseries_transformer_multihorizon_2025_12_raw/timeseries_transformer_multihorizon.pt \
+  --dataset-root /mnt/d/datasets/svwatergo/raw/plc/site=bluerock \
+  --dataset-filename data.parquet \
+  --date-from 2025-12-01 \
+  --date-to 2025-12-31 \
+  --out-dir /mnt/d/datasets/svwatergo/derived/checkpoints/timeseries_transformer_multihorizon_2025_12_raw/backtest \
+  --timestamp-col plctime
+```

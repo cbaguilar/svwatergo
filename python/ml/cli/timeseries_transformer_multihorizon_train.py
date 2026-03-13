@@ -5,38 +5,35 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..train.timeseries_transformer import fit_timeseries_transformer
+from ..train.timeseries_transformer import fit_timeseries_transformer_multihorizon
 from ..utils.parquet_discovery import discover_date_partitioned_parquets
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Train small Transformer for parquet time-series forecasting")
+    p = argparse.ArgumentParser(description="Train multi-horizon Transformer for parquet time-series forecasting")
     p.add_argument("--dataset", nargs="*", default=None, help="Input parquet path(s)")
     p.add_argument("--dataset-root", default="", help="Optional root with date partitions (date=YYYY-MM-DD)")
     p.add_argument("--dataset-filename", default="data.parquet", help="Filename inside each date partition")
     p.add_argument("--date-from", default="", help="Inclusive lower date bound for --dataset-root (YYYY-MM-DD)")
     p.add_argument("--date-to", default="", help="Inclusive upper date bound for --dataset-root (YYYY-MM-DD)")
+
     p.add_argument("--out-dir", required=True, help="Output directory")
     p.add_argument("--timestamp-col", required=True, help="Timestamp column")
-    p.add_argument("--group-col", default="", help="Optional grouping column (e.g., site/sensor)")
+    p.add_argument("--group-col", default="", help="Optional grouping column")
     p.add_argument("--feature-cols", default="", help="Optional comma-separated feature columns")
 
-    p.add_argument("--horizon", default="1h", help="Prediction horizon duration, e.g. 1m, 1h, 6h, 24h")
-    p.add_argument("--lookback", type=int, default=256, help="Input sequence length in timesteps")
-    p.add_argument("--stride", type=int, default=1, help="Window stride for sample generation")
-    p.add_argument(
-        "--max-gap-seconds",
-        type=float,
-        default=0.0,
-        help="Optional max timestamp gap before segment reset (0 disables)",
-    )
+    p.add_argument("--horizons", default="1m,1h,6h,24h", help="Comma-separated horizons")
+    p.add_argument("--horizon-weights", default="", help="Comma-separated positive weights (same order as horizons)")
+    p.add_argument("--lookback", type=int, default=256)
+    p.add_argument("--stride", type=int, default=1)
+    p.add_argument("--max-gap-seconds", type=float, default=0.0)
     p.add_argument("--target-mode", choices=["mean", "last"], default="mean")
 
     p.add_argument("--train-frac", type=float, default=0.7)
     p.add_argument("--val-frac", type=float, default=0.15)
     p.add_argument("--random-state", type=int, default=42)
 
-    p.add_argument("--epochs", type=int, default=20)
+    p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--learning-rate", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
@@ -52,17 +49,12 @@ def main() -> int:
     p.add_argument("--device", default="auto", help="auto, cpu, or cuda")
     p.add_argument("--time-cyc-features", default="yes", choices=["yes", "no"], help="Add sin/cos hour-of-day and day-of-week features")
     p.add_argument("--resume-from", default="", help="Optional checkpoint path to resume from")
-    p.add_argument("--save-every-epochs", type=int, default=1, help="Save latest checkpoint every N epochs (0 disables)")
-    p.add_argument(
-        "--keep-epoch-checkpoints",
-        default="yes",
-        choices=["yes", "no"],
-        help="Keep per-epoch checkpoint files in addition to latest/best",
-    )
+    p.add_argument("--save-every-epochs", type=int, default=1)
+    p.add_argument("--keep-epoch-checkpoints", default="yes", choices=["yes", "no"])
 
     args = p.parse_args()
 
-    dataset_paths = [str(p) for p in (args.dataset or []) if str(p).strip()]
+    dataset_paths = [str(x) for x in (args.dataset or []) if str(x).strip()]
     if str(args.dataset_root).strip():
         found = discover_date_partitioned_parquets(
             Path(args.dataset_root),
@@ -70,31 +62,33 @@ def main() -> int:
             date_from=str(args.date_from),
             date_to=str(args.date_to),
         )
-        dataset_paths.extend(str(p) for p in found)
+        dataset_paths.extend(str(pth) for pth in found)
     if not dataset_paths:
         raise SystemExit("No datasets resolved. Provide --dataset and/or --dataset-root")
 
-    # De-duplicate while preserving order.
     seen = set()
-    dataset_paths_unique = []
+    unique_paths = []
     for pth in dataset_paths:
         if pth not in seen:
-            dataset_paths_unique.append(pth)
+            unique_paths.append(pth)
             seen.add(pth)
 
-    print(f"Resolved {len(dataset_paths_unique)} parquet file(s)")
-    dfs = [pd.read_parquet(pth) for pth in dataset_paths_unique]
+    print(f"Resolved {len(unique_paths)} parquet file(s)")
+    dfs = [pd.read_parquet(pth) for pth in unique_paths]
     df = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
 
     feature_cols = [c.strip() for c in str(args.feature_cols).split(",") if c.strip()]
+    horizons = [h.strip() for h in str(args.horizons).split(",") if h.strip()]
+    horizon_weights = [float(x.strip()) for x in str(args.horizon_weights).split(",") if x.strip()]
 
-    res = fit_timeseries_transformer(
+    res = fit_timeseries_transformer_multihorizon(
         df,
         Path(args.out_dir),
         timestamp_col=str(args.timestamp_col),
         feature_cols=(feature_cols if feature_cols else None),
         group_col=str(args.group_col),
-        horizon=str(args.horizon),
+        horizons=horizons,
+        horizon_weights=(horizon_weights if horizon_weights else None),
         lookback=int(args.lookback),
         stride=int(args.stride),
         max_gap_seconds=float(args.max_gap_seconds),
