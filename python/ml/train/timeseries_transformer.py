@@ -46,6 +46,7 @@ class TimeSeriesTransformerMultiHorizonBacktestResult:
     predictions_by_horizon: Dict[str, pd.DataFrame]
     metrics: Dict[str, Any]
     feature_cols: List[str]
+    embeddings: Optional[pd.DataFrame] = None
 
 
 TIME_CYC_COLUMNS = (
@@ -995,15 +996,19 @@ class _MultiHorizonTransformerRegressor:
                     nn.Linear(d_model, input_dim * num_horizons),
                 )
 
-            def forward(self, x):
+            def encode(self, x):
                 import torch  # type: ignore
 
                 b, t, _ = x.shape
                 pos = torch.arange(t, device=x.device).unsqueeze(0).expand(b, t)
                 h = self.in_proj(x) + self.pos_emb(pos)
                 h = self.encoder(h)
-                out = self.head(h[:, -1, :])
-                return out.view(b, self.num_horizons, self.input_dim)
+                return h[:, -1, :]
+
+            def forward(self, x):
+                z = self.encode(x)
+                out = self.head(z)
+                return out.view(x.shape[0], self.num_horizons, self.input_dim)
 
         self.model = _Model()
 
@@ -1053,15 +1058,18 @@ class _MultiTaskTransformer:
                 self.bin_head = nn.Linear(d_model, bin_dim * num_horizons) if bin_dim > 0 else None
                 self.state_head = nn.Linear(d_model, state_classes * num_horizons) if state_classes > 0 else None
 
-            def forward(self, x):
+            def encode(self, x):
                 import torch  # type: ignore
 
                 b, t, _ = x.shape
                 pos = torch.arange(t, device=x.device).unsqueeze(0).expand(b, t)
                 h = self.in_proj(x) + self.pos_emb(pos)
                 h = self.encoder(h)
-                z = self.trunk(h[:, -1, :])
+                return self.trunk(h[:, -1, :])
 
+            def forward(self, x):
+                z = self.encode(x)
+                b = x.shape[0]
                 reg_out = None
                 if self.reg_head is not None:
                     reg_out = self.reg_head(z).view(b, self.num_horizons, self.reg_dim)
@@ -1925,11 +1933,13 @@ def backtest_timeseries_transformer_multihorizon(
     bin_prob_batches = []
     state_true_batches = []
     state_pred_batches = []
+    embedding_batches = []
     _log_progress("[backtest] running model inference")
     with torch.no_grad():
         if mixed_targets:
             for xb, y_reg_b, y_bin_b, y_state_b in dl:
                 xb = xb.to(dev)
+                embedding_batches.append(model.encode(xb).detach().cpu().numpy())
                 reg_out, bin_out, state_out = model(xb)
                 if reg_out is not None:
                     reg_true_batches.append(y_reg_b.detach().cpu().numpy())
@@ -1945,6 +1955,7 @@ def backtest_timeseries_transformer_multihorizon(
             yp = []
             for xb, yb in dl:
                 xb = xb.to(dev)
+                embedding_batches.append(model.encode(xb).detach().cpu().numpy())
                 pred = model(xb)
                 ys.append(yb.detach().cpu().numpy())
                 yp.append(pred.detach().cpu().numpy())
@@ -1967,6 +1978,7 @@ def backtest_timeseries_transformer_multihorizon(
     y_bin_prob = np.concatenate(bin_prob_batches, axis=0) if bin_prob_batches else np.zeros((len(end_idx), len(run_hz_list), 0), dtype=np.float32)
     y_state_true = np.concatenate(state_true_batches, axis=0) if state_true_batches else np.zeros((len(end_idx), len(run_hz_list)), dtype=np.int64)
     y_state_pred = np.concatenate(state_pred_batches, axis=0) if state_pred_batches else np.zeros((len(end_idx), len(run_hz_list)), dtype=np.int64)
+    embeddings_np = np.concatenate(embedding_batches, axis=0) if embedding_batches else np.zeros((len(end_idx), 0), dtype=np.float32)
 
     preds_by_h: Dict[str, pd.DataFrame] = {}
     per_h_metrics: Dict[str, Dict[str, Any]] = {}
@@ -2067,6 +2079,17 @@ def backtest_timeseries_transformer_multihorizon(
             "target_mode": str(use_target_mode),
         },
     }
+    emb_df = pd.DataFrame(
+        {
+            "sample_end_index": end_idx.astype(np.int64),
+            "timestamp": df2[timestamp_col].iloc[end_idx].to_numpy(),
+        }
+    )
+    if group_col:
+        emb_df[group_col] = df2[group_col].iloc[end_idx].astype(str).to_numpy()
+    for j in range(embeddings_np.shape[1]):
+        emb_df[f"embedding_{j:03d}"] = embeddings_np[:, j].astype(np.float32)
+
     return TimeSeriesTransformerMultiHorizonBacktestResult(
         predictions_by_horizon=preds_by_h,
         metrics=metrics,
@@ -2077,6 +2100,7 @@ def backtest_timeseries_transformer_multihorizon(
             if mixed_targets
             else feature_cols
         ),
+        embeddings=emb_df,
     )
 
 

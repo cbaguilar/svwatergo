@@ -75,6 +75,66 @@ def _make_plot(
     plt.close(fig)
 
 
+def _safe_plot_features(pred_df: pd.DataFrame, feature_cols: List[str], max_features: int) -> List[str]:
+    chosen: List[str] = []
+    for c in feature_cols:
+        if f"true_{c}" in pred_df.columns and f"pred_{c}" in pred_df.columns:
+            chosen.append(c)
+        if len(chosen) >= max(1, int(max_features)):
+            break
+    if not chosen:
+        raise SystemExit("No requested plot features are present in backtest predictions")
+    return chosen
+
+
+def _make_embedding_pca_plot(
+    emb_df: pd.DataFrame,
+    *,
+    out_png: Path,
+    out_parquet: Path,
+    max_points: int,
+) -> Dict[str, float]:
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except Exception as e:
+        raise SystemExit("Missing matplotlib. Install: pip install matplotlib") from e
+
+    emb_cols = [c for c in emb_df.columns if str(c).startswith("embedding_")]
+    if len(emb_cols) < 3:
+        raise SystemExit("Need at least 3 embedding dimensions for PCA plot")
+    x = emb_df[emb_cols].to_numpy(dtype=np.float32)
+    x = x - x.mean(axis=0, keepdims=True)
+    u, s, _ = np.linalg.svd(x, full_matrices=False)
+    pcs = (u[:, :3] * s[:3]).astype(np.float32)
+    var = (s ** 2) / max(1.0, float(np.sum(s ** 2)))
+    out = emb_df[[c for c in emb_df.columns if not str(c).startswith("embedding_")]].copy()
+    out["pc1"] = pcs[:, 0]
+    out["pc2"] = pcs[:, 1]
+    out["pc3"] = pcs[:, 2]
+    out_parquet.parent.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(out_parquet, index=False)
+
+    idx = _downsample_idx(len(out), max(1, int(max_points)))
+    d = out.iloc[idx].copy()
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
+    t_num = np.arange(len(d), dtype=np.float32)
+    sc = ax.scatter(d["pc1"], d["pc2"], d["pc3"], c=t_num, cmap="viridis", s=8, alpha=0.8)
+    ax.set_xlabel(f"PC1 ({var[0] * 100.0:.1f}%)")
+    ax.set_ylabel(f"PC2 ({var[1] * 100.0:.1f}%)")
+    ax.set_zlabel(f"PC3 ({var[2] * 100.0:.1f}%)")
+    ax.set_title("Lookback Embedding PCA")
+    fig.colorbar(sc, ax=ax, shrink=0.7, pad=0.1, label="sample order")
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=140)
+    plt.close(fig)
+    return {
+        "pc1_explained_variance_ratio": float(var[0]),
+        "pc2_explained_variance_ratio": float(var[1]),
+        "pc3_explained_variance_ratio": float(var[2]),
+    }
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Backtest multi-horizon Transformer and write per-horizon plots")
     p.add_argument("--model", required=True, help="Path to timeseries_transformer_multihorizon.pt")
@@ -97,6 +157,7 @@ def main() -> int:
     p.add_argument("--plot-features", default="", help="Comma-separated feature list for plot panels")
     p.add_argument("--plot-max-features", type=int, default=4)
     p.add_argument("--plot-max-points", type=int, default=5000)
+    p.add_argument("--embedding-pca-plot", default="yes", choices=["yes", "no"])
     args = p.parse_args()
 
     dataset_paths = [str(pth) for pth in (args.dataset or []) if str(pth).strip()]
@@ -152,6 +213,19 @@ def main() -> int:
     if not plot_features:
         plot_features = _select_focus_features(bt.feature_cols, int(args.plot_max_features))
     metrics_payload["focus_plot_features"] = list(plot_features)
+
+    if str(args.embedding_pca_plot) == "yes" and bt.embeddings is not None and len(bt.embeddings) > 0:
+        emb_plot = out_root / "embedding_pca_3d.png"
+        emb_parquet = out_root / "embedding_pca_3d.parquet"
+        print("[backtest-cli] rendering embedding PCA plot", flush=True)
+        metrics_payload["embedding_pca"] = _make_embedding_pca_plot(
+            bt.embeddings,
+            out_png=emb_plot,
+            out_parquet=emb_parquet,
+            max_points=int(args.plot_max_points),
+        )
+        metrics_payload["embedding_pca"]["plot_path"] = str(emb_plot)
+        metrics_payload["embedding_pca"]["parquet_path"] = str(emb_parquet)
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
     print(f"[backtest-cli] metrics -> {metrics_path}", flush=True)
 
@@ -163,9 +237,14 @@ def main() -> int:
         print(f"[backtest-cli] writing horizon={hz} predictions", flush=True)
         pred_df.to_parquet(pred_path, index=False)
         print(f"[backtest-cli] rendering horizon={hz} plot", flush=True)
-        _make_plot(
+        hz_plot_features = _safe_plot_features(
             pred_df,
             plot_features,
+            int(args.plot_max_features),
+        )
+        _make_plot(
+            pred_df,
+            hz_plot_features,
             out_png=plot_path,
             title=f"Multi-Horizon Transformer Backtest | horizon={hz}",
             max_points=int(args.plot_max_points),
@@ -173,7 +252,7 @@ def main() -> int:
         )
         print(f"[{hz}] pred -> {pred_path}")
         print(f"[{hz}] plot -> {plot_path}")
-        print(f"[{hz}] focus -> {','.join(plot_features)}")
+        print(f"[{hz}] focus -> {','.join(hz_plot_features)}")
 
     print(f"Metrics -> {metrics_path}")
     return 0
