@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -135,6 +135,83 @@ def _make_embedding_pca_plot(
     }
 
 
+def _select_embedding_color_features(emb_df: pd.DataFrame, max_features: int) -> List[str]:
+    cols = [str(c) for c in emb_df.columns if not str(c).startswith("embedding_")]
+    preferred = [
+        c for c in cols
+        if (
+            c == "state"
+            or "flow" in c.lower()
+            or "pressure" in c.lower()
+            or c.lower().endswith("run")
+            or c.lower().endswith("auto")
+            or "pump" in c.lower()
+        )
+    ]
+    ordered = preferred + [c for c in cols if c not in preferred]
+    out: List[str] = []
+    for c in ordered:
+        if c in {"sample_end_index", "timestamp", "horizon"}:
+            continue
+        if c not in out:
+            out.append(c)
+        if len(out) >= max(1, int(max_features)):
+            break
+    return out
+
+
+def _make_embedding_pca_color_plot(
+    pca_df: pd.DataFrame,
+    *,
+    color_col: str,
+    out_png: Path,
+    max_points: int,
+) -> None:
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except Exception as e:
+        raise SystemExit("Missing matplotlib. Install: pip install matplotlib") from e
+
+    if color_col not in pca_df.columns:
+        raise SystemExit(f"Embedding PCA color column missing: {color_col}")
+    idx = _downsample_idx(len(pca_df), max(1, int(max_points)))
+    d = pca_df.iloc[idx].copy()
+    c_raw = pd.to_numeric(d[color_col], errors="coerce")
+    valid = c_raw.notna().to_numpy()
+    if not np.any(valid):
+        raise SystemExit(f"No valid numeric values available for embedding PCA color column: {color_col}")
+
+    x = d.loc[valid, "pc1"].to_numpy(dtype=np.float32)
+    y = d.loc[valid, "pc2"].to_numpy(dtype=np.float32)
+    z = d.loc[valid, "pc3"].to_numpy(dtype=np.float32)
+    c = c_raw.loc[valid].to_numpy(dtype=np.float32)
+
+    is_discrete = False
+    uniq = np.unique(c)
+    if len(uniq) <= 12 and np.all(np.isclose(uniq, np.round(uniq))):
+        is_discrete = True
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
+    if is_discrete:
+        cmap = plt.get_cmap("tab10", max(2, len(uniq)))
+        sc = ax.scatter(x, y, z, c=c, cmap=cmap, s=8, alpha=0.85)
+        cbar = fig.colorbar(sc, ax=ax, shrink=0.7, pad=0.1)
+        cbar.set_label(color_col)
+    else:
+        sc = ax.scatter(x, y, z, c=c, cmap="viridis", s=8, alpha=0.85)
+        cbar = fig.colorbar(sc, ax=ax, shrink=0.7, pad=0.1)
+        cbar.set_label(color_col)
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.set_zlabel("PC3")
+    ax.set_title(f"Lookback Embedding PCA | color={color_col}")
+    fig.tight_layout()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=140)
+    plt.close(fig)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Backtest multi-horizon Transformer and write per-horizon plots")
     p.add_argument("--model", required=True, help="Path to timeseries_transformer_multihorizon.pt")
@@ -158,6 +235,8 @@ def main() -> int:
     p.add_argument("--plot-max-features", type=int, default=4)
     p.add_argument("--plot-max-points", type=int, default=5000)
     p.add_argument("--embedding-pca-plot", default="yes", choices=["yes", "no"])
+    p.add_argument("--embedding-pca-color-features", default="", help="Comma-separated columns to color embedding PCA by")
+    p.add_argument("--embedding-pca-max-color-features", type=int, default=24)
     args = p.parse_args()
 
     dataset_paths = [str(pth) for pth in (args.dataset or []) if str(pth).strip()]
@@ -226,6 +305,25 @@ def main() -> int:
         )
         metrics_payload["embedding_pca"]["plot_path"] = str(emb_plot)
         metrics_payload["embedding_pca"]["parquet_path"] = str(emb_parquet)
+        emb_pca_df = pd.read_parquet(emb_parquet)
+        color_features = [c.strip() for c in str(args.embedding_pca_color_features).split(",") if c.strip()]
+        if not color_features:
+            color_features = _select_embedding_color_features(
+                emb_pca_df,
+                int(args.embedding_pca_max_color_features),
+            )
+        color_features = [c for c in color_features if c in emb_pca_df.columns]
+        metrics_payload["embedding_pca"]["color_features"] = list(color_features)
+        color_dir = out_root / "embedding_pca_colored"
+        color_dir.mkdir(parents=True, exist_ok=True)
+        for c in color_features:
+            print(f"[backtest-cli] rendering embedding PCA color={c}", flush=True)
+            _make_embedding_pca_color_plot(
+                emb_pca_df,
+                color_col=c,
+                out_png=color_dir / f"embedding_pca_3d_color_{c}.png",
+                max_points=int(args.plot_max_points),
+            )
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
     print(f"[backtest-cli] metrics -> {metrics_path}", flush=True)
 

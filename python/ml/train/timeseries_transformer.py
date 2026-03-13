@@ -2087,6 +2087,16 @@ def backtest_timeseries_transformer_multihorizon(
     )
     if group_col:
         emb_df[group_col] = df2[group_col].iloc[end_idx].astype(str).to_numpy()
+    emb_value_cols = (
+        list(reg_target_cols)
+        + list(bin_target_cols)
+        + ([state_target_col] if state_target_col else [])
+        if mixed_targets
+        else list(feature_cols)
+    )
+    for c in emb_value_cols:
+        if c and c in df2.columns and c not in emb_df.columns:
+            emb_df[c] = pd.to_numeric(df2[c].iloc[end_idx], errors="coerce").to_numpy(dtype=np.float32)
     for j in range(embeddings_np.shape[1]):
         emb_df[f"embedding_{j:03d}"] = embeddings_np[:, j].astype(np.float32)
 
