@@ -133,7 +133,7 @@ def _parse_duration_seconds(text: str) -> int:
 
 
 def _infer_sample_period_seconds(ts: pd.Series) -> float:
-    if np.issubdtype(ts.dtype, np.datetime64):
+    if pd.api.types.is_datetime64_any_dtype(ts):
         v = ts.astype("int64").to_numpy(dtype=np.int64)
         diffs = np.diff(v)
         diffs = diffs[diffs > 0]
@@ -149,7 +149,7 @@ def _infer_sample_period_seconds(ts: pd.Series) -> float:
 
 
 def _time_seconds(ts: pd.Series) -> np.ndarray:
-    if np.issubdtype(ts.dtype, np.datetime64):
+    if pd.api.types.is_datetime64_any_dtype(ts):
         return (ts.astype("int64").to_numpy(dtype=np.float64) / 1e9)
     return pd.to_numeric(ts, errors="coerce").to_numpy(dtype=np.float64)
 
@@ -350,7 +350,7 @@ def fit_timeseries_transformer(
         raise ValueError(f"group_col not found: {group_col}")
 
     df2 = df.copy()
-    if np.issubdtype(df2[timestamp_col].dtype, np.datetime64):
+    if pd.api.types.is_datetime64_any_dtype(df2[timestamp_col]):
         pass
     else:
         maybe_dt = pd.to_datetime(df2[timestamp_col], errors="coerce", utc=True)
@@ -709,7 +709,7 @@ def backtest_timeseries_transformer(
     use_target_mode = str(target_mode).strip() if str(target_mode).strip() else str(model_cfg.get("target_mode", "mean"))
 
     df2 = df.copy()
-    if not np.issubdtype(df2[timestamp_col].dtype, np.datetime64):
+    if not pd.api.types.is_datetime64_any_dtype(df2[timestamp_col]):
         maybe_dt = pd.to_datetime(df2[timestamp_col], errors="coerce", utc=True)
         if maybe_dt.notna().mean() > 0.9:
             df2[timestamp_col] = maybe_dt
