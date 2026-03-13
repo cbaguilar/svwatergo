@@ -1720,9 +1720,6 @@ def backtest_timeseries_transformer_multihorizon(
     df2 = df.copy()
     if bool(model_cfg.get("time_cyc_features", False)):
         df2 = _add_time_cyc_features(df2, timestamp_col=timestamp_col)
-    missing_cols = [c for c in feature_cols if c not in df2.columns]
-    if missing_cols:
-        raise ValueError(f"Input dataset missing feature columns: {', '.join(missing_cols)}")
     if not pd.api.types.is_datetime64_any_dtype(df2[timestamp_col]):
         maybe_dt = pd.to_datetime(df2[timestamp_col], errors="coerce", utc=True)
         if maybe_dt.notna().mean() > 0.9:
@@ -1733,6 +1730,22 @@ def backtest_timeseries_transformer_multihorizon(
     reg_target_cols = [str(c) for c in norm_cfg.get("reg_target_cols", [])]
     mixed_spec = dict(model_cfg.get("mixed_target_spec", {}))
     if mixed_targets:
+        base_needed_cols = sorted(
+            {
+                *[str(c) for c in mixed_spec.get("reg_target_cols", [])],
+                *[str(c) for c in mixed_spec.get("binary_target_cols", [])],
+                *[str(c) for c in mixed_spec.get("time_feature_cols", [])],
+                *[str(c) for c in mixed_spec.get("word_cols", [])],
+                str(mixed_spec.get("state_target_col", "")).strip(),
+            }
+            - {""}
+        )
+        missing_base_cols = [c for c in base_needed_cols if c not in df2.columns]
+        if missing_base_cols:
+            raise ValueError(
+                "Input dataset missing base columns required to rebuild mixed features: "
+                + ", ".join(missing_base_cols)
+            )
         df2, mixed_spec = _prepare_mixed_task_frame(
             df2,
             selected_cols=feature_cols,
@@ -1743,6 +1756,9 @@ def backtest_timeseries_transformer_multihorizon(
         bin_target_cols = [str(c) for c in mixed_spec.get("binary_target_cols", [])]
         state_target_col = str(mixed_spec.get("state_target_col", "")).strip()
         state_classes = [int(x) for x in mixed_spec.get("state_classes", [])]
+        missing_cols = [c for c in input_cols if c not in df2.columns]
+        if missing_cols:
+            raise ValueError(f"Input dataset missing feature columns: {', '.join(missing_cols)}")
 
         x_input = df2[input_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
         y_reg = (
@@ -1802,6 +1818,9 @@ def backtest_timeseries_transformer_multihorizon(
         bin_target_cols = []
         state_target_col = ""
         state_classes = []
+        missing_cols = [c for c in feature_cols if c not in df2.columns]
+        if missing_cols:
+            raise ValueError(f"Input dataset missing feature columns: {', '.join(missing_cols)}")
         feat = df2[feature_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
         valid_row = np.all(np.isfinite(feat), axis=1)
         if valid_row.mean() < 1.0:
