@@ -1,0 +1,35 @@
+services:
+  wyze-bridge:
+    container_name: wyze-bridge
+    image: mrlt8/wyze-bridge:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=${TZ:-America/Los_Angeles}
+      - WYZE_EMAIL=${WYZE_EMAIL:-}
+      - WYZE_PASSWORD=${WYZE_PASSWORD:-}
+      - API_ID=${API_ID:-}
+      - API_KEY=${API_KEY:-}
+      - REFRESH_TOKEN=${REFRESH_TOKEN:-}
+      - ACCESS_TOKEN=${ACCESS_TOKEN:-}
+      - WB_AUTH=${WB_AUTH:-true}
+      - WB_USERNAME=${WB_USERNAME:-}
+      - WB_PASSWORD=${WB_PASSWORD:-}
+      - STREAM_AUTH=${STREAM_AUTH:-}
+      - NET_MODE=${NET_MODE:-LAN}
+      - FILTER_NAMES=${FILTER_NAMES:-}
+      - RECORD_ALL=${RECORD_ALL:-true}
+      - RECORD_LENGTH=${RECORD_LENGTH:-60s}
+      - RECORD_KEEP=${RECORD_KEEP:-7d}
+      - RECORD_PATH=/record/camera=%path/date=%Y-%m-%d/
+    ports:
+      - "1935:1935" # RTMP
+      - "8554:8554" # RTSP
+      - "8888:8888" # HLS
+      - "8889:8889" # WebRTC signaling
+      - "8189:8189/udp" # WebRTC ICE/UDP
+      - "5000:5000" # Web UI
+    volumes:
+      - ./config:/config
+      - ./record:/record

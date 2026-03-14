@@ -1,0 +1,20 @@
+[Unit]
+Description=SVWaterGo backend (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Set a dedicated service user in production.
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/svwatergo
+EnvironmentFile=/etc/svwatergo/%i.env
+ExecStart=/opt/svwatergo/server
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
