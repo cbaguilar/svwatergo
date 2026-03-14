@@ -27,6 +27,25 @@ class AudioPretrainedEmbeddingResult:
     finetuned_head_path: Optional[Path]
 
 
+def _resolve_state_unknown_col(columns: Sequence[Any], requested: str) -> Optional[str]:
+    cols = [str(c) for c in columns]
+    req = str(requested or "").strip()
+    cands: List[str] = []
+    for x in (req, "state_unknown", "state__unknown", "unknown_state", "stateunknown"):
+        xs = str(x).strip()
+        if xs and xs not in cands:
+            cands.append(xs)
+    for cand in cands:
+        if cand in cols:
+            return cand
+    lower_to_col = {c.lower(): c for c in cols}
+    for cand in cands:
+        hit = lower_to_col.get(cand.lower())
+        if hit:
+            return hit
+    return None
+
+
 def load_frozen_pretrained_embedding_head(model_path: Path) -> Dict[str, Any]:
     try:
         import joblib  # type: ignore
@@ -364,6 +383,8 @@ def fit_audio_pretrained_embedding_experiment(
     finetune_lr_backbone: float = 1e-5,
     finetune_unfreeze_modules: int = 1,
     finetune_amp: bool = True,
+    drop_state_unknown_train: bool = True,
+    state_unknown_col: str = "state_unknown",
 ) -> AudioPretrainedEmbeddingResult:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -392,6 +413,24 @@ def fit_audio_pretrained_embedding_experiment(
     idx_train = idx_all[split2.to_numpy() == "train"]
     idx_test = idx_all[split2.to_numpy() == "test"]
     idx_val = idx_all[split2.to_numpy() == "val"]
+    state_unknown_col_used: Optional[str] = None
+    if bool(drop_state_unknown_train):
+        suc_res = _resolve_state_unknown_col(df2.columns, str(state_unknown_col))
+        if suc_res is None:
+            print(
+                f"[state_filter] train_only requested col={state_unknown_col} not found; skipping unknown-state drop",
+                flush=True,
+            )
+        else:
+            state_unknown_col_used = str(suc_res)
+            su = pd.to_numeric(df2[suc_res], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+            keep_train = su[idx_train] < 0.5
+            before_train = int(len(idx_train))
+            idx_train = idx_train[keep_train]
+            print(
+                f"[state_filter] train_only drop_unknown col={suc_res} train_rows={len(idx_train)}/{before_train}",
+                flush=True,
+            )
     if len(idx_train) < 2 or len(idx_test) < 1:
         raise ValueError("Need non-empty train and test splits")
 
@@ -748,6 +787,10 @@ def fit_audio_pretrained_embedding_experiment(
         "class_map": y_meta.get("classes", None),
         "frozen_mlp": frozen_metrics,
         "partial_finetune": finetune_metrics,
+        "train_filter": {
+            "drop_state_unknown_train": bool(drop_state_unknown_train),
+            "state_unknown_col": (str(state_unknown_col_used) if state_unknown_col_used else None),
+        },
     }
 
     metrics_path = out_dir / "audio_pretrained_embedding_metrics.json"

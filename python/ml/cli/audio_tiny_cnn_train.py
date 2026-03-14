@@ -17,6 +17,8 @@ def main() -> int:
     p.add_argument("--split-stratify-col", default="", help="Optional dataset column to stratify random split assignment")
     p.add_argument("--dataset-id-col", default="sample_id", help="ID column in --dataset used to join split manifest")
     p.add_argument("--split-id-col", default="sample_id", help="ID column in --split-manifest used to join dataset")
+    p.add_argument("--drop-state-unknown-train", default="yes", choices=["yes", "no"])
+    p.add_argument("--state-unknown-col", default="state_unknown")
     p.add_argument("--out-dir", required=True)
     p.add_argument("--target-col", default="ropumprun_label", help="Target column for binary/multiclass tasks")
     p.add_argument(
@@ -200,6 +202,8 @@ def main() -> int:
         split_col=str(args.split_col),
         dataset_id_col=str(args.dataset_id_col),
         split_manifest_id_col=str(args.split_id_col),
+        drop_state_unknown_train=(str(args.drop_state_unknown_train) == "yes"),
+        state_unknown_col=str(args.state_unknown_col),
         split_stratify_col=str(args.split_stratify_col),
         model_arch=str(args.model_arch),
         oversample_class_col=str(args.oversample_class_col),

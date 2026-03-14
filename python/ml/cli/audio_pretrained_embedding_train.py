@@ -16,6 +16,8 @@ def main() -> int:
     p.add_argument("--dataset-id-col", default="sample_id")
     p.add_argument("--split-id-col", default="sample_id")
     p.add_argument("--audio-path-col", default="segment_path")
+    p.add_argument("--drop-state-unknown-train", default="yes", choices=["yes", "no"])
+    p.add_argument("--state-unknown-col", default="state_unknown")
 
     p.add_argument("--out-dir", required=True)
     p.add_argument("--backend", choices=["panns"], default="panns")
@@ -60,6 +62,8 @@ def main() -> int:
         dataset_id_col=str(args.dataset_id_col),
         split_manifest_id_col=str(args.split_id_col),
         audio_path_col=str(args.audio_path_col),
+        drop_state_unknown_train=(str(args.drop_state_unknown_train) == "yes"),
+        state_unknown_col=str(args.state_unknown_col),
         random_state=int(args.random_state),
         target_seconds=float(args.target_seconds),
         extract_batch_size=int(args.extract_batch_size),
