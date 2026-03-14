@@ -281,6 +281,17 @@ function formatSnapshotNumber(value, fractionDigits = 0) {
   })
 }
 
+function formatDataAgeLabel(lastDataAtMs) {
+  if (!Number.isFinite(lastDataAtMs) || lastDataAtMs <= 0) return ''
+  const ageSec = Math.max(0, Math.floor((Date.now() - lastDataAtMs) / 1000))
+  if (ageSec < 1) return 'just now'
+  if (ageSec < 60) return `${ageSec}s ago`
+  const ageMin = Math.floor(ageSec / 60)
+  if (ageMin < 60) return `${ageMin}m ago`
+  const ageHour = Math.floor(ageMin / 60)
+  return `${ageHour}h ago`
+}
+
 const buildLiveMd = (data = {}, onSelectSensor = () => {}, selectedKeys = []) => {
   const selectedSet = new Set(selectedKeys)
   return {
@@ -310,6 +321,8 @@ const DetailedDashboard = () => {
   const [stateError, setStateError] = useState('')
   const [isRangeLoading, setIsRangeLoading] = useState(false)
   const [streamState, setStreamState] = useState('connecting')
+  const [hasFreshData, setHasFreshData] = useState(false)
+  const [lastDataAtMs, setLastDataAtMs] = useState(0)
   const [isLivePlaying, setIsLivePlaying] = useState(true)
   const [focusedTs, setFocusedTs] = useState(null)
   const [hoverTs, setHoverTs] = useState(null)
@@ -335,6 +348,8 @@ const DetailedDashboard = () => {
   const chartPointsRef = useRef([])
   const timelineRowsRef = useRef([])
   const pendingURLFocusTsRef = useRef(null)
+  const freshDataPulseTimerRef = useRef(null)
+  const freshDataPulseVisibleRef = useRef(false)
 
   const siteKey =
     selectedSystem === 'Bluerock'
@@ -503,6 +518,8 @@ const DetailedDashboard = () => {
     const openSocket = () => {
       if (!active) return
       setStreamState((prev) => (prev === 'connected' ? 'connected' : 'connecting'))
+      setHasFreshData(false)
+      freshDataPulseVisibleRef.current = false
       ws = subscribeLatestState(siteKey, {
         soft: true,
         onOpen: () => {
@@ -511,7 +528,23 @@ const DetailedDashboard = () => {
         },
         onMessage: (payload) => {
           if (!active || payload?.type !== 'state.latest' || !payload?.data) return
+          console.log('[ws] state.latest packet', {
+            site: siteKey,
+            receivedAt: new Date().toISOString(),
+            rowTime: payload?.data?.plctime || payload?.data?.recordtime || null,
+          })
           setTimelineRows((prev) => mergeRows(prev, [payload.data]))
+          setLastDataAtMs(Date.now())
+          // Pulse briefly on new data without extending indefinitely under high message rates.
+          if (!freshDataPulseVisibleRef.current) {
+            setHasFreshData(true)
+            freshDataPulseVisibleRef.current = true
+            if (freshDataPulseTimerRef.current) clearTimeout(freshDataPulseTimerRef.current)
+            freshDataPulseTimerRef.current = setTimeout(() => {
+              if (active) setHasFreshData(false)
+              freshDataPulseVisibleRef.current = false
+            }, 300)
+          }
           setStateError('')
         },
       })
@@ -519,6 +552,8 @@ const DetailedDashboard = () => {
       ws.onclose = () => {
         if (!active) return
         setStreamState('reconnecting')
+        setHasFreshData(false)
+        freshDataPulseVisibleRef.current = false
         reconnectTimer = setTimeout(openSocket, retryDelayMs)
         retryDelayMs = Math.min(retryDelayMs * 2, 10000)
       }
@@ -528,7 +563,9 @@ const DetailedDashboard = () => {
     return () => {
       active = false
       setStreamState('disconnected')
+      freshDataPulseVisibleRef.current = false
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (freshDataPulseTimerRef.current) clearTimeout(freshDataPulseTimerRef.current)
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close()
       }
@@ -597,6 +634,12 @@ const DetailedDashboard = () => {
   const metricPalette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6']
   const activeRangeStartMs = new Date(activeRange.start).getTime()
   const activeRangeEndMs = new Date(activeRange.end).getTime()
+  const pausedPresetWindowMs =
+    !isLivePlaying && activeRange.kind === 'preset'
+      ? PRESETS[activeRange.preset || timePreset]?.ms || 0
+      : 0
+  const pausedPresetEndMs = pausedPresetWindowMs > 0 ? Math.max(toTs(latestRow), Date.now()) : NaN
+  const pausedPresetStartMs = pausedPresetWindowMs > 0 ? pausedPresetEndMs - pausedPresetWindowMs : NaN
   const shouldRestrictChartToActiveRange =
     !isLivePlaying && Number.isFinite(activeRangeStartMs) && Number.isFinite(activeRangeEndMs)
   const chartPoints = timelineRows
@@ -604,6 +647,9 @@ const DetailedDashboard = () => {
     .filter((p) => p.ts > 0)
     .filter((p) => {
       if (!shouldRestrictChartToActiveRange) return true
+      if (pausedPresetWindowMs > 0) {
+        return p.ts >= pausedPresetStartMs && p.ts <= pausedPresetEndMs
+      }
       return p.ts >= activeRangeStartMs && p.ts <= activeRangeEndMs
     })
   const chartGapThresholdMs = useMemo(() => {
@@ -921,6 +967,8 @@ const DetailedDashboard = () => {
         isLivePlaying={isLivePlaying}
         focusedTs={focusedTs}
         streamState={streamState}
+        hasFreshData={hasFreshData}
+        lastDataAtLabel={formatDataAgeLabel(lastDataAtMs)}
         activeRangeLabel={activeRangeLabel}
         activeRangeKind={activeRange.kind}
         timePreset={timePreset}

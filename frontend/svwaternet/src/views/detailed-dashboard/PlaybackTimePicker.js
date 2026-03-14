@@ -1,6 +1,12 @@
 import React from 'react'
 import CIcon from '@coreui/icons-react'
-import { cilMediaPause, cilMediaPlay, cilMediaStepBackward, cilMediaStepForward } from '@coreui/icons'
+import {
+  cilDataTransferDown,
+  cilMediaPause,
+  cilMediaPlay,
+  cilMediaStepBackward,
+  cilMediaStepForward,
+} from '@coreui/icons'
 import {
   CBadge,
   CButton,
@@ -17,6 +23,8 @@ const PlaybackTimePicker = ({
   isLivePlaying,
   focusedTs,
   streamState,
+  hasFreshData,
+  lastDataAtLabel,
   activeRangeLabel,
   activeRangeKind,
   timePreset,
@@ -45,6 +53,19 @@ const PlaybackTimePicker = ({
       <CBadge color="warning">Reconnecting...</CBadge>
     ) : (
       <CBadge color="secondary">Disconnected</CBadge>
+    )
+
+  const dataBadge =
+    streamState !== 'connected' ? null : hasFreshData ? (
+      <CBadge color="success" className="d-inline-flex align-items-center">
+        <CIcon icon={cilDataTransferDown} size="sm" className="me-1" />
+        New Data
+      </CBadge>
+    ) : (
+      <CBadge color="info" className="d-inline-flex align-items-center">
+        <CIcon icon={cilDataTransferDown} size="sm" className="me-1" />
+        {lastDataAtLabel ? `Last ${lastDataAtLabel}` : 'Listening'}
+      </CBadge>
     )
 
   return (
@@ -156,6 +177,7 @@ const PlaybackTimePicker = ({
         </CBadge>
       )}
       {streamBadge}
+      {dataBadge}
       {showRangeSummary && <div className="small text-body-secondary ms-auto text-nowrap">{activeRangeLabel} (UTC)</div>}
     </div>
   )
