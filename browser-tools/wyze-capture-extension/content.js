@@ -44,6 +44,40 @@
   }
 
   const OVERLAY_ID = "wyze-overlay-root";
+  const DEFAULT_SELECTED_CAMERA_NAMES = [
+    "Pryor Farms 1 (inside near door)",
+    "Pryor Farms 3 (behind ro)",
+    "Santa Teresa Cam 1",
+    "Santa Teresa Outside",
+    "camera 5"
+  ];
+
+  const fmtBytes = (n) => {
+    const x = Number(n || 0);
+    if (x >= 1024 * 1024 * 1024) return `${(x / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    if (x >= 1024 * 1024) return `${(x / (1024 * 1024)).toFixed(1)} MB`;
+    if (x >= 1024) return `${(x / 1024).toFixed(1)} KB`;
+    return `${x} B`;
+  };
+
+  const fmtDur = (ms) => {
+    const s = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    const hh = Math.floor(s / 3600);
+    const mm = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    if (hh > 0) return `${hh}h ${String(mm).padStart(2, "0")}m ${String(ss).padStart(2, "0")}s`;
+    return `${mm}m ${String(ss).padStart(2, "0")}s`;
+  };
+
+  const formatProgressStatus = (p) => {
+    const done = Number(p.completed || 0);
+    const total = p.totalPlanned == null ? "?" : Number(p.totalPlanned);
+    const failed = Number(p.failed || 0);
+    const cur = p.currentName ? ` current=${p.currentName}` : "";
+    const loop = p.mode === "loop" && p.totalMs ? ` / ${fmtDur(p.totalMs)}` : "";
+    const failText = failed > 0 ? ` failed=${failed}` : "";
+    return `Progress: ${done}/${total} recordings${failText}, bytes=${fmtBytes(p.totalBytes)}, elapsed=${fmtDur(p.elapsedMs)}${loop}, last=${fmtBytes(p.lastBytes)}${cur}`;
+  };
 
   function getOverlayHost() {
     return document.getElementById(OVERLAY_ID);
@@ -60,7 +94,7 @@
     const shadow = host.attachShadow({ mode: "open" });
     shadow.innerHTML = `
       <style>
-        .panel { width: 360px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.12); font-family: "SF Pro Text","Segoe UI","Helvetica Neue",Arial,sans-serif; font-size: 12px; color: #111; }
+        .panel { width: 560px; max-width: calc(100vw - 24px); background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.12); font-family: "SF Pro Text","Segoe UI","Helvetica Neue",Arial,sans-serif; font-size: 12px; color: #111; }
         .hdr { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; background: #f5f6f8; border-radius: 8px 8px 0 0; }
         .title { font-weight: 600; }
         .btn { border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
@@ -74,6 +108,7 @@
         .item { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
         .meta { margin-left: auto; color: #555; font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
         .status { font-size: 11px; color: #333; min-height: 14px; }
+        .stats { max-height: 120px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 6px; padding: 4px 6px; background: #fafafa; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; color: #333; white-space: pre-wrap; }
       </style>
       <div class="panel">
         <div class="hdr">
@@ -84,6 +119,7 @@
           <div class="row">
             <button class="btn" id="scan">Scan Cameras</button>
             <button class="btn" id="getSel">Get Selection</button>
+            <button class="btn" id="dumpInfo">Dump Stream Info</button>
           </div>
           <div class="row">
             <label>Streams</label>
@@ -99,6 +135,7 @@
           <div class="row"><label>Tag</label><input id="tag" type="text" placeholder="10s"/></div>
           <div class="row"><label>Min bytes</label><input id="minBytes" type="number" min="0" step="1024"/></div>
           <div class="row"><label>Max retries</label><input id="maxRetries" type="number" min="0" step="1"/></div>
+          <div class="row"><label>Parallel</label><input id="parallelWorkers" type="number" min="1" step="1"/></div>
 
           <div class="row">
             <label><input id="uploadEnabled" type="checkbox" /> Upload</label>
@@ -112,11 +149,13 @@
           <div class="status" id="folderStatus"></div>
 
           <div class="row">
-            <button class="btn primary" id="recordSeq">Record Sequential</button>
+            <button class="btn primary" id="recordParallel">Record Parallel</button>
+            <button class="btn" id="recordSeq">Record Sequential</button>
             <button class="btn" id="recordOne">Record First</button>
             <button class="btn" id="stopAll">Stop</button>
           </div>
           <div class="status" id="status"></div>
+          <div class="stats" id="camStats">Per-camera stats will appear while recording.</div>
         </div>
       </div>
     `;
@@ -140,9 +179,13 @@
     const streamsEl = $("streams");
     const statusEl = $("status");
     const folderStatusEl = $("folderStatus");
+    const camStatsEl = $("camStats");
 
     const setStatus = (msg) => { statusEl.textContent = msg; };
     const setFolderStatus = (msg) => { folderStatusEl.textContent = msg; };
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    let preferredCheckedNames = new Set(DEFAULT_SELECTED_CAMERA_NAMES);
+    const perCameraStats = new Map();
 
     const readCheckedNames = () =>
       Array.from(streamsEl.querySelectorAll("input[type='checkbox']:checked"))
@@ -161,10 +204,61 @@
       tag: $("tag").value || "",
       minBytes: Number($("minBytes").value || 0),
       maxRetries: Number($("maxRetries").value || 0),
+      parallelWorkers: Number($("parallelWorkers").value || 2),
       uploadEnabled: $("uploadEnabled").checked,
       uploadUrl: $("uploadUrl").value || "",
       useRecorder: $("useRecorder").checked
     });
+
+    const resetPerCameraStats = () => {
+      perCameraStats.clear();
+      camStatsEl.textContent = "Per-camera stats will appear while recording.";
+    };
+
+    const renderPerCameraStats = () => {
+      if (!perCameraStats.size) {
+        camStatsEl.textContent = "Per-camera stats will appear while recording.";
+        return;
+      }
+      const lines = [];
+      const rows = Array.from(perCameraStats.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+      for (const [name, row] of rows) {
+        const errText = row.lastError ? ` err=${row.lastError}` : "";
+        lines.push(`${name}\nok=${row.ok} fail=${row.fail} bytes=${fmtBytes(row.bytes)} last=${fmtBytes(row.lastBytes)}${errText}`);
+      }
+      camStatsEl.textContent = lines.join("\n\n");
+    };
+
+    const updatePerCameraStats = (p) => {
+      const name = p && p.currentName ? String(p.currentName) : "";
+      if (!name) return;
+      const lastBytes = Number(p.lastBytes || 0);
+      const lastError = String(p.lastError || "");
+      const row = perCameraStats.get(name) || { ok: 0, fail: 0, bytes: 0, lastBytes: 0, lastError: "" };
+      row.lastBytes = Math.max(0, lastBytes);
+      row.lastError = lastError;
+      if (lastError) {
+        row.fail += 1;
+      } else {
+        row.ok += 1;
+        row.bytes += Math.max(0, lastBytes);
+      }
+      perCameraStats.set(name, row);
+      renderPerCameraStats();
+    };
+
+    const applyDomSelectionByNames = (names) => {
+      const selected = names instanceof Set ? names : new Set(names || []);
+      const cards = Array.from(document.querySelectorAll("li.MuiImageListItem-root"));
+      for (const card of cards) {
+        const cameraName = extractCameraName(card);
+        if (!cameraName) continue;
+        const isSelected = selected.has(cameraName);
+        card.dataset.wyzeSelected = isSelected ? "1" : "0";
+        card.style.outline = isSelected ? "3px solid #1f6feb" : "";
+        card.style.outlineOffset = isSelected ? "2px" : "";
+      }
+    };
 
     const estimateTimeoutMs = (cmd, names, cfg) => {
       const durationMs = Number(cfg.durationMs || 10000);
@@ -174,9 +268,19 @@
         const totalMs = Math.max(0, Math.round(Number(cfg.runHours || 0) * 60 * 60 * 1000));
         return Math.max(30000, totalMs + 120000);
       }
+      if (cmd === "recordParallelLoop") {
+        const totalMs = Math.max(0, Math.round(Number(cfg.runHours || 0) * 60 * 60 * 1000));
+        return Math.max(30000, totalMs + 120000);
+      }
       if (cmd === "recordSequential") {
         const n = Math.max(1, (names || []).length || 1);
         return Math.max(30000, (n * perRecordingMs) + 30000);
+      }
+      if (cmd === "recordParallel") {
+        const n = Math.max(1, (names || []).length || 1);
+        const workers = Math.max(1, Math.min(n, Number(cfg.parallelWorkers || 1)));
+        const batches = Math.max(1, Math.ceil(n / workers));
+        return Math.max(30000, (batches * perRecordingMs) + 30000);
       }
       if (cmd === "recordOne") {
         return Math.max(30000, perRecordingMs + 15000);
@@ -203,6 +307,7 @@
       $("tag").value = cfg.tag || "10s";
       $("minBytes").value = cfg.minBytes || 40960;
       $("maxRetries").value = cfg.maxRetries || 1;
+      $("parallelWorkers").value = cfg.parallelWorkers || 2;
       $("uploadEnabled").checked = !!cfg.uploadEnabled;
       $("uploadUrl").value = cfg.uploadUrl || "";
       $("useRecorder").checked = !!cfg.useRecorder;
@@ -213,9 +318,12 @@
       const { wyzeOverlayState } = await chrome.storage.local.get("wyzeOverlayState");
       if (!wyzeOverlayState) return;
       if (wyzeOverlayState.namesText) $("names").value = wyzeOverlayState.namesText;
+      if (Array.isArray(wyzeOverlayState.checked) && wyzeOverlayState.checked.length) {
+        preferredCheckedNames = new Set(wyzeOverlayState.checked);
+      }
       if (Array.isArray(wyzeOverlayState.streams)) {
         const items = wyzeOverlayState.streams.map((name) => ({ name, hasVideo: false }));
-        renderStreams(items, new Set(wyzeOverlayState.checked || []));
+        renderStreams(items, preferredCheckedNames);
       }
     };
 
@@ -241,7 +349,11 @@
         cb.type = "checkbox";
         cb.value = item.name;
         if (checkedSet && checkedSet.has(item.name)) cb.checked = true;
-        cb.addEventListener("change", () => persistUI().catch(() => {}));
+        cb.addEventListener("change", () => {
+          preferredCheckedNames = new Set(readCheckedNames());
+          applyDomSelectionByNames(preferredCheckedNames);
+          persistUI().catch(() => {});
+        });
         const name = document.createElement("span");
         name.textContent = item.name;
         const meta = document.createElement("span");
@@ -256,14 +368,43 @@
         row.appendChild(meta);
         streamsEl.appendChild(row);
       }
+      const selectedNames = checkedSet && checkedSet.size ? checkedSet : new Set(readCheckedNames());
+      applyDomSelectionByNames(selectedNames);
+    };
+
+    const autoScanAndApplySelection = async () => {
+      const maxAttempts = 15;
+      for (let i = 0; i < maxAttempts; i += 1) {
+        const items = scanCameraDetails();
+        if (items.length > 0) {
+          const available = new Set(items.map((it) => it.name));
+          const selected = new Set(
+            Array.from(preferredCheckedNames).filter((name) => available.has(name))
+          );
+          renderStreams(items, selected);
+          if (selected.size) {
+            $("names").value = Array.from(selected).join("\n");
+          } else if (!$("names").value.trim()) {
+            $("names").value = items.map((it) => it.name).join("\n");
+          }
+          await persistUI();
+          setStatus(`Auto-loaded ${items.length} camera(s)`);
+          return;
+        }
+        await sleep(1500);
+      }
+      setStatus("No cameras found yet; click Scan Cameras after tiles load.");
     };
 
     $("scan").addEventListener("click", async () => {
       try {
         const items = scanCameraDetails();
         const names = items.map((i) => i.name);
-        $("names").value = names.join("\n");
-        renderStreams(items);
+        const selected = new Set(
+          Array.from(preferredCheckedNames).filter((name) => names.includes(name))
+        );
+        $("names").value = selected.size ? Array.from(selected).join("\n") : names.join("\n");
+        renderStreams(items, selected);
         setStatus(`Found ${items.length} camera(s)`);
         await persistUI();
       } catch (e) {
@@ -278,11 +419,49 @@
       await persistUI();
     });
 
+    $("dumpInfo").addEventListener("click", async () => {
+      try {
+        const names = readNames();
+        setStatus(`Dumping stream info for ${names.length || "all"} camera(s)...`);
+        const res = await sendToPage("dumpStreamInfo", { names }, { timeoutMs: 30000 });
+        const rows = Array.isArray(res) ? res : [];
+        const okRows = rows.filter((r) => r && r.ok);
+        const summary = [];
+        for (const row of rows) {
+          if (!row || !row.name) continue;
+          if (!row.ok) {
+            summary.push(`${row.name}\nerror=${row.error || "unknown"}`);
+            continue;
+          }
+          const snap = row.snapshot || {};
+          const audioTrackIds = (((snap.capturedStream || {}).audioTracks) || [])
+            .map((t) => (t && t.id) ? t.id : "")
+            .filter(Boolean);
+          const domKeys = Object.keys(snap.domHints || {});
+          const src = ((snap.media || {}).currentSrc) || ((snap.media || {}).src) || "";
+          summary.push(
+            `${row.name}\n` +
+            `cameraKey=${snap.cameraKey || ""} streamId=${((snap.capturedStream || {}).id) || ""} ` +
+            `audioTracks=${audioTrackIds.join(",") || "none"} webrtcMatches=${(((snap.webrtc || {}).matchedAudioTracks) || []).length} ` +
+            `domHints=${domKeys.join(",") || "none"} src=${src ? src.slice(0, 120) : ""}`
+          );
+        }
+        camStatsEl.textContent = summary.length ? summary.join("\n\n") : "No stream info returned.";
+        setStatus(`Dumped ${okRows.length}/${rows.length} stream snapshot(s). Full JSON in console.`);
+        try {
+          console.log("[wyze-ext] dumpStreamInfo", rows);
+        } catch (_) {}
+      } catch (e) {
+        setStatus(String(e.message || e));
+      }
+    });
+
     $("recordSeq").addEventListener("click", async () => {
       try {
         const names = readNames();
         if (!names.length) throw new Error("No camera names provided");
         const cfg = readConfig();
+        resetPerCameraStats();
         await applyUploadSettings();
         if (cfg.runHours > 0) {
           const totalMs = cfg.runHours * 60 * 60 * 1000;
@@ -296,7 +475,10 @@
             maxRetries: cfg.maxRetries
           }, {
             timeoutMs: estimateTimeoutMs("recordLoop", names, cfg),
-            onProgress: (p) => setStatus(formatProgressStatus(p))
+            onProgress: (p) => {
+              updatePerCameraStats(p);
+              setStatus(formatProgressStatus(p));
+            }
           });
           setStatus(`Done: ${(res || []).length} recording(s)`);
         } else {
@@ -309,7 +491,10 @@
             maxRetries: cfg.maxRetries
           }, {
             timeoutMs: estimateTimeoutMs("recordSequential", names, cfg),
-            onProgress: (p) => setStatus(formatProgressStatus(p))
+            onProgress: (p) => {
+              updatePerCameraStats(p);
+              setStatus(formatProgressStatus(p));
+            }
           });
           setStatus(`Done: ${(res || []).length} recording(s)`);
         }
@@ -333,6 +518,42 @@
           maxRetries: cfg.maxRetries
         }, { timeoutMs: estimateTimeoutMs("recordOne", names, cfg) });
         setStatus(`Saved: ${res && res.filename ? res.filename : ""}`);
+      } catch (e) {
+        setStatus(String(e.message || e));
+      }
+    });
+
+    $("recordParallel").addEventListener("click", async () => {
+      try {
+        const names = readNames();
+        if (!names.length) throw new Error("No camera names provided");
+        const cfg = readConfig();
+        resetPerCameraStats();
+        await applyUploadSettings();
+        const workers = Math.max(1, Math.min(names.length, Number(cfg.parallelWorkers || 1)));
+        const isTimed = Number(cfg.runHours || 0) > 0;
+        const cmd = isTimed ? "recordParallelLoop" : "recordParallel";
+        if (isTimed) {
+          setStatus(`Recording parallel loop for ${cfg.runHours}h (workers=${workers})...`);
+        } else {
+          setStatus(`Recording ${names.length} camera(s) in parallel (workers=${workers})...`);
+        }
+        const res = await sendToPage(cmd, {
+          names,
+          durationMs: cfg.durationMs,
+          totalMs: isTimed ? (cfg.runHours * 60 * 60 * 1000) : 0,
+          tag: cfg.tag || `${cfg.durationMs}ms`,
+          minBytes: cfg.minBytes,
+          maxRetries: cfg.maxRetries,
+          concurrency: workers
+        }, {
+          timeoutMs: estimateTimeoutMs(isTimed ? "recordParallelLoop" : "recordParallel", names, cfg),
+          onProgress: (p) => {
+            updatePerCameraStats(p);
+            setStatus(formatProgressStatus(p));
+          }
+        });
+        setStatus(`Done: ${(res || []).length} recording(s)`);
       } catch (e) {
         setStatus(String(e.message || e));
       }
@@ -372,7 +593,7 @@
       persistUI().catch(() => {});
     });
 
-    const inputs = ["names", "duration", "runHours", "tag", "minBytes", "maxRetries", "uploadEnabled", "uploadUrl"];
+    const inputs = ["names", "duration", "runHours", "tag", "minBytes", "maxRetries", "parallelWorkers", "uploadEnabled", "uploadUrl"];
     for (const id of inputs) {
       $(id).addEventListener(id === "uploadEnabled" ? "change" : "input", () => persistUI().catch(() => {}));
     }
@@ -386,6 +607,7 @@
 
     loadDefaults().catch(() => {});
     loadOverlayState().catch(() => {});
+    autoScanAndApplySelection().catch(() => {});
     sendToPage("dirStatus", {}).then((res) => {
       setFolderStatus(res && res.status ? res.status : "Folder status unknown");
     }).catch(() => {
@@ -594,11 +816,20 @@
         const payload = msg.payload || {};
         if (msg.cmd === "recordLoop") {
           timeoutMs = Math.max(30000, Number(payload.totalMs || 0) + 120000);
+        } else if (msg.cmd === "recordParallelLoop") {
+          timeoutMs = Math.max(30000, Number(payload.totalMs || 0) + 120000);
         } else if (msg.cmd === "recordSequential") {
           const names = Array.isArray(payload.names) ? payload.names : [];
           const durationMs = Number(payload.durationMs || 10000);
           const retries = Math.max(0, Number(payload.maxRetries || 0));
           timeoutMs = Math.max(30000, names.length * ((retries + 1) * durationMs + 5000) + 30000);
+        } else if (msg.cmd === "recordParallel") {
+          const names = Array.isArray(payload.names) ? payload.names : [];
+          const durationMs = Number(payload.durationMs || 10000);
+          const retries = Math.max(0, Number(payload.maxRetries || 0));
+          const workers = Math.max(1, Math.min(names.length || 1, Number(payload.concurrency || 1)));
+          const batches = Math.max(1, Math.ceil((names.length || 1) / workers));
+          timeoutMs = Math.max(30000, batches * (((retries + 1) * durationMs) + 5000) + 30000);
         } else if (msg.cmd === "recordOne") {
           const durationMs = Number(payload.durationMs || 10000);
           const retries = Math.max(0, Number(payload.maxRetries || 0));
@@ -619,25 +850,3 @@
   buildOverlay();
   document.addEventListener("contextmenu", handleContextRecord, true);
 })();
-    const fmtBytes = (n) => {
-      const x = Number(n || 0);
-      if (x >= 1024 * 1024 * 1024) return `${(x / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-      if (x >= 1024 * 1024) return `${(x / (1024 * 1024)).toFixed(1)} MB`;
-      if (x >= 1024) return `${(x / 1024).toFixed(1)} KB`;
-      return `${x} B`;
-    };
-    const fmtDur = (ms) => {
-      const s = Math.max(0, Math.floor(Number(ms || 0) / 1000));
-      const hh = Math.floor(s / 3600);
-      const mm = Math.floor((s % 3600) / 60);
-      const ss = s % 60;
-      if (hh > 0) return `${hh}h ${String(mm).padStart(2, "0")}m ${String(ss).padStart(2, "0")}s`;
-      return `${mm}m ${String(ss).padStart(2, "0")}s`;
-    };
-    const formatProgressStatus = (p) => {
-      const done = Number(p.completed || 0);
-      const total = p.totalPlanned == null ? "?" : Number(p.totalPlanned);
-      const cur = p.currentName ? ` current=${p.currentName}` : "";
-      const loop = p.mode === "loop" && p.totalMs ? ` / ${fmtDur(p.totalMs)}` : "";
-      return `Progress: ${done}/${total} recordings, bytes=${fmtBytes(p.totalBytes)}, elapsed=${fmtDur(p.elapsedMs)}${loop}, last=${fmtBytes(p.lastBytes)}${cur}`;
-    };
