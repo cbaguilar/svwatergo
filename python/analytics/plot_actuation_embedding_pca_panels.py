@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.colors import to_rgb
 from matplotlib.lines import Line2D
 
 
@@ -153,27 +154,21 @@ def _draw_combo_grid(ax, *, top_labels: list[str], counts: list[int], colors: li
     for c in range(ncols):
         cell = tbl[(0, c)]
         cell.set_facecolor("#e9eef7")
+        cell.set_edgecolor("#4a4a4a")
+        cell.set_linewidth(1.0)
         cell.set_text_props(weight="bold")
 
     for r in range(1, len(table_rows) + 1):
         color = colors[r - 1]
+        rgb = np.array(to_rgb(color), dtype=float)
+        fill = tuple((0.82 * 1.0) + (0.18 * rgb))
         for c in range(ncols):
             cell = tbl[(r, c)]
-            cell.set_edgecolor(color)
-            cell.set_linewidth(2.0 if c in (0, 1) else 1.2)
+            cell.set_facecolor(fill)
+            cell.set_edgecolor("#c8c8c8")
+            cell.set_linewidth(0.8)
             if c == 0:
-                cell.set_facecolor("#f8f8f8")
-            elif c >= 2:
-                bits_idx = c - 2
-                bit = top_labels[r - 1][bits_idx] if bits_idx < len(top_labels[r - 1]) else "u"
-                if bit == "2":
-                    cell.set_facecolor("#dff2df")
-                elif bit == "1":
-                    cell.set_facecolor("#fde6c8")
-                elif bit == "u":
-                    cell.set_facecolor("#ececec")
-                else:
-                    cell.set_facecolor("#ffffff")
+                cell.set_text_props(weight="bold")
 
     ax.set_title("Top Combination Grid", fontsize=11, pad=10)
 
