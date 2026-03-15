@@ -144,13 +144,13 @@ def _estimate_cmi_bits(
         base_model = Pipeline(
             [
                 ("pre", other_pre),
-                ("clf", LogisticRegression(max_iter=int(max_iter), multi_class="auto")),
+                ("clf", LogisticRegression(max_iter=int(max_iter))),
             ]
         )
         full_model = Pipeline(
             [
                 ("pre", full_pre),
-                ("clf", LogisticRegression(max_iter=int(max_iter), multi_class="auto")),
+                ("clf", LogisticRegression(max_iter=int(max_iter))),
             ]
         )
 
