@@ -1,0 +1,273 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Iterable
+
+import pandas as pd
+
+from ..utils.parquet_discovery import discover_date_partitioned_parquets
+
+
+TIMESTAMP_CANDIDATES = ("plctime", "timestamp", "ts", "time", "datetime", "recordtime")
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description=(
+            "Analyze date-partitioned Bluerock parquet files and report daily data gaps "
+            "above a threshold."
+        )
+    )
+    p.add_argument(
+        "--dataset-root",
+        default="data/raw/plc/bluerock",
+        help="Root containing date=YYYY-MM-DD partitions with parquet files",
+    )
+    p.add_argument(
+        "--dataset-filename",
+        default="data.parquet",
+        help="Filename inside each date partition",
+    )
+    p.add_argument("--date-from", default="2024-01-01", help="Inclusive lower bound (YYYY-MM-DD)")
+    p.add_argument("--date-to", default="2024-04-30", help="Inclusive upper bound (YYYY-MM-DD)")
+    p.add_argument(
+        "--timestamp-col",
+        default="",
+        help="Timestamp column to use. Defaults to auto-detecting a known timestamp column.",
+    )
+    p.add_argument(
+        "--gap-minutes",
+        type=float,
+        default=5.0,
+        help="Only gaps strictly larger than this many minutes are counted",
+    )
+    p.add_argument(
+        "--expected-cadence-seconds",
+        type=float,
+        default=0.0,
+        help="Expected sample cadence. If <= 0, estimate from the median positive gap.",
+    )
+    p.add_argument(
+        "--out-daily-csv",
+        default="data/derived/bluerock_daily_gaps_2024q1_q2.csv",
+        help="Path for daily summary CSV",
+    )
+    p.add_argument(
+        "--out-gap-csv",
+        default="data/derived/bluerock_gap_details_2024q1_q2.csv",
+        help="Path for per-gap detail CSV",
+    )
+    return p.parse_args()
+
+
+def _choose_timestamp_col(columns: Iterable[str], requested: str) -> str:
+    cols = {str(c) for c in columns}
+    if str(requested).strip():
+        if requested not in cols:
+            raise ValueError(f"Requested timestamp column not found: {requested}")
+        return requested
+    for candidate in TIMESTAMP_CANDIDATES:
+        if candidate in cols:
+            return candidate
+    raise ValueError(
+        "Could not auto-detect timestamp column. "
+        f"Checked candidates: {', '.join(TIMESTAMP_CANDIDATES)}"
+    )
+
+
+def _load_dataset(paths: list[Path], timestamp_col: str) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for path in paths:
+        df = pd.read_parquet(path)
+        if timestamp_col not in df.columns:
+            raise ValueError(f"{path} does not contain timestamp column {timestamp_col!r}")
+        frames.append(df[[timestamp_col]].copy())
+    if not frames:
+        return pd.DataFrame(columns=[timestamp_col])
+    out = pd.concat(frames, axis=0, ignore_index=True, sort=False)
+    out[timestamp_col] = pd.to_datetime(out[timestamp_col], errors="coerce", utc=True)
+    out = out[out[timestamp_col].notna()].sort_values(timestamp_col).reset_index(drop=True)
+    return out
+
+
+def _estimate_expected_cadence_seconds(ts: pd.Series) -> float:
+    deltas = ts.diff().dt.total_seconds()
+    deltas = deltas[(deltas.notna()) & (deltas > 0)]
+    if deltas.empty:
+        return 0.0
+    return float(deltas.median())
+
+
+def _build_gap_details(ts: pd.Series, gap_threshold_seconds: float, expected_cadence_seconds: float) -> pd.DataFrame:
+    prev_ts = ts.shift(1)
+    delta_s = (ts - prev_ts).dt.total_seconds()
+    gaps = pd.DataFrame(
+        {
+            "prev_ts": prev_ts,
+            "next_ts": ts,
+            "gap_seconds": delta_s,
+        }
+    )
+    gaps = gaps[gaps["gap_seconds"] > float(gap_threshold_seconds)].copy()
+    if gaps.empty:
+        return pd.DataFrame(
+            columns=[
+                "day",
+                "prev_ts",
+                "next_ts",
+                "gap_seconds",
+                "gap_minutes",
+                "lost_seconds",
+                "lost_minutes",
+            ]
+        )
+    cadence = max(float(expected_cadence_seconds), 0.0)
+    gaps["lost_seconds"] = (gaps["gap_seconds"] - cadence).clip(lower=0.0)
+    gaps["gap_minutes"] = gaps["gap_seconds"] / 60.0
+    gaps["lost_minutes"] = gaps["lost_seconds"] / 60.0
+    gaps["day"] = gaps["prev_ts"].dt.strftime("%Y-%m-%d")
+    return gaps[["day", "prev_ts", "next_ts", "gap_seconds", "gap_minutes", "lost_seconds", "lost_minutes"]]
+
+
+def _allocate_gap_time_by_day(gap_details: pd.DataFrame, expected_cadence_seconds: float) -> pd.DataFrame:
+    if gap_details.empty:
+        return pd.DataFrame(columns=["day", "gap_minutes", "lost_minutes"])
+
+    rows: list[dict[str, object]] = []
+    for row in gap_details.itertuples(index=False):
+        start = pd.Timestamp(row.prev_ts)
+        end = pd.Timestamp(row.next_ts)
+        if pd.isna(start) or pd.isna(end) or end <= start:
+            continue
+        total_gap_seconds = max((end - start).total_seconds(), 0.0)
+        total_lost_seconds = max(total_gap_seconds - float(expected_cadence_seconds), 0.0)
+        cursor = start
+        while cursor < end:
+            next_midnight = cursor.normalize() + pd.Timedelta(days=1)
+            chunk_end = min(end, next_midnight)
+            elapsed_seconds = max((chunk_end - cursor).total_seconds(), 0.0)
+            if elapsed_seconds > 0:
+                lost_seconds = 0.0
+                if total_gap_seconds > 0:
+                    lost_seconds = total_lost_seconds * (elapsed_seconds / total_gap_seconds)
+                rows.append(
+                    {
+                        "day": cursor.strftime("%Y-%m-%d"),
+                        "gap_minutes": elapsed_seconds / 60.0,
+                        "lost_minutes": lost_seconds / 60.0,
+                    }
+                )
+            cursor = chunk_end
+
+    if not rows:
+        return pd.DataFrame(columns=["day", "gap_minutes", "lost_minutes"])
+
+    alloc = pd.DataFrame(rows)
+    alloc = alloc.groupby("day", as_index=False).agg(
+        gap_minutes=("gap_minutes", "sum"),
+        lost_minutes=("lost_minutes", "sum"),
+    )
+    return alloc
+
+
+def _build_daily_summary(
+    ts: pd.Series,
+    gap_details: pd.DataFrame,
+    expected_cadence_seconds: float,
+    date_from: str,
+    date_to: str,
+) -> pd.DataFrame:
+    day_key = ts.dt.strftime("%Y-%m-%d")
+    daily_rows = pd.DataFrame(
+        {
+            "day": day_key,
+            "timestamp": ts,
+        }
+    ).groupby("day", as_index=False).agg(
+        first_ts=("timestamp", "min"),
+        last_ts=("timestamp", "max"),
+        row_count=("timestamp", "size"),
+    )
+    all_days = pd.DataFrame(
+        {
+            "day": pd.date_range(start=str(date_from), end=str(date_to), freq="D", tz="UTC").strftime("%Y-%m-%d")
+        }
+    )
+
+    daily_gaps = gap_details.groupby("day", as_index=False).agg(
+        gap_count=("gap_seconds", "size"),
+        largest_gap_minutes=("gap_minutes", "max"),
+    )
+    daily_alloc = _allocate_gap_time_by_day(gap_details, expected_cadence_seconds)
+
+    out = (
+        all_days.merge(daily_rows, on="day", how="left")
+        .merge(daily_gaps, on="day", how="left")
+        .merge(daily_alloc, on="day", how="left")
+    )
+    out["partition_has_rows"] = out["row_count"].fillna(0).astype(int) > 0
+    out["row_count"] = out["row_count"].fillna(0).astype(int)
+    out["gap_count"] = out["gap_count"].fillna(0).astype(int)
+    for col in ("largest_gap_minutes", "gap_minutes", "lost_minutes"):
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+    out = out.rename(columns={"gap_minutes": "total_gap_minutes"})
+    return out.sort_values("day").reset_index(drop=True)
+
+
+def main() -> int:
+    args = _parse_args()
+    dataset_root = Path(args.dataset_root)
+    paths = discover_date_partitioned_parquets(
+        dataset_root,
+        filename=str(args.dataset_filename),
+        date_from=str(args.date_from),
+        date_to=str(args.date_to),
+    )
+    if not paths:
+        raise SystemExit(
+            f"No parquet files found under {dataset_root} for {args.date_from} through {args.date_to}"
+        )
+
+    sample_columns = pd.read_parquet(paths[0]).columns
+    timestamp_col = _choose_timestamp_col(sample_columns, str(args.timestamp_col))
+    df = _load_dataset(paths, timestamp_col)
+    if df.empty:
+        raise SystemExit("Resolved parquet files but no valid timestamps were found")
+
+    expected_cadence_seconds = float(args.expected_cadence_seconds)
+    if expected_cadence_seconds <= 0:
+        expected_cadence_seconds = _estimate_expected_cadence_seconds(df[timestamp_col])
+
+    gap_threshold_seconds = float(args.gap_minutes) * 60.0
+    gap_details = _build_gap_details(df[timestamp_col], gap_threshold_seconds, expected_cadence_seconds)
+    daily = _build_daily_summary(
+        df[timestamp_col],
+        gap_details,
+        expected_cadence_seconds,
+        str(args.date_from),
+        str(args.date_to),
+    )
+
+    out_daily = Path(args.out_daily_csv)
+    out_gap = Path(args.out_gap_csv)
+    out_daily.parent.mkdir(parents=True, exist_ok=True)
+    out_gap.parent.mkdir(parents=True, exist_ok=True)
+    daily.to_csv(out_daily, index=False)
+    gap_details.to_csv(out_gap, index=False)
+
+    total_lost_minutes = float(gap_details["lost_minutes"].sum()) if not gap_details.empty else 0.0
+    print(f"Resolved files           : {len(paths)}")
+    print(f"Timestamp column         : {timestamp_col}")
+    print(f"Expected cadence seconds : {expected_cadence_seconds:.3f}")
+    print(f"Gap threshold minutes    : {float(args.gap_minutes):.3f}")
+    print(f"Days summarized          : {len(daily)}")
+    print(f"Gaps found               : {len(gap_details)}")
+    print(f"Total lost minutes       : {total_lost_minutes:.3f}")
+    print(f"Daily summary CSV        : {out_daily}")
+    print(f"Gap detail CSV           : {out_gap}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
