@@ -109,8 +109,12 @@ def _legend_handles(labels, colors):
 
 def _top_combo_labels(df: pd.DataFrame, combo_col: str, top_k: int) -> tuple[pd.Series, list[str], pd.Series]:
     cats = df[combo_col].astype("string").fillna("<NA>").astype(str)
-    top = cats.value_counts().head(max(1, int(top_k))).index.tolist()
-    plot_label = cats.where(cats.isin(top), other="OTHER")
+    if int(top_k) <= 0:
+        top = cats.value_counts().index.tolist()
+        plot_label = cats.copy()
+    else:
+        top = cats.value_counts().head(max(1, int(top_k))).index.tolist()
+        plot_label = cats.where(cats.isin(top), other="OTHER")
     return plot_label, top, cats
 
 
