@@ -153,6 +153,31 @@ UI_HTML = """<!doctype html>
   </div>
 
   <div class="panel">
+    <div><b>Parquet Query</b>: inspect arbitrary parquet rows and open their media</div>
+    <div class="row">
+      <div style="min-width:60%">
+        <label>parquet path</label>
+        <input id="parquetPath" style="width:100%" />
+      </div>
+      <div><label>rows</label><input id="parquetRows" type="number" value="25" /></div>
+      <div><label>filter col</label><input id="parquetFilterCol" value="" /></div>
+      <div><label>filter val</label><input id="parquetFilterVal" value="" /></div>
+    </div>
+    <div class="row">
+      <div><label>pca1</label><input id="parquetPca1" value="" /></div>
+      <div><label>pca2</label><input id="parquetPca2" value="" /></div>
+      <div><label>pca3</label><input id="parquetPca3" value="" /></div>
+      <div><label>display cols</label><input id="parquetCols" value="sample_id,segment_path,audio_source,split,actuation_trit,actuation_combo,pca1,pca2,pca3,dist2" style="width:420px" /></div>
+      <div><label>&nbsp;</label><button onclick="queryParquet()">Query</button></div>
+    </div>
+    <table id="parquetTbl">
+      <thead><tr><th>actions</th><th>summary</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <pre id="parquetMetaPreview"></pre>
+  </div>
+
+  <div class="panel">
     <div><b>Directory Browser</b>: <span id="dirPath" class="mono"></span></div>
     <table id="dirTbl">
       <thead><tr><th>name</th><th>type</th><th>size</th><th>path</th></tr></thead>
@@ -334,6 +359,53 @@ async function loadFile() {
   if (!p) return;
   const d = await jget('/api/file?path=' + encodeURIComponent(p) + '&rows=' + encodeURIComponent(rows || '20'));
   document.getElementById('filePreview').textContent = JSON.stringify(d, null, 2);
+}
+async function queryParquet() {
+  const path = document.getElementById('parquetPath').value.trim();
+  const rows = document.getElementById('parquetRows').value.trim();
+  const filterCol = document.getElementById('parquetFilterCol').value.trim();
+  const filterVal = document.getElementById('parquetFilterVal').value.trim();
+  const pca1 = document.getElementById('parquetPca1').value.trim();
+  const pca2 = document.getElementById('parquetPca2').value.trim();
+  const pca3 = document.getElementById('parquetPca3').value.trim();
+  const cols = document.getElementById('parquetCols').value.trim();
+  if (!path) return;
+  const q = new URLSearchParams();
+  q.set('path', path);
+  q.set('rows', rows || '25');
+  if (filterCol) q.set('filter_col', filterCol);
+  if (filterVal) q.set('filter_val', filterVal);
+  if (pca1) q.set('pca1', pca1);
+  if (pca2) q.set('pca2', pca2);
+  if (pca3) q.set('pca3', pca3);
+  if (cols) q.set('display_cols', cols);
+  const d = await jget('/api/parquet_query?' + q.toString());
+  const tb = document.querySelector('#parquetTbl tbody');
+  tb.innerHTML = '';
+  for (const row of (d.rows || [])) {
+    const audioPath = esc(row.segment_path || '');
+    const melPath = esc(row.mel_shard_path || '');
+    const melIdx = esc(row.mel_shard_local_index ?? 0);
+    const summary = (d.display_cols || []).map(c => `${c}=${esc(row[c])}`).join(' | ');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>
+      <button data-audio="${audioPath}">Play</button>
+      <button data-audio="${audioPath}" data-mel="${melPath}" data-mel-idx="${melIdx}">Spec</button>
+      <button data-meta="1">Meta</button>
+    </td><td class="mono">${summary}</td>`;
+    tb.appendChild(tr);
+    const buttons = tr.querySelectorAll('button');
+    buttons[0].onclick = () => { showAudio(audioPath); showSpec(audioPath, melPath, melIdx); };
+    buttons[1].onclick = () => { showSpec(audioPath, melPath, melIdx); };
+    buttons[2].onclick = () => {
+      document.getElementById('parquetMetaPreview').textContent = JSON.stringify(row, null, 2);
+    };
+  }
+  document.getElementById('parquetMetaPreview').textContent = JSON.stringify(
+    {path: d.path, total_rows: d.total_rows, rows_returned: (d.rows || []).length},
+    null,
+    2
+  );
 }
 async function loadDir(path) {
   const target = path && path.length ? path : (window.__defaultBrowseRoot || '');
@@ -797,6 +869,77 @@ class AppState:
             return {"path": str(p), "kind": "text", "preview": txt[:20000]}
         return {"path": str(p), "kind": "binary", "size_bytes": p.stat().st_size}
 
+    def query_parquet(
+        self,
+        *,
+        path: str,
+        rows: int = 25,
+        filter_col: str = "",
+        filter_val: str = "",
+        pca1: str = "",
+        pca2: str = "",
+        pca3: str = "",
+        display_cols: str = "",
+    ) -> Dict[str, Any]:
+        p = self._check_allowed(path)
+        if not p.exists():
+            raise FileNotFoundError(str(p))
+        if p.suffix.lower() != ".parquet":
+            raise ValueError("query_parquet requires a parquet file")
+        df = pd.read_parquet(p)
+        if df.empty:
+            return {"path": str(p), "total_rows": 0, "display_cols": [], "rows": []}
+
+        out = df.copy()
+        fc = str(filter_col).strip()
+        fv = str(filter_val).strip()
+        if fc and fv:
+            if fc not in out.columns:
+                raise ValueError(f"filter column not found: {fc}")
+            out = out[out[fc].astype("string").str.contains(fv, case=False, regex=False, na=False)].copy()
+
+        use_nearest = all(str(x).strip() for x in (pca1, pca2, pca3))
+        if use_nearest:
+            req = ["pca1", "pca2", "pca3"]
+            missing = [c for c in req if c not in out.columns]
+            if missing:
+                raise ValueError(f"missing PCA columns: {', '.join(missing)}")
+            out["dist2"] = (
+                (pd.to_numeric(out["pca1"], errors="coerce") - float(pca1)) ** 2
+                + (pd.to_numeric(out["pca2"], errors="coerce") - float(pca2)) ** 2
+                + (pd.to_numeric(out["pca3"], errors="coerce") - float(pca3)) ** 2
+            )
+            out = out[out["dist2"].notna()].sort_values("dist2", ascending=True)
+
+        total = int(len(out))
+        dcols = [c.strip() for c in str(display_cols).split(",") if c.strip()]
+        if not dcols:
+            preferred = [
+                "sample_id",
+                "segment_path",
+                "audio_source",
+                "split",
+                "actuation_trit",
+                "actuation_combo",
+                "pca1",
+                "pca2",
+                "pca3",
+                "dist2",
+            ]
+            dcols = [c for c in preferred if c in out.columns]
+        keep_extra = [c for c in ("segment_path", "mel_shard_path", "mel_shard_local_index") if c in out.columns and c not in dcols]
+        cols = [c for c in dcols if c in out.columns] + keep_extra
+        out = out.head(max(1, min(int(rows), 500))).copy()
+        for c in out.columns:
+            if pd.api.types.is_datetime64_any_dtype(out[c]):
+                out[c] = out[c].astype("string")
+        return {
+            "path": str(p),
+            "total_rows": total,
+            "display_cols": [c for c in dcols if c in out.columns],
+            "rows": out[cols].to_dict(orient="records"),
+        }
+
 
 def _q1(params: Dict[str, List[str]], key: str, default: str = "") -> str:
     vals = params.get(key)
@@ -978,6 +1121,24 @@ def make_handler(state: AppState):
                         self._write_json({"error": "path is required"}, code=400)
                         return
                     self._write_json(state.preview_file(p, rows=int(_q1(q, "rows", "20"))))
+                    return
+                if path == "/api/parquet_query":
+                    p = _q1(q, "path", "")
+                    if not p:
+                        self._write_json({"error": "path is required"}, code=400)
+                        return
+                    self._write_json(
+                        state.query_parquet(
+                            path=p,
+                            rows=int(_q1(q, "rows", "25")),
+                            filter_col=_q1(q, "filter_col", ""),
+                            filter_val=_q1(q, "filter_val", ""),
+                            pca1=_q1(q, "pca1", ""),
+                            pca2=_q1(q, "pca2", ""),
+                            pca3=_q1(q, "pca3", ""),
+                            display_cols=_q1(q, "display_cols", ""),
+                        )
+                    )
                     return
                 if path == "/audio":
                     p = _q1(q, "path", "")
