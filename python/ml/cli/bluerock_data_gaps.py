@@ -58,6 +58,11 @@ def _parse_args() -> argparse.Namespace:
         default="data/derived/bluerock_gap_details_2024q1_q2.csv",
         help="Path for per-gap detail CSV",
     )
+    p.add_argument(
+        "--out-png",
+        default="data/derived/bluerock_daily_lost_minutes_2024q1_q2.png",
+        help="Path for daily lost-minutes chart PNG",
+    )
     return p.parse_args()
 
 
@@ -215,6 +220,36 @@ def _build_daily_summary(
     return out.sort_values("day").reset_index(drop=True)
 
 
+def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt  # type: ignore
+    except Exception as e:
+        raise SystemExit("Missing matplotlib. Install: pip install matplotlib") from e
+
+    plot_df = daily.copy()
+    plot_df["day_dt"] = pd.to_datetime(plot_df["day"], utc=True, errors="coerce")
+    plot_df["lost_minutes"] = pd.to_numeric(plot_df["lost_minutes"], errors="coerce").fillna(0.0)
+
+    fig, ax = plt.subplots(figsize=(14, 4.8), dpi=150, constrained_layout=True)
+    colors = plot_df["partition_has_rows"].map({True: "#1f77b4", False: "#d62728"}).fillna("#1f77b4")
+    ax.bar(plot_df["day_dt"], plot_df["lost_minutes"], width=0.9, color=colors)
+    ax.set_title("Bluerock Daily Lost Minutes")
+    ax.set_xlabel("day")
+    ax.set_ylabel("lost minutes")
+    ax.grid(axis="y", alpha=0.25)
+    ax.set_axisbelow(True)
+
+    if not plot_df.empty:
+        fig.autofmt_xdate(rotation=45, ha="right")
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=160)
+    plt.close(fig)
+
+
 def main() -> int:
     args = _parse_args()
     dataset_root = Path(args.dataset_root)
@@ -251,10 +286,12 @@ def main() -> int:
 
     out_daily = Path(args.out_daily_csv)
     out_gap = Path(args.out_gap_csv)
+    out_png = Path(args.out_png)
     out_daily.parent.mkdir(parents=True, exist_ok=True)
     out_gap.parent.mkdir(parents=True, exist_ok=True)
     daily.to_csv(out_daily, index=False)
     gap_details.to_csv(out_gap, index=False)
+    _write_daily_lost_minutes_plot(daily, out_png)
 
     total_lost_minutes = float(gap_details["lost_minutes"].sum()) if not gap_details.empty else 0.0
     print(f"Resolved files           : {len(paths)}")
@@ -266,6 +303,7 @@ def main() -> int:
     print(f"Total lost minutes       : {total_lost_minutes:.3f}")
     print(f"Daily summary CSV        : {out_daily}")
     print(f"Gap detail CSV           : {out_gap}")
+    print(f"Lost-minutes PNG         : {out_png}")
     return 0
 
 
