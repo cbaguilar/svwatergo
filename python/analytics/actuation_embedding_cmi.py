@@ -32,6 +32,14 @@ DEFAULT_ACTUATORS = [
     "proddiversionrun",
 ]
 
+TRIT_TO_STATE = {
+    "0": "off",
+    "1": "transition",
+    "2": "on",
+    "u": "unknown",
+    "U": "unknown",
+}
+
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -171,6 +179,30 @@ def _estimate_cmi_bits(
     return out.sort_values("cmi_bits", ascending=False).reset_index(drop=True)
 
 
+def _materialize_state_cols_from_trit(
+    df: pd.DataFrame,
+    *,
+    actuators: List[str],
+    state_suffix: str,
+) -> pd.DataFrame:
+    out = df.copy()
+    trit_col = ""
+    for cand in ("actuation_trit", "actuation_bits"):
+        if cand in out.columns:
+            trit_col = cand
+            break
+    if not trit_col:
+        return out
+
+    trit = out[trit_col].astype("string").fillna("").astype(str)
+    for i, actuator in enumerate(actuators):
+        state_col = f"{actuator}{state_suffix}"
+        if state_col in out.columns:
+            continue
+        out[state_col] = trit.str.slice(i, i + 1).map(TRIT_TO_STATE).fillna("unknown").astype("string")
+    return out
+
+
 def main() -> int:
     args = _parse_args()
     dataset = Path(args.dataset)
@@ -189,6 +221,7 @@ def main() -> int:
             raise SystemExit("no rows left after split filter")
 
     actuators = [x.strip() for x in str(args.actuators).split(",") if x.strip()]
+    df = _materialize_state_cols_from_trit(df, actuators=actuators, state_suffix=str(args.state_suffix))
     actuator_cols = [f"{a}{args.state_suffix}" for a in actuators]
     missing = [c for c in actuator_cols if c not in df.columns]
     if missing:
