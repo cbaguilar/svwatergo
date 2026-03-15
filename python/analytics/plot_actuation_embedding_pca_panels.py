@@ -190,14 +190,14 @@ def _plot_combo_bits(
 ) -> None:
     plot_label, top, cats = _top_combo_labels(df, combo_col, top_k)
     uniq = sorted(plot_label.unique().tolist())
+    color_map = {str(label): plt.get_cmap("tab20", max(len(uniq), 1))(i) for i, label in enumerate(uniq)}
 
     fig = plt.figure(figsize=(11, 8), dpi=160)
     ax = fig.add_subplot(111, projection=("3d" if projection == "3d" else None))
-    cmap = plt.get_cmap("tab20", max(len(uniq), 1))
     handle_colors = []
     for i, label in enumerate(uniq):
         m = plot_label.to_numpy() == label
-        color = cmap(i)
+        color = color_map[str(label)]
         handle_colors.append(color)
         if projection == "3d":
             ax.scatter(
@@ -241,7 +241,7 @@ def _plot_combo_bits(
     plt.close(fig)
 
     counts = [int((cats == label).sum()) for label in top]
-    top_colors = [cmap(i) for i in range(len(top))]
+    top_colors = [color_map[str(label)] for label in top]
 
     fig2 = plt.figure(figsize=(18, 8), dpi=160)
     ax_plot = fig2.add_subplot(121, projection=("3d" if projection == "3d" else None))
