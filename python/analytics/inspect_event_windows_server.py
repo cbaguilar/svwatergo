@@ -76,6 +76,8 @@ UI_HTML = """<!doctype html>
   <div id="summary" class="mono"></div>
   <pre id="datasetStats" class="mono"></pre>
   <div style="margin:6px 0;">
+    <a href="/parquet" target="_blank" rel="noopener">Open Parquet Query Page</a>
+    |
     <a href="#" onclick="loadDir(''); return false;">Browse Raw Dataset</a>
     |
     <a href="/raw/" target="_blank" rel="noopener">Open Static /raw/ Browser</a>
@@ -439,6 +441,140 @@ async function loadDir(path) {
 loadSummary().catch(e => alert(e.message));
 loadWindows().catch(e => alert(e.message));
 loadDir('').catch(e => console.log(e.message));
+</script>
+</body>
+</html>
+"""
+
+PARQUET_QUERY_HTML = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parquet Query Inspector</title>
+  <style>
+    body { font-family: sans-serif; margin: 12px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    label { font-size: 12px; color: #333; display:block; }
+    input, button { padding: 6px; font-size: 13px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+    th, td { border: 1px solid #ddd; padding: 6px; font-size: 12px; text-align: left; vertical-align: top; }
+    th { background: #f3f3f3; position: sticky; top: 0; }
+    .panel { border: 1px solid #ddd; padding: 10px; margin-top: 12px; }
+    pre { white-space: pre-wrap; font-size: 12px; max-height: 320px; overflow: auto; }
+    .mono { font-family: monospace; }
+  </style>
+</head>
+<body>
+  <h2>Parquet Query Inspector</h2>
+  <div style="margin:6px 0;">
+    <a href="/" rel="noopener">Open Event Window Inspector</a>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <div style="min-width:60%">
+        <label>parquet path</label>
+        <input id="parquetPath" style="width:100%" />
+      </div>
+      <div><label>rows</label><input id="parquetRows" type="number" value="25" /></div>
+      <div><label>filter col</label><input id="parquetFilterCol" value="" /></div>
+      <div><label>filter val</label><input id="parquetFilterVal" value="" /></div>
+    </div>
+    <div class="row">
+      <div><label>pca1</label><input id="parquetPca1" value="" /></div>
+      <div><label>pca2</label><input id="parquetPca2" value="" /></div>
+      <div><label>pca3</label><input id="parquetPca3" value="" /></div>
+      <div><label>display cols</label><input id="parquetCols" value="sample_id,segment_path,audio_source,split,actuation_trit,actuation_combo,pca1,pca2,pca3,dist2" style="width:420px" /></div>
+      <div><label>&nbsp;</label><button onclick="queryParquet()">Query</button></div>
+    </div>
+    <table id="parquetTbl">
+      <thead><tr><th>actions</th><th>summary</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <pre id="parquetMetaPreview"></pre>
+  </div>
+
+  <div class="panel">
+    <div><b>Segment Media</b>: <span id="mediaInfo" class="mono"></span></div>
+    <audio id="audioPlayer" controls style="width:100%; margin-top:8px;"></audio>
+    <div style="margin-top:8px;">
+      <img id="specImg" style="max-width:100%; border:1px solid #ddd;" />
+    </div>
+    <pre id="rowMeta"></pre>
+  </div>
+
+<script>
+async function jget(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(await r.text());
+  return await r.json();
+}
+function esc(x) { return String(x ?? ''); }
+function showAudio(path) {
+  const p = document.getElementById('audioPlayer');
+  p.src = '/audio?path=' + encodeURIComponent(path);
+  p.play().catch(() => {});
+  document.getElementById('mediaInfo').textContent = `audio: ${path}`;
+}
+function showSpec(audioPath, melPath, melIdx) {
+  const img = document.getElementById('specImg');
+  let url = '';
+  if (melPath) {
+    url = '/spectrogram?mel_shard_path=' + encodeURIComponent(melPath) + '&mel_index=' + encodeURIComponent(melIdx || '0');
+  } else {
+    url = '/spectrogram?path=' + encodeURIComponent(audioPath) + '&mel_index=' + encodeURIComponent(melIdx || '0');
+  }
+  img.src = url;
+  document.getElementById('mediaInfo').textContent = `spec: ${audioPath}`;
+}
+async function queryParquet() {
+  const path = document.getElementById('parquetPath').value.trim();
+  const rows = document.getElementById('parquetRows').value.trim();
+  const filterCol = document.getElementById('parquetFilterCol').value.trim();
+  const filterVal = document.getElementById('parquetFilterVal').value.trim();
+  const pca1 = document.getElementById('parquetPca1').value.trim();
+  const pca2 = document.getElementById('parquetPca2').value.trim();
+  const pca3 = document.getElementById('parquetPca3').value.trim();
+  const cols = document.getElementById('parquetCols').value.trim();
+  if (!path) return;
+  const q = new URLSearchParams();
+  q.set('path', path);
+  q.set('rows', rows || '25');
+  if (filterCol) q.set('filter_col', filterCol);
+  if (filterVal) q.set('filter_val', filterVal);
+  if (pca1) q.set('pca1', pca1);
+  if (pca2) q.set('pca2', pca2);
+  if (pca3) q.set('pca3', pca3);
+  if (cols) q.set('display_cols', cols);
+  const d = await jget('/api/parquet_query?' + q.toString());
+  const tb = document.querySelector('#parquetTbl tbody');
+  tb.innerHTML = '';
+  for (const row of (d.rows || [])) {
+    const audioPath = esc(row.segment_path || '');
+    const melPath = esc(row.mel_shard_path || '');
+    const melIdx = esc(row.mel_shard_local_index ?? 0);
+    const summary = (d.display_cols || []).map(c => `${c}=${esc(row[c])}`).join(' | ');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>
+      <button data-audio="${audioPath}">Play</button>
+      <button data-audio="${audioPath}" data-mel="${melPath}" data-mel-idx="${melIdx}">Spec</button>
+      <button data-meta="1">Meta</button>
+    </td><td class="mono">${summary}</td>`;
+    tb.appendChild(tr);
+    const buttons = tr.querySelectorAll('button');
+    buttons[0].onclick = () => { showAudio(audioPath); showSpec(audioPath, melPath, melIdx); };
+    buttons[1].onclick = () => { showSpec(audioPath, melPath, melIdx); };
+    buttons[2].onclick = () => {
+      document.getElementById('rowMeta').textContent = JSON.stringify(row, null, 2);
+    };
+  }
+  document.getElementById('parquetMetaPreview').textContent = JSON.stringify(
+    {path: d.path, total_rows: d.total_rows, rows_returned: (d.rows || []).length},
+    null,
+    2
+  );
+}
 </script>
 </body>
 </html>
@@ -1071,6 +1207,9 @@ def make_handler(state: AppState):
                 q = parse_qs(parsed.query, keep_blank_values=False)
                 if path == "/":
                     self._write_html(UI_HTML)
+                    return
+                if path == "/parquet":
+                    self._write_html(PARQUET_QUERY_HTML)
                     return
                 if path.startswith("/raw"):
                     root = state.allowed_roots[0]
