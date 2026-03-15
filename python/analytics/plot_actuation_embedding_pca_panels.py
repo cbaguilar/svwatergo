@@ -21,11 +21,29 @@ ACTUATORS = (
     "proddiversionrun",
 )
 
+ACTUATOR_ABBREV = {
+    "ropumprun": "RO",
+    "wellpumprun": "WP",
+    "feedpumprun": "FP",
+    "deliveryrun": "DL",
+    "inletrun": "IN",
+    "flushrun": "FL",
+    "concbypassrun": "CB",
+    "proddiversionrun": "PD",
+}
+
 STATE_COLORS = {
     "off": "#4c78a8",
     "transition": "#f58518",
     "on": "#54a24b",
     "unknown": "#9d9da1",
+}
+
+BIT_ABBREV = {
+    "0": "0",
+    "1": "T",
+    "2": "1",
+    "u": "U",
 }
 
 
@@ -89,6 +107,73 @@ def _legend_handles(labels, colors):
     ]
 
 
+def _top_combo_labels(df: pd.DataFrame, combo_col: str, top_k: int) -> tuple[pd.Series, list[str], pd.Series]:
+    cats = df[combo_col].astype("string").fillna("<NA>").astype(str)
+    top = cats.value_counts().head(max(1, int(top_k))).index.tolist()
+    plot_label = cats.where(cats.isin(top), other="OTHER")
+    return plot_label, top, cats
+
+
+def _combo_grid_rows(top_labels: list[str]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for label in top_labels:
+        bits = str(label)
+        row = [bits]
+        for i, actuator in enumerate(ACTUATORS):
+            ch = bits[i] if i < len(bits) else "u"
+            row.append(BIT_ABBREV.get(ch, str(ch)))
+        rows.append(row)
+    return rows
+
+
+def _draw_combo_grid(ax, *, top_labels: list[str], counts: list[int], colors: list, combo_col: str) -> None:
+    ax.axis("off")
+    headers = [combo_col, "n"] + [ACTUATOR_ABBREV[a] for a in ACTUATORS]
+    body_rows = _combo_grid_rows(top_labels)
+    table_rows = []
+    for idx, row in enumerate(body_rows):
+        table_rows.append([row[0], str(int(counts[idx]))] + row[1:])
+
+    tbl = ax.table(
+        cellText=table_rows,
+        colLabels=headers,
+        loc="center",
+        cellLoc="center",
+        colLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1.0, 1.4)
+
+    ncols = len(headers)
+    for c in range(ncols):
+        cell = tbl[(0, c)]
+        cell.set_facecolor("#e9eef7")
+        cell.set_text_props(weight="bold")
+
+    for r in range(1, len(table_rows) + 1):
+        color = colors[r - 1]
+        for c in range(ncols):
+            cell = tbl[(r, c)]
+            cell.set_edgecolor(color)
+            cell.set_linewidth(2.0 if c in (0, 1) else 1.2)
+            if c == 0:
+                cell.set_facecolor("#f8f8f8")
+            elif c >= 2:
+                bits_idx = c - 2
+                bit = top_labels[r - 1][bits_idx] if bits_idx < len(top_labels[r - 1]) else "u"
+                if bit == "2":
+                    cell.set_facecolor("#dff2df")
+                elif bit == "1":
+                    cell.set_facecolor("#fde6c8")
+                elif bit == "u":
+                    cell.set_facecolor("#ececec")
+                else:
+                    cell.set_facecolor("#ffffff")
+
+    ax.set_title("Top Combination Grid", fontsize=11, pad=10)
+
+
 def _plot_combo_bits(
     df: pd.DataFrame,
     *,
@@ -104,9 +189,7 @@ def _plot_combo_bits(
     title_prefix: str,
     limits,
 ) -> None:
-    cats = df[combo_col].astype("string").fillna("<NA>").astype(str)
-    top = cats.value_counts().head(max(1, int(top_k))).index.tolist()
-    plot_label = cats.where(cats.isin(top), other="OTHER")
+    plot_label, top, cats = _top_combo_labels(df, combo_col, top_k)
     uniq = sorted(plot_label.unique().tolist())
 
     fig = plt.figure(figsize=(11, 8), dpi=160)
@@ -157,6 +240,50 @@ def _plot_combo_bits(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
+
+    counts = [int((cats == label).sum()) for label in top]
+    top_colors = [cmap(i) for i in range(len(top))]
+
+    fig2 = plt.figure(figsize=(18, 8), dpi=160)
+    ax_plot = fig2.add_subplot(121, projection=("3d" if projection == "3d" else None))
+    ax_grid = fig2.add_subplot(122)
+
+    for i, label in enumerate(top):
+        m = cats.to_numpy() == label
+        color = top_colors[i]
+        if projection == "3d":
+            ax_plot.scatter(
+                df.loc[m, x_col],
+                df.loc[m, y_col],
+                df.loc[m, z_col],
+                s=float(point_size),
+                alpha=float(alpha),
+                color=color,
+                linewidths=0.0,
+            )
+        else:
+            ax_plot.scatter(
+                df.loc[m, x_col],
+                df.loc[m, y_col],
+                s=float(point_size),
+                alpha=float(alpha),
+                color=color,
+                linewidths=0.0,
+            )
+
+    _apply_common_style(
+        ax_plot,
+        title=f"{title_prefix} | top combinations",
+        x_label="PCA 1",
+        y_label="PCA 2",
+        z_label="PCA 3",
+        limits=limits,
+    )
+    _draw_combo_grid(ax_grid, top_labels=top, counts=counts, colors=top_colors, combo_col=combo_col)
+    fig2.tight_layout()
+    combo_grid_path = out_path.with_name(out_path.stem + "_with_grid" + out_path.suffix)
+    fig2.savefig(combo_grid_path, bbox_inches="tight")
+    plt.close(fig2)
 
 
 def _plot_one_actuator(
