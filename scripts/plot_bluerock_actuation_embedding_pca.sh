@@ -10,29 +10,25 @@ DATASET="${DATASET:-/mnt/d/datasets/svwatergo/derived/dataset=audio_actuation_da
 SPLIT="${SPLIT:-/mnt/d/datasets/svwatergo/derived/dataset=audio_actuation_dataset/site=bluerock/window_s=10/split_manifest.parquet}"
 EMBEDDINGS_NPZ="${EMBEDDINGS_NPZ:-/mnt/d/datasets/svwatergo/derived/dataset=audio_actuation_dataset/site=bluerock/window_s=10/embeddings_panns.npz}"
 
-OUT_PNG="${OUT_PNG:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_actuation_embedding_pca_combo.png}"
 OUT_PARQUET="${OUT_PARQUET:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_actuation_embedding_pca_combo.parquet}"
 OUT_META="${OUT_META:-/mnt/d/datasets/svwatergo/derived/plots/bluerock_10s_actuation_embedding_pca_combo.json}"
 
-COLOR_COL="${COLOR_COL:-actuation_combo}"
+N_COMPONENTS="${N_COMPONENTS:-3}"
 SPLIT_FILTER="${SPLIT_FILTER:-}"
 SOURCE_FILTER="${SOURCE_FILTER:-}"
 LIMIT="${LIMIT:-12000}"
-TITLE="${TITLE:-PANN Embedding PCA (bluerock 10s actuation dataset)}"
 
 cd "$REPO"
 
 args=(
-  -m python.ml.cli.audio_embedding_pca_plot
+  python/analytics/build_actuation_embedding_pca.py
   --dataset "$DATASET"
   --split-manifest "$SPLIT"
   --embeddings-npz "$EMBEDDINGS_NPZ"
-  --out-png "$OUT_PNG"
   --out-parquet "$OUT_PARQUET"
   --out-meta "$OUT_META"
-  --color-col "$COLOR_COL"
   --limit "$LIMIT"
-  --title "$TITLE"
+  --n-components "$N_COMPONENTS"
 )
 
 if [[ -n "$SPLIT_FILTER" ]]; then
@@ -44,4 +40,4 @@ fi
 
 "$PYTHON" "${args[@]}"
 
-echo "[OK] plot -> $OUT_PNG"
+echo "[OK] points -> $OUT_PARQUET"
