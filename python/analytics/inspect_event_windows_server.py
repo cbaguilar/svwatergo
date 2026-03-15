@@ -41,6 +41,24 @@ DEFAULT_SAMPLES_GLOB = (
     "dataset=audio_event_dataset/site=*/window_s=10/samples.parquet"
 )
 DEFAULT_MODELS_DIR = "/mnt/d/datasets/svwatergo/derived/checkpoints"
+PARQUET_PRESETS = [
+    (
+        "Bluerock Camera 5 PCA",
+        "/mnt/d/datasets/svwatergo/derived/plots/bluerock_camera5_actuation_embedding_pca.parquet",
+    ),
+    (
+        "Bluerock Other Wyze PCA",
+        "/mnt/d/datasets/svwatergo/derived_wyze_bluerock_other/plots/bluerock_other_actuation_embedding_pca.parquet",
+    ),
+    (
+        "Pryor Farm Wyze PCA",
+        "/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/plots/pryorfarm_actuation_embedding_pca.parquet",
+    ),
+    (
+        "Santa Teresa Wyze PCA",
+        "/mnt/d/datasets/svwatergo/derived_wyze_santateresa/plots/santateresa_actuation_embedding_pca.parquet",
+    ),
+]
 
 
 def _ensure_repo_on_syspath() -> None:
@@ -470,6 +488,15 @@ PARQUET_QUERY_HTML = """<!doctype html>
   <div style="margin:6px 0;">
     <a href="/" rel="noopener">Open Event Window Inspector</a>
   </div>
+  <div class="panel">
+    <div><b>Presets</b></div>
+    <div class="row">
+      <button onclick="usePreset('/mnt/d/datasets/svwatergo/derived/plots/bluerock_camera5_actuation_embedding_pca.parquet')">Bluerock Camera 5 PCA</button>
+      <button onclick="usePreset('/mnt/d/datasets/svwatergo/derived_wyze_bluerock_other/plots/bluerock_other_actuation_embedding_pca.parquet')">Bluerock Other Wyze PCA</button>
+      <button onclick="usePreset('/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/plots/pryorfarm_actuation_embedding_pca.parquet')">Pryor Farm Wyze PCA</button>
+      <button onclick="usePreset('/mnt/d/datasets/svwatergo/derived_wyze_santateresa/plots/santateresa_actuation_embedding_pca.parquet')">Santa Teresa Wyze PCA</button>
+    </div>
+  </div>
 
   <div class="panel">
     <div class="row">
@@ -511,6 +538,9 @@ async function jget(url) {
   return await r.json();
 }
 function esc(x) { return String(x ?? ''); }
+function usePreset(path) {
+  document.getElementById('parquetPath').value = path;
+}
 function showAudio(path) {
   const p = document.getElementById('audioPlayer');
   p.src = '/audio?path=' + encodeURIComponent(path);
@@ -575,6 +605,11 @@ async function queryParquet() {
     2
   );
 }
+(() => {
+  const q = new URLSearchParams(window.location.search);
+  const p = q.get('path') || '';
+  if (p) document.getElementById('parquetPath').value = p;
+})();
 </script>
 </body>
 </html>
@@ -623,6 +658,18 @@ def _default_allowed_roots(samples_paths: List[Path]) -> List[Path]:
         if str(c) not in seen:
             seen.add(str(c))
             out.append(c)
+        parent = c.parent
+        try:
+            siblings = sorted(
+                [p.resolve() for p in parent.iterdir() if p.is_dir() and p.name.startswith("derived")],
+                key=lambda p: p.name.lower(),
+            )
+        except Exception:
+            siblings = []
+        for sib in siblings:
+            if str(sib) not in seen:
+                seen.add(str(sib))
+                out.append(sib)
     return out
 
 
@@ -633,10 +680,23 @@ def _infer_site_from_samples_path(samples_path: Path) -> str:
     return ""
 
 
+def _build_root_aliases(roots: List[Path]) -> Dict[str, Path]:
+    out: Dict[str, Path] = {}
+    used: Dict[str, int] = {}
+    for root in roots:
+        base = root.name or "root"
+        idx = used.get(base, 0)
+        alias = base if idx == 0 else f"{base}_{idx + 1}"
+        used[base] = idx + 1
+        out[alias] = root
+    return out
+
+
 class AppState:
     def __init__(self, samples_paths: List[Path], allowed_roots: List[Path], models_dir: Path) -> None:
         self.samples_paths = [p.resolve() for p in samples_paths]
         self.allowed_roots = allowed_roots
+        self.allowed_root_aliases = _build_root_aliases(self.allowed_roots)
         self.models_dir = models_dir
         if not self.samples_paths:
             raise ValueError("No samples parquet files provided.")
@@ -1090,19 +1150,42 @@ def _safe_under_root(root: Path, rel_path: str) -> Path:
     return target
 
 
-def _render_dir_listing_html(*, root: Path, req_rel: str, target: Path) -> str:
-    title = f"Index of /raw/{req_rel.lstrip('/')}"
+def _render_root_index_html(*, root_aliases: Dict[str, Path]) -> str:
     rows: List[str] = []
+    for alias, root in sorted(root_aliases.items(), key=lambda kv: kv[0].lower()):
+        rows.append(
+            f"<tr><td><a href=\"/raw/{quote(alias)}/\">{alias}</a></td><td>{root}</td><td>dir</td></tr>"
+        )
+    return (
+        "<!doctype html><html><head><meta charset='utf-8' />"
+        "<title>Raw Browser</title>"
+        "<style>body{font-family:sans-serif;margin:12px}table{border-collapse:collapse;width:100%}"
+        "th,td{border:1px solid #ddd;padding:6px;font-size:12px;text-align:left}"
+        "th{background:#f3f3f3}</style></head><body>"
+        "<h3>Index of /raw/</h3>"
+        "<div>Available roots</div>"
+        "<table><thead><tr><th>alias</th><th>path</th><th>type</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></body></html>"
+    )
+
+
+def _render_dir_listing_html(*, root_alias: str, root: Path, req_rel: str, target: Path) -> str:
+    title = f"Index of /raw/{root_alias}/{req_rel.lstrip('/')}".rstrip("/")
+    rows: List[str] = []
+    rows.append(
+        "<tr><td><a href=\"/raw/\">..</a></td><td>dir</td><td></td></tr>"
+    )
     if req_rel.strip("/"):
         parent_rel = str(Path(req_rel).parent)
         if parent_rel == ".":
             parent_rel = ""
         rows.append(
-            f"<tr><td><a href=\"/raw/{quote(parent_rel)}\">..</a></td><td>dir</td><td></td></tr>"
+            f"<tr><td><a href=\"/raw/{quote(root_alias)}/{quote(parent_rel)}\">parent</a></td><td>dir</td><td></td></tr>"
         )
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         child_rel = str((Path(req_rel) / child.name).as_posix()).lstrip("./")
-        href = f"/raw/{quote(child_rel)}"
+        href = f"/raw/{quote(root_alias)}/{quote(child_rel)}"
         ctype = "dir" if child.is_dir() else "file"
         size = "" if child.is_dir() else str(child.stat().st_size)
         rows.append(f"<tr><td><a href=\"{href}\">{child.name}</a></td><td>{ctype}</td><td>{size}</td></tr>")
@@ -1113,7 +1196,7 @@ def _render_dir_listing_html(*, root: Path, req_rel: str, target: Path) -> str:
         "th,td{border:1px solid #ddd;padding:6px;font-size:12px;text-align:left}"
         "th{background:#f3f3f3}</style></head><body>"
         f"<h3>{title}</h3>"
-        f"<div>root: {root}</div>"
+        f"<div>root: {root_alias} -> {root}</div>"
         "<table><thead><tr><th>name</th><th>type</th><th>size</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></body></html>"
@@ -1212,14 +1295,30 @@ def make_handler(state: AppState):
                     self._write_html(PARQUET_QUERY_HTML)
                     return
                 if path.startswith("/raw"):
-                    root = state.allowed_roots[0]
-                    req_rel = unquote(path[len("/raw") :]).lstrip("/")
+                    raw_rel = unquote(path[len("/raw") :]).lstrip("/")
+                    if not raw_rel:
+                        self._write_html(_render_root_index_html(root_aliases=state.allowed_root_aliases))
+                        return
+                    parts = Path(raw_rel).parts
+                    root_alias = str(parts[0])
+                    root = state.allowed_root_aliases.get(root_alias)
+                    if root is None:
+                        self._write_json({"error": f"unknown raw root alias: {root_alias}"}, code=404)
+                        return
+                    req_rel = str(Path(*parts[1:]).as_posix()) if len(parts) > 1 else ""
                     target = _safe_under_root(root, req_rel)
                     if not target.exists():
                         self._write_json({"error": f"not found: {target}"}, code=404)
                         return
                     if target.is_dir():
-                        self._write_html(_render_dir_listing_html(root=root, req_rel=req_rel, target=target))
+                        self._write_html(
+                            _render_dir_listing_html(
+                                root_alias=root_alias,
+                                root=root,
+                                req_rel=req_rel,
+                                target=target,
+                            )
+                        )
                         return
                     mime, _enc = mimetypes.guess_type(str(target))
                     self._write_bytes(target.read_bytes(), content_type=(mime or "application/octet-stream"))
