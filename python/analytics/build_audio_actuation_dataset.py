@@ -458,6 +458,7 @@ def _write_embeddings(
     out_dataset_root: Path,
     args: argparse.Namespace,
 ) -> tuple[Path, Optional[Path]]:
+    out_dataset_root.mkdir(parents=True, exist_ok=True)
     emb_npz = out_dataset_root / "embeddings_panns.npz"
     emb_joined = out_dataset_root / "embeddings_joined.parquet" if bool(args.write_embeddings_joined) else None
 
