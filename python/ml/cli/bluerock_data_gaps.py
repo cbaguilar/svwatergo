@@ -262,7 +262,20 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
     ax.annotate(
         "Added message retries\nwith zip compression",
         xy=(ann1_day, ann1_y),
-        xytext=(pd.Timestamp("2024-03-16", tz="UTC"), max(text_top * 0.78, ann1_y + 140.0)),
+        xytext=(pd.Timestamp("2024-03-13", tz="UTC"), max(text_top * 0.78, ann1_y + 140.0)),
+        textcoords="data",
+        arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
+        ha="left",
+        va="bottom",
+        fontsize=9,
+    )
+
+    ann_reg_day = pd.Timestamp("2024-03-24", tz="UTC")
+    ann_reg_y = _lost_minutes_on("2024-03-24")
+    ax.annotate(
+        "Domain routing errors begin\nwith registrar",
+        xy=(ann_reg_day, ann_reg_y),
+        xytext=(pd.Timestamp("2024-03-21", tz="UTC"), max(text_top * 0.48, ann_reg_y + 180.0)),
         textcoords="data",
         arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
         ha="left",
