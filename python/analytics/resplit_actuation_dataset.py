@@ -42,7 +42,7 @@ def _copy_if_exists(src: Path, dst: Path) -> None:
     if not src.exists():
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    shutil.copyfile(src, dst)
 
 
 def main() -> int:
