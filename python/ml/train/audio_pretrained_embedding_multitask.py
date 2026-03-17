@@ -1001,10 +1001,29 @@ def fit_audio_pretrained_embedding_multitask(
                 flush=True,
             )
         else:
-            ttxt = "NA" if test_metric is None else f"{test_metric:.4f}"
-            metric_name = "test_acc" if mode == "multiclass" else "test_exact_match"
+            if mode == "multiclass":
+                metric_name = "test_acc"
+                metric_value = test_metric
+            elif metric_mode == "macro_f1":
+                metric_name = f"{split_mode}_macro_f1"
+                metric_value = val_macro_f1 if split_mode == "val" else test_macro_f1
+            elif metric_mode == "main_task_metric":
+                metric_name = ("val_exact_match" if split_mode == "val" else "test_exact_match") if mode == "multilabel" else ("val_acc" if split_mode == "val" else "test_acc")
+                metric_value = val_metric if split_mode == "val" else test_metric
+            elif metric_mode == "plc_pca_r2":
+                metric_name = f"{split_mode}_plc_r2"
+                metric_value = val_plc_r2 if split_mode == "val" else test_plc_r2
+            else:
+                metric_name = "metric"
+                metric_value = test_metric
+            ttxt = "NA" if metric_value is None else f"{float(metric_value):.4f}"
+            extra = ""
+            if mode == "multilabel":
+                exact_val = val_metric if split_mode == "val" else test_metric
+                exact_txt = "NA" if exact_val is None else f"{float(exact_val):.4f}"
+                extra = f" exact_match={exact_txt}"
             print(
-                f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} {metric_name}={ttxt} lr={float(optim.param_groups[0]['lr']):.6g}",
+                f"[epoch {ep:03d}/{n_epochs}] loss={avg_loss:.6f} {metric_name}={ttxt}{extra} lr={float(optim.param_groups[0]['lr']):.6g}",
                 flush=True,
             )
 
