@@ -262,7 +262,7 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
     ax.annotate(
         "Added message retries\nwith zip compression",
         xy=(ann1_day, ann1_y),
-        xytext=(ann1_day, max(text_top * 0.78, ann1_y + 80.0)),
+        xytext=(pd.Timestamp("2024-03-18", tz="UTC"), max(text_top * 0.78, ann1_y + 140.0)),
         textcoords="data",
         arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
         ha="left",
@@ -270,12 +270,25 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
         fontsize=9,
     )
 
-    ann2_day = pd.Timestamp("2024-03-25", tz="UTC")
-    ann2_y = _lost_minutes_on("2024-03-25")
+    ann2_day = pd.Timestamp("2024-03-27", tz="UTC")
+    ann2_y = _lost_minutes_on("2024-03-27")
     ax.annotate(
-        "Error with domain name,\nadding IP fallback",
+        "Adding IP fallback",
         xy=(ann2_day, ann2_y),
-        xytext=(ann2_day, max(text_top * 0.58, ann2_y + 80.0)),
+        xytext=(pd.Timestamp("2024-03-30", tz="UTC"), max(text_top * 0.60, ann2_y + 180.0)),
+        textcoords="data",
+        arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
+        ha="left",
+        va="bottom",
+        fontsize=9,
+    )
+
+    ann3_day = pd.Timestamp("2024-03-29", tz="UTC")
+    ann3_y = _lost_minutes_on("2024-03-29")
+    ax.annotate(
+        "Data connection issues\nwere resolved",
+        xy=(ann3_day, ann3_y),
+        xytext=(pd.Timestamp("2024-04-02", tz="UTC"), max(text_top * 0.34, ann3_y + 120.0)),
         textcoords="data",
         arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
         ha="left",
