@@ -71,6 +71,71 @@ def _load_mels_from_manifest_rows(df: pd.DataFrame) -> np.ndarray:
     return X
 
 
+def _coerce_audio_path_column(df: pd.DataFrame, audio_path_col: str) -> pd.Series:
+    c = str(audio_path_col).strip()
+    if c and c in df.columns:
+        s = df[c].astype("string")
+    else:
+        fallback = next((k for k in ("segment_path", "audio_path", "wav_path", "path") if k in df.columns), None)
+        if fallback is None:
+            raise ValueError(
+                "No audio path column found. Pass audio_path_col and ensure dataset has path strings."
+            )
+        s = df[fallback].astype("string")
+    mask = s.notna() & (s.astype(str).str.len() > 0)
+    if int(mask.sum()) != len(df):
+        raise ValueError("Dataset contains empty audio paths; cannot build mel training input")
+    return s.astype(str)
+
+
+def _resolve_expected_mel_shape(*, df: pd.DataFrame, mel_config: Dict[str, Any]) -> Tuple[int, int]:
+    if "mel_n_mels" in df.columns and "mel_n_frames" in df.columns:
+        m = pd.to_numeric(df["mel_n_mels"], errors="coerce").dropna()
+        f = pd.to_numeric(df["mel_n_frames"], errors="coerce").dropna()
+        if len(m) and len(f):
+            return int(m.iloc[0]), int(f.iloc[0])
+
+    sample_rate = int(mel_config.get("sample_rate", 16000))
+    target_seconds = float(mel_config.get("target_seconds", 4.0))
+    hop_length = int(mel_config.get("hop_length", 256))
+    n_mels = int(mel_config.get("n_mels", 64))
+    target_n = int(round(target_seconds * sample_rate))
+    n_frames = 1 + max(0, target_n // max(1, hop_length))
+    return int(n_mels), int(n_frames)
+
+
+def _load_mels_from_audio_paths(
+    df: pd.DataFrame,
+    *,
+    mel_config: Dict[str, Any],
+    audio_path_col: str,
+) -> np.ndarray:
+    paths = _coerce_audio_path_column(df, audio_path_col)
+    expected_shape = _resolve_expected_mel_shape(df=df, mel_config=mel_config)
+    out: List[np.ndarray] = []
+    for p in paths.tolist():
+        mel = _load_mel_from_wav(Path(p), mel_cfg=mel_config, expected_shape=expected_shape)
+        out.append(np.asarray(mel, dtype=np.float32))
+    if not out:
+        raise ValueError("No mel tensors built from audio paths.")
+    return np.stack(out, axis=0).astype("float32", copy=False)
+
+
+def load_training_mels(
+    df: pd.DataFrame,
+    *,
+    mel_config: Optional[Dict[str, Any]] = None,
+    audio_path_col: str = "segment_path",
+) -> np.ndarray:
+    if {"mel_shard_path", "mel_shard_local_index"}.issubset(df.columns):
+        return _load_mels_from_manifest_rows(df)
+    return _load_mels_from_audio_paths(
+        df,
+        mel_config=dict(mel_config or {}),
+        audio_path_col=str(audio_path_col),
+    )
+
+
 def _coerce_target(
     df: pd.DataFrame,
     *,
@@ -319,6 +384,7 @@ def fit_audio_pca_svm(
     oversample_multiplier: int = 1,
     drop_state_unknown_train: bool = True,
     state_unknown_col: str = "state_unknown",
+    audio_path_col: str = "segment_path",
 ) -> AudioPCASVMResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     df = _sample_rows(df, limit, sample_mode)
@@ -333,7 +399,11 @@ def fit_audio_pca_svm(
     if len(df) < 4:
         raise ValueError("Not enough labeled rows to train.")
 
-    X_mel = _load_mels_from_manifest_rows(df)
+    X_mel = load_training_mels(
+        df,
+        mel_config=mel_config,
+        audio_path_col=str(audio_path_col),
+    )
     mel_n_mels, mel_n_frames = _infer_mel_shape(df, X_mel)
     X = X_mel.reshape(X_mel.shape[0], -1).astype("float32", copy=False)
 

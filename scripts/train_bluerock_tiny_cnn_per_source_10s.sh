@@ -187,6 +187,7 @@ PY
     --dataset-id-col sample_id \
     --split-id-col sample_id \
     --split-col split \
+    --audio-path-col segment_path \
     --out-dir "$SRC_OUT_DIR" \
     --task multilabel \
     --target-cols "$TARGET_COLS" \

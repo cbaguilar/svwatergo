@@ -91,6 +91,7 @@ fi
   --dataset-id-col sample_id \
   --split-id-col sample_id \
   --split-col split \
+  --audio-path-col segment_path \
   --out-dir "$OUT_DIR" \
   --model-arch resnet_small \
   --task "$TASK" \

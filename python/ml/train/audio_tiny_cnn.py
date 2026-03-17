@@ -13,9 +13,10 @@ from .audio_pca_svm import (
     _attach_split_labels,
     _coerce_target,
     _load_mel_from_wav,
-    _metrics_dict,
     _normalize_split_value,
+    _metrics_dict,
     _sample_rows,
+    load_training_mels,
 )
 from .audio_model_minicnn import build_tiny_cnn_model
 from .audio_model_resnet import build_small_resnet_model
@@ -822,6 +823,7 @@ def fit_audio_tiny_cnn(
     generate_projection: bool = False,
     drop_state_unknown_train: bool = True,
     state_unknown_col: str = "state_unknown",
+    audio_path_col: str = "segment_path",
 ) -> AudioTinyCNNResult:
     torch, nn, DataLoader, TensorDataset = _require_torch()
     _seed_torch(torch, int(random_state))
@@ -864,7 +866,11 @@ def fit_audio_tiny_cnn(
     if len(df) < 8:
         raise ValueError("Not enough labeled rows to train tiny CNN.")
 
-    X_mel = _load_mels_from_manifest_rows(df).astype("float32", copy=False)
+    X_mel = load_training_mels(
+        df,
+        mel_config=mel_config,
+        audio_path_col=str(audio_path_col),
+    ).astype("float32", copy=False)
     use_cmvn = bool((mel_config or {}).get("cmvn", False))
     if use_cmvn:
         X_mel = _cmvn_per_clip_per_freq(X_mel)
