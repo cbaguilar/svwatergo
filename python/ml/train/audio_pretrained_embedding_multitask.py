@@ -349,6 +349,8 @@ def fit_audio_pretrained_embedding_multitask(
     dataset_id_col: str = "sample_id",
     split_manifest_id_col: str = "sample_id",
     audio_path_col: str = "segment_path",
+    embeddings_npz: Optional[Path] = None,
+    embeddings_key: str = "embeddings",
     random_state: int = 42,
     target_seconds: float = 10.0,
     extract_batch_size: int = 16,
@@ -545,16 +547,46 @@ def fit_audio_pretrained_embedding_multitask(
         else pd.Series(["unknown"] * len(df2), dtype="string")
     )
 
-    backend = _PannsBackend(device="cuda")
     emb_cache = out_dir / "embeddings_panns.npz"
-    if emb_cache.exists():
-        z = np.load(str(emb_cache))
-        X_emb = np.asarray(z["embeddings"], dtype=np.float32)
+    emb_key = str(embeddings_key or "embeddings").strip() or "embeddings"
+    if embeddings_npz is not None:
+        emb_src = Path(embeddings_npz)
+        if not emb_src.exists():
+            raise ValueError(f"embeddings_npz not found: {emb_src}")
+        z = np.load(str(emb_src))
+        if emb_key not in z.files:
+            raise ValueError(f"Embeddings key {emb_key!r} not found in {emb_src}. Available: {list(z.files)}")
+        X_emb = np.asarray(z[emb_key], dtype=np.float32)
         if int(X_emb.shape[0]) != int(len(path_ser)):
-            print(
-                f"[embed] cache size mismatch -> {emb_cache} rows={int(X_emb.shape[0])} expected={int(len(path_ser))}; rebuilding",
-                flush=True,
+            raise ValueError(
+                f"embeddings_npz row mismatch: rows={int(X_emb.shape[0])} expected={int(len(path_ser))}. "
+                "Use the same filtered dataset/split manifest as the embedding cache."
             )
+        print(f"[embed] using precomputed npz -> {emb_src} key={emb_key} shape={tuple(X_emb.shape)}", flush=True)
+    else:
+        backend = _PannsBackend(device="cuda")
+        if emb_cache.exists():
+            z = np.load(str(emb_cache))
+            X_emb = np.asarray(z["embeddings"], dtype=np.float32)
+            if int(X_emb.shape[0]) != int(len(path_ser)):
+                print(
+                    f"[embed] cache size mismatch -> {emb_cache} rows={int(X_emb.shape[0])} expected={int(len(path_ser))}; rebuilding",
+                    flush=True,
+                )
+                X_emb = _extract_embeddings(
+                    backend=backend,
+                    paths=path_ser.tolist(),
+                    batch_size=int(extract_batch_size),
+                    target_seconds=float(target_seconds),
+                    num_workers=int(extract_num_workers),
+                    log_every=int(extract_log_every),
+                )
+                np.savez_compressed(str(emb_cache), embeddings=X_emb)
+                print(f"[embed] saved cache -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
+            else:
+                print(f"[embed] cache hit -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
+        else:
+            print(f"[embed] cache miss -> extracting {len(path_ser)} clips", flush=True)
             X_emb = _extract_embeddings(
                 backend=backend,
                 paths=path_ser.tolist(),
@@ -565,20 +597,6 @@ def fit_audio_pretrained_embedding_multitask(
             )
             np.savez_compressed(str(emb_cache), embeddings=X_emb)
             print(f"[embed] saved cache -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
-        else:
-            print(f"[embed] cache hit -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
-    else:
-        print(f"[embed] cache miss -> extracting {len(path_ser)} clips", flush=True)
-        X_emb = _extract_embeddings(
-            backend=backend,
-            paths=path_ser.tolist(),
-            batch_size=int(extract_batch_size),
-            target_seconds=float(target_seconds),
-            num_workers=int(extract_num_workers),
-            log_every=int(extract_log_every),
-        )
-        np.savez_compressed(str(emb_cache), embeddings=X_emb)
-        print(f"[embed] saved cache -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
 
     Z_pann, pann_meta = _fit_pca_targets(
         X_emb,
@@ -985,16 +1003,20 @@ def fit_audio_pretrained_embedding_multitask(
     model.eval()
     z_pred_parts: List[np.ndarray] = []
     plc_pred_parts: List[np.ndarray] = []
+    logits_parts: List[np.ndarray] = []
     with torch.no_grad():
         for i0 in range(0, Xt.shape[0], int(batch_size)):
             i1 = min(int(Xt.shape[0]), i0 + int(batch_size))
             xb = Xt[i0:i1].to(device)
             _logits, zhat, plc_hat = model(xb)
+            if _logits is not None:
+                logits_parts.append(_logits.cpu().numpy().astype(np.float32, copy=False))
             z_pred_parts.append(zhat.cpu().numpy().astype(np.float32, copy=False))
             if plc_hat is not None:
                 plc_pred_parts.append(plc_hat.cpu().numpy().astype(np.float32, copy=False))
     Z_pann_pred = np.concatenate(z_pred_parts, axis=0) if z_pred_parts else np.zeros_like(Z_pann)
     Z_plc_pred = np.concatenate(plc_pred_parts, axis=0) if plc_pred_parts else None
+    logits_all = np.concatenate(logits_parts, axis=0) if logits_parts else None
 
     pann_proj_path = out_dir / "pann_pca_true_vs_pred.parquet"
     pann_proj_df = df2.reset_index(drop=True).copy()
@@ -1003,7 +1025,49 @@ def fit_audio_pretrained_embedding_multitask(
         jj = int(j + 1)
         pann_proj_df[f"pann_true_pc{jj}"] = Z_pann[:, j].astype("float64")
         pann_proj_df[f"pann_pred_pc{jj}"] = Z_pann_pred[:, j].astype("float64")
+    pred_detail_path: Optional[Path] = None
+    if mode == "multilabel" and logits_all is not None:
+        target_cols_ml = list(y_meta.get("target_cols") or [])
+        score_all = (1.0 / (1.0 + np.exp(-np.asarray(logits_all, dtype=np.float64)))).astype(np.float32)
+        y_true_bin = np.asarray(Y, dtype=np.float32)
+        y_pred_bin = (score_all >= 0.5).astype(np.float32)
+        eps = np.float32(1e-6)
+        score_clip = np.clip(score_all, eps, 1.0 - eps)
+        bce_per_target = -(
+            y_true_bin * np.log(score_clip) + (1.0 - y_true_bin) * np.log(1.0 - score_clip)
+        ).astype(np.float32)
+        conf_per_target = np.where(y_pred_bin >= 0.5, score_all, 1.0 - score_all).astype(np.float32)
+        exact_match = np.all(y_true_bin == y_pred_bin, axis=1)
+        error_bits = np.not_equal(y_true_bin, y_pred_bin).astype(np.float32)
+
+        def _bits_to_label(bits_arr: np.ndarray) -> str:
+            vals = [int(v) for v in np.asarray(bits_arr).astype(int).tolist()]
+            return "|".join(f"{c}={v}" for c, v in zip(target_cols_ml, vals))
+
+        true_labels = [_bits_to_label(row) for row in y_true_bin]
+        pred_labels = [_bits_to_label(row) for row in y_pred_bin]
+        pann_proj_df["ml__true_bits"] = ["".join(str(int(v)) for v in row) for row in y_true_bin]
+        pann_proj_df["ml__pred_bits"] = ["".join(str(int(v)) for v in row) for row in y_pred_bin]
+        pann_proj_df["ml__true_label"] = pd.Series(true_labels, dtype="string")
+        pann_proj_df["ml__pred_label"] = pd.Series(pred_labels, dtype="string")
+        pann_proj_df["ml__exact_match"] = exact_match.astype(np.int64)
+        pann_proj_df["ml__error_count"] = np.sum(error_bits, axis=1).astype(np.int64)
+        pann_proj_df["ml__hamming_error"] = np.mean(error_bits, axis=1).astype(np.float32)
+        pann_proj_df["ml__bce_loss"] = np.mean(bce_per_target, axis=1).astype(np.float32)
+        pann_proj_df["ml__pred_confidence_mean"] = np.mean(conf_per_target, axis=1).astype(np.float32)
+        pann_proj_df["ml__pred_confidence_min"] = np.min(conf_per_target, axis=1).astype(np.float32)
+        pann_proj_df["ml__pred_confidence_combo"] = np.prod(conf_per_target, axis=1).astype(np.float32)
+        for j, col in enumerate(target_cols_ml):
+            safe_col = str(col)
+            pann_proj_df[f"ml__true__{safe_col}"] = y_true_bin[:, j].astype(np.int64)
+            pann_proj_df[f"ml__pred__{safe_col}"] = y_pred_bin[:, j].astype(np.int64)
+            pann_proj_df[f"ml__score__{safe_col}"] = score_all[:, j].astype(np.float32)
+            pann_proj_df[f"ml__correct__{safe_col}"] = (1.0 - error_bits[:, j]).astype(np.int64)
+            pann_proj_df[f"ml__bce__{safe_col}"] = bce_per_target[:, j].astype(np.float32)
+
     pann_proj_df.to_parquet(pann_proj_path, index=False)
+    if mode == "multilabel":
+        pred_detail_path = pann_proj_path
 
     plc_proj_path: Optional[Path] = None
     plc_plot_3d_path: Optional[Path] = None
@@ -1862,9 +1926,11 @@ def fit_audio_pretrained_embedding_multitask(
             "model_path": str(model_path),
             "best_model_path": (str(best_ckpt_path) if best_ckpt_path.exists() else None),
             "embedding_cache": str(emb_cache),
+            "input_embeddings_npz": (str(embeddings_npz) if embeddings_npz is not None else None),
             "pann_pca_model": str(out_dir / "pann_embedding_pca_model.npz"),
             "plc_aux_pca_model": (str(out_dir / "plc_aux_pca_model.npz") if bool(aux_plc_pca) else None),
             "pann_true_vs_pred_parquet": str(pann_proj_path),
+            "multilabel_pred_detail_parquet": (str(pred_detail_path) if pred_detail_path is not None else None),
             "plc_true_vs_pred_parquet": (str(plc_proj_path) if plc_proj_path is not None else None),
             "plc_true_vs_pred_plot_pc123_3d": (str(plc_plot_3d_path) if plc_plot_3d_path is not None else None),
             "plc_true_vs_pred_plot_pc123_multicolor_3d": (
