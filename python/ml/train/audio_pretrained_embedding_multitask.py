@@ -838,9 +838,14 @@ def fit_audio_pretrained_embedding_multitask(
     metric_mode = str(best_model_metric).strip().lower()
     split_mode = str(best_model_split).strip().lower()
     if metric_mode == "auto":
-        metric_mode = "plc_pca_r2" if (bool(aux_plc_pca) and float(aux_plc_weight) > 0.0 and float(main_w) <= 0.0) else "main_task_metric"
-    if metric_mode not in ("main_task_metric", "plc_pca_r2"):
-        raise ValueError("best_model_metric must be one of: auto, main_task_metric, plc_pca_r2")
+        if bool(aux_plc_pca) and float(aux_plc_weight) > 0.0 and float(main_w) <= 0.0:
+            metric_mode = "plc_pca_r2"
+        elif mode == "multilabel":
+            metric_mode = "macro_f1"
+        else:
+            metric_mode = "main_task_metric"
+    if metric_mode not in ("main_task_metric", "plc_pca_r2", "macro_f1"):
+        raise ValueError("best_model_metric must be one of: auto, main_task_metric, plc_pca_r2, macro_f1")
     if split_mode not in ("val", "test"):
         raise ValueError("best_model_split must be one of: val, test")
     best_ckpt_path = out_dir / "audio_pretrained_embedding_multitask_best.pt"
@@ -888,6 +893,8 @@ def fit_audio_pretrained_embedding_multitask(
         avg_loss = float(loss_sum / max(1, n_rows))
         test_metric = None
         val_metric = None
+        test_macro_f1 = None
+        val_macro_f1 = None
         test_plc_r2 = None
         val_plc_r2 = None
         if ep % eval_every == 0 or ep == n_epochs:
@@ -896,6 +903,7 @@ def fit_audio_pretrained_embedding_multitask(
                 test_metric = float(np.mean(ytt == ypt)) if len(ytt) else 0.0
             elif mode == "multilabel":
                 test_metric = float(np.mean(np.all(ytt == ypt, axis=1))) if len(ytt) else 0.0
+                test_macro_f1 = float(f1_score(ytt.astype(int), ypt.astype(int), average="macro", zero_division=0)) if len(ytt) else 0.0
             else:
                 test_metric = None
             if ztt.size > 0 and zpt.size > 0:
@@ -906,6 +914,7 @@ def fit_audio_pretrained_embedding_multitask(
                     val_metric = float(np.mean(ytv == ypv)) if len(ytv) else 0.0
                 elif mode == "multilabel":
                     val_metric = float(np.mean(np.all(ytv == ypv, axis=1))) if len(ytv) else 0.0
+                    val_macro_f1 = float(f1_score(ytv.astype(int), ypv.astype(int), average="macro", zero_division=0)) if len(ytv) else 0.0
                 else:
                     val_metric = None
                 if ztv.size > 0 and zpv.size > 0:
@@ -914,6 +923,8 @@ def fit_audio_pretrained_embedding_multitask(
             score = None
             if metric_mode == "main_task_metric":
                 score = val_metric if (split_mode == "val" and val_metric is not None) else test_metric
+            elif metric_mode == "macro_f1":
+                score = val_macro_f1 if (split_mode == "val" and val_macro_f1 is not None) else test_macro_f1
             elif metric_mode == "plc_pca_r2":
                 score = val_plc_r2 if (split_mode == "val" and val_plc_r2 is not None) else test_plc_r2
             if score is not None:
@@ -975,6 +986,8 @@ def fit_audio_pretrained_embedding_multitask(
             "val_plc_r2": val_plc_r2,
             "test_plc_pca_r2": test_plc_r2,
             "val_plc_pca_r2": val_plc_r2,
+            "test_macro_f1": test_macro_f1,
+            "val_macro_f1": val_macro_f1,
             "lr": float(optim.param_groups[0]["lr"]),
         }
         if plc_target_mode == "raw":

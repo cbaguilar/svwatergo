@@ -49,7 +49,7 @@ def main() -> int:
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--multilabel-pos-weight", default="yes", choices=["yes", "no"])
     p.add_argument("--main-task-weight", type=float, default=1.0)
-    p.add_argument("--best-model-metric", default="auto", choices=["auto", "main_task_metric", "plc_pca_r2"])
+    p.add_argument("--best-model-metric", default="auto", choices=["auto", "main_task_metric", "plc_pca_r2", "macro_f1"])
     p.add_argument("--best-model-split", default="val", choices=["val", "test"])
 
     p.add_argument("--aux-plc-pca", default="yes", choices=["yes", "no"])
