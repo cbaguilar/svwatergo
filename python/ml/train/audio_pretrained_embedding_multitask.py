@@ -1731,11 +1731,27 @@ def fit_audio_pretrained_embedding_multitask(
         for j, c in enumerate(y_meta["target_cols"]):
             ytj = yt_bin[:, j]
             ypj = yp_bin[:, j]
+            support_pos = int(np.sum(ytj == 1))
+            support_neg = int(np.sum(ytj == 0))
+            pred_pos = int(np.sum(ypj == 1))
+            pred_neg = int(np.sum(ypj == 0))
+            tp = int(np.sum((ytj == 1) & (ypj == 1)))
+            fp = int(np.sum((ytj == 0) & (ypj == 1)))
+            fn = int(np.sum((ytj == 1) & (ypj == 0)))
+            tn = int(np.sum((ytj == 0) & (ypj == 0)))
             per_target[str(c)] = {
                 "accuracy": float(np.mean(ytj == ypj)),
                 "precision": float(precision_score(ytj, ypj, zero_division=0)),
                 "recall": float(recall_score(ytj, ypj, zero_division=0)),
                 "f1": float(f1_score(ytj, ypj, zero_division=0)),
+                "support_pos": support_pos,
+                "support_neg": support_neg,
+                "pred_pos": pred_pos,
+                "pred_neg": pred_neg,
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "tn": tn,
             }
         return {
             "exact_match": exact,

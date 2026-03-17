@@ -41,6 +41,18 @@ STATE_COLORS = {
     "unknown": "#9d9da1",
 }
 
+PRED_STATE_COLORS = {
+    "pred_off": "#4c78a8",
+    "pred_on": "#54a24b",
+    "pred_missing": "#9d9da1",
+}
+
+ERROR_COLORS = {
+    "correct": "#4c78a8",
+    "error": "#e45756",
+    "missing": "#9d9da1",
+}
+
 BIT_ABBREV = {
     "0": "0",
     "1": "T",
@@ -144,8 +156,13 @@ def _load_metrics_lines(metrics_json: str | None, metrics_split: str, actuators:
         precision = float(target_node.get("precision", 0.0))
         recall = float(target_node.get("recall", 0.0))
         f1 = float(target_node.get("f1", 0.0))
+        support_pos = int(target_node.get("support_pos", 0))
+        pred_pos = int(target_node.get("pred_pos", 0))
+        tp = int(target_node.get("tp", 0))
+        fp = int(target_node.get("fp", 0))
+        fn = int(target_node.get("fn", 0))
         lines.append(
-            f"{ACTUATOR_ABBREV.get(actuator, actuator)} acc={acc:.3f} P={precision:.3f} R={recall:.3f} F1={f1:.3f}"
+            f"{ACTUATOR_ABBREV.get(actuator, actuator)} acc={acc:.3f} P={precision:.3f} R={recall:.3f} F1={f1:.3f} sup+={support_pos} pred+={pred_pos} tp={tp} fp={fp} fn={fn}"
         )
     return lines
 
@@ -227,6 +244,20 @@ def _scatter(ax, x, y, z, mask, *, color, point_size: float, alpha: float, proje
         ax.scatter(x[mask], y[mask], z[mask], s=point_size, alpha=alpha, color=color, linewidths=0.0)
     else:
         ax.scatter(x[mask], y[mask], s=point_size, alpha=alpha, color=color, linewidths=0.0)
+
+
+def _find_ml_target_suffix(df: pd.DataFrame, actuator: str) -> str:
+    candidates = [
+        f"{actuator}_duty_target",
+        actuator,
+    ]
+    for suffix in candidates:
+        if f"ml__pred__{suffix}" in df.columns:
+            return suffix
+    for col in df.columns:
+        if col.startswith("ml__pred__") and (col == f"ml__pred__{actuator}" or col.startswith(f"ml__pred__{actuator}_")):
+            return col[len("ml__pred__") :]
+    return ""
 
 
 def main() -> int:
@@ -314,37 +345,88 @@ def main() -> int:
     fig.savefig(out_dir / "actuation_bits_triptych_with_grid.png", bbox_inches="tight")
     plt.close(fig)
 
-    # Per-actuator triptychs.
+    # Per-actuator 3x3 grids: rows are PCA spaces, columns are real state / learned state / error.
     for actuator in actuators:
         state_col = f"{actuator}_state"
         if state_col not in emb_df.columns:
             continue
-        ser = emb_df[state_col].astype("string").fillna("unknown").astype(str)
-        order = [s for s in ("off", "transition", "on", "unknown") if s in set(ser.tolist())]
-        if not order:
+        true_state = emb_df[state_col].astype("string").fillna("unknown").astype(str)
+        true_order = [s for s in ("off", "transition", "on", "unknown") if s in set(true_state.tolist())]
+        ml_suffix = _find_ml_target_suffix(emb_df, actuator)
+        if not true_order or not ml_suffix:
             continue
-        fig = plt.figure(figsize=(12, 12), dpi=160)
-        axes = [
-            fig.add_subplot(3, 1, 1, projection=("3d" if projection == "3d" else None)),
-            fig.add_subplot(3, 1, 2, projection=("3d" if projection == "3d" else None)),
-            fig.add_subplot(3, 1, 3, projection=("3d" if projection == "3d" else None)),
+
+        pred_col = f"ml__pred__{ml_suffix}"
+        correct_col = f"ml__correct__{ml_suffix}"
+        pred_state = (
+            emb_df[pred_col]
+            .map({0: "pred_off", 1: "pred_on"})
+            .fillna("pred_missing")
+            .astype("string")
+            .astype(str)
+        )
+        pred_order = [s for s in ("pred_off", "pred_on", "pred_missing") if s in set(pred_state.tolist())]
+        error_state = (
+            emb_df[correct_col]
+            .map({1: "correct", 0: "error"})
+            .fillna("missing")
+            .astype("string")
+            .astype(str)
+        )
+        error_order = [s for s in ("correct", "error", "missing") if s in set(error_state.tolist())]
+
+        fig = plt.figure(figsize=(15, 15), dpi=160)
+        axes = np.empty((3, 3), dtype=object)
+        for rr in range(3):
+            for cc in range(3):
+                axes[rr, cc] = fig.add_subplot(3, 3, rr * 3 + cc + 1, projection=("3d" if projection == "3d" else None))
+
+        color_specs = [
+            ("real state", true_state.to_numpy(), true_order, STATE_COLORS),
+            ("learned state", pred_state.to_numpy(), pred_order, PRED_STATE_COLORS),
+            ("error", error_state.to_numpy(), error_order, ERROR_COLORS),
         ]
-        for (row_title, df_row, cols_row, _ax_dummy, limits), ax in zip(rows, axes):
+
+        for rr, (row_title, df_row, cols_row, _ax_dummy, limits) in enumerate(rows):
             x = pd.to_numeric(df_row[cols_row[0]], errors="coerce").to_numpy(dtype=float)
             y = pd.to_numeric(df_row[cols_row[1]], errors="coerce").to_numpy(dtype=float)
             z = pd.to_numeric(df_row[cols_row[2]], errors="coerce").to_numpy(dtype=float) if projection == "3d" else None
-            for state in order:
-                mask = ser.to_numpy() == state
-                _scatter(ax, x, y, z, mask, color=STATE_COLORS.get(state, "#444444"), point_size=float(args.point_size), alpha=float(args.alpha), projection=projection)
-            ax.set_title(f"{row_title} | {actuator} state")
-            ax.set_xlabel("PC1")
-            ax.set_ylabel("PC2")
-            if projection == "3d":
-                ax.set_zlabel("PC3")
-            _apply_limits(ax, limits, projection)
-            ax.grid(alpha=0.2)
-            handles = [Line2D([0], [0], marker="o", linestyle="", markersize=6, markerfacecolor=STATE_COLORS.get(s, "#444444"), markeredgewidth=0, label=str(s)) for s in order]
-            ax.legend(handles=handles, loc="best", fontsize=8, framealpha=0.9)
+            for cc, (col_title, label_arr, label_order, label_colors) in enumerate(color_specs):
+                ax = axes[rr, cc]
+                for label in label_order:
+                    mask = label_arr == label
+                    _scatter(
+                        ax,
+                        x,
+                        y,
+                        z,
+                        mask,
+                        color=label_colors.get(label, "#444444"),
+                        point_size=float(args.point_size),
+                        alpha=float(args.alpha),
+                        projection=projection,
+                    )
+                ax.set_title(f"{row_title} | {col_title}")
+                ax.set_xlabel("PC1")
+                ax.set_ylabel("PC2")
+                if projection == "3d":
+                    ax.set_zlabel("PC3")
+                _apply_limits(ax, limits, projection)
+                ax.grid(alpha=0.2)
+                handles = [
+                    Line2D(
+                        [0],
+                        [0],
+                        marker="o",
+                        linestyle="",
+                        markersize=6,
+                        markerfacecolor=label_colors.get(label, "#444444"),
+                        markeredgewidth=0,
+                        label=str(label),
+                    )
+                    for label in label_order
+                ]
+                ax.legend(handles=handles, loc="best", fontsize=8, framealpha=0.9)
         metrics_suffix = _metrics_suffix(metrics_lines, actuator)
         title = f"{args.title_prefix} | {actuator} state"
         if metrics_suffix:
