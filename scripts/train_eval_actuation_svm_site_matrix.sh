@@ -16,6 +16,7 @@ N_COMPONENTS="${N_COMPONENTS:-8}"
 SAMPLE_RATE="${SAMPLE_RATE:-16000}"
 TARGET_SECONDS="${TARGET_SECONDS:-10}"
 SVM_CLASS_WEIGHT="${SVM_CLASS_WEIGHT:-balanced}"
+SVM_BACKEND="${SVM_BACKEND:-auto}"
 
 resolve_site_paths() {
   local site="$1"
@@ -212,6 +213,7 @@ train_svm_group() {
       --audio-path-col segment_path \
       --out-dir "$out_root/$target_clean" \
       --task binary \
+      --backend "$SVM_BACKEND" \
       --target-col "$target_clean" \
       --n-components "$N_COMPONENTS" \
       --sample-rate "$SAMPLE_RATE" \

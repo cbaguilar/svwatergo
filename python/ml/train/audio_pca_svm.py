@@ -46,6 +46,47 @@ class AudioPCASVMResult:
     projection_path: Path
 
 
+def _to_numpy(x: Any) -> np.ndarray:
+    if isinstance(x, np.ndarray):
+        return x
+    get = getattr(x, "get", None)
+    if callable(get):
+        try:
+            out = get()
+            if isinstance(out, np.ndarray):
+                return out
+        except Exception:
+            pass
+    to_numpy = getattr(x, "to_numpy", None)
+    if callable(to_numpy):
+        try:
+            out = to_numpy()
+            if isinstance(out, np.ndarray):
+                return out
+        except Exception:
+            pass
+    return np.asarray(x)
+
+
+def _resolve_pca_svm_backend(backend: str) -> Tuple[str, Any, Any]:
+    key = str(backend or "auto").strip().lower()
+    if key not in {"auto", "sklearn", "cuml"}:
+        raise ValueError("backend must be one of: auto, sklearn, cuml")
+    if key in {"auto", "cuml"}:
+        try:
+            from cuml.decomposition import PCA as CuPCA  # type: ignore
+            from cuml.svm import SVC as CuSVC  # type: ignore
+
+            return "cuml", CuPCA, CuSVC
+        except Exception:
+            if key == "cuml":
+                raise RuntimeError(
+                    "Requested backend='cuml' but cuML is unavailable. "
+                    "Install RAPIDS/cuML or use backend='sklearn'/'auto'."
+                )
+    return "sklearn", PCA, SVC
+
+
 def _sample_rows(df: pd.DataFrame, limit: int, mode: str) -> pd.DataFrame:
     if limit <= 0 or limit >= len(df):
         return df
@@ -385,6 +426,7 @@ def fit_audio_pca_svm(
     drop_state_unknown_train: bool = True,
     state_unknown_col: str = "state_unknown",
     audio_path_col: str = "segment_path",
+    backend: str = "auto",
 ) -> AudioPCASVMResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     df = _sample_rows(df, limit, sample_mode)
@@ -483,32 +525,41 @@ def fit_audio_pca_svm(
     X_train_fit_in = X_train_fit
     X_all_in = scaler.transform(X) if scaler is not None else X
 
-    pca = PCA(n_components=int(n_components), random_state=int(random_state))
-    Z_train_fit = pca.fit_transform(X_train_fit_in)
-    Z_all = pca.transform(X_all_in)
+    backend_used, PCACls, SVCCls = _resolve_pca_svm_backend(backend)
+
+    pca_kwargs: Dict[str, Any] = {"n_components": int(n_components)}
+    if backend_used == "sklearn":
+        pca_kwargs["random_state"] = int(random_state)
+    pca = PCACls(**pca_kwargs)
+    Z_train_fit = _to_numpy(pca.fit_transform(X_train_fit_in)).astype(np.float64, copy=False)
+    Z_all = _to_numpy(pca.transform(X_all_in)).astype(np.float64, copy=False)
     Z_train = Z_all[idx_train]
     Z_test = Z_all[idx_test] if len(idx_test) else np.zeros((0, Z_all.shape[1]), dtype=np.float64)
     Z_val = Z_all[idx_val] if len(idx_val) else np.zeros((0, Z_all.shape[1]), dtype=np.float64)
 
-    svm = SVC(
+    svm = SVCCls(
         kernel=str(svm_kernel),
         C=float(svm_c),
         gamma=str(svm_gamma),
         class_weight=(str(svm_class_weight) if svm_class_weight else None),
         probability=True,
-        random_state=int(random_state),
     )
+    if backend_used == "sklearn":
+        try:
+            svm.set_params(random_state=int(random_state))
+        except Exception:
+            pass
     svm.fit(Z_train_fit, y[idx_train_fit])
 
-    y_train_pred = svm.predict(Z_train)
-    y_test_pred = svm.predict(Z_test) if len(idx_test) else np.asarray([], dtype=np.int64)
-    y_val_pred = svm.predict(Z_val) if len(idx_val) else np.asarray([], dtype=np.int64)
+    y_train_pred = _to_numpy(svm.predict(Z_train)).astype(np.int64, copy=False)
+    y_test_pred = _to_numpy(svm.predict(Z_test)).astype(np.int64, copy=False) if len(idx_test) else np.asarray([], dtype=np.int64)
+    y_val_pred = _to_numpy(svm.predict(Z_val)).astype(np.int64, copy=False) if len(idx_val) else np.asarray([], dtype=np.int64)
     y_train_score = None
     y_test_score = None
     if task == "binary" and hasattr(svm, "predict_proba"):
-        y_train_score = svm.predict_proba(Z_train)[:, 1]
-        y_test_score = svm.predict_proba(Z_test)[:, 1] if len(idx_test) else None
-        y_val_score = svm.predict_proba(Z_val)[:, 1] if len(idx_val) else None
+        y_train_score = _to_numpy(svm.predict_proba(Z_train))[:, 1]
+        y_test_score = _to_numpy(svm.predict_proba(Z_test))[:, 1] if len(idx_test) else None
+        y_val_score = _to_numpy(svm.predict_proba(Z_val))[:, 1] if len(idx_val) else None
     else:
         y_val_score = None
 
@@ -517,9 +568,9 @@ def fit_audio_pca_svm(
         proj_df[f"pca{i+1}"] = Z_all[:, i].astype("float64")
     proj_df["split"] = split_for_projection.reset_index(drop=True)
     proj_df["y_true"] = y.astype(int)
-    proj_df["y_pred"] = svm.predict(Z_all).astype(int)
+    proj_df["y_pred"] = _to_numpy(svm.predict(Z_all)).astype(int)
     if hasattr(svm, "predict_proba"):
-        proba_all = svm.predict_proba(Z_all)
+        proba_all = _to_numpy(svm.predict_proba(Z_all))
         if task == "binary":
             proj_df["score_positive"] = proba_all[:, 1].astype("float64")
         else:
@@ -550,6 +601,7 @@ def fit_audio_pca_svm(
         "split_source": str(split_source),
         "split_stratify_col": str(split_stratify_col),
         "oversample": oversample_meta,
+        "backend": str(backend_used),
     }
     joblib.dump(bundle, model_path)
 
@@ -572,6 +624,7 @@ def fit_audio_pca_svm(
             "explained_variance_ratio_sum": float(np.sum(pca.explained_variance_ratio_)),
         },
         "svm": {
+            "backend": str(backend_used),
             "kernel": svm_kernel,
             "C": float(svm_c),
             "gamma": svm_gamma,
@@ -744,9 +797,9 @@ def predict_audio_pca_svm_from_bundle(
     scaler = bundle.get("input_scaler")
     if scaler is not None:
         x = scaler.transform(x)
-    z = bundle["pca"].transform(x)
+    z = _to_numpy(bundle["pca"].transform(x)).astype(np.float64, copy=False)
     svm = bundle["svm"]
-    pred = svm.predict(z)
+    pred = _to_numpy(svm.predict(z))
     out: Dict[str, Any] = {
         "task": str(bundle.get("task", "binary")),
         "predicted_index": int(pred[0]),
@@ -754,7 +807,7 @@ def predict_audio_pca_svm_from_bundle(
         "mel_shape_used": [int(mel.shape[0]), int(mel.shape[1])],
     }
     if hasattr(svm, "predict_proba"):
-        proba = svm.predict_proba(z)[0]
+        proba = _to_numpy(svm.predict_proba(z))[0]
         out["probabilities"] = [float(v) for v in proba.tolist()]
         if str(bundle.get("task")) == "binary":
             out["score_positive"] = float(proba[1])

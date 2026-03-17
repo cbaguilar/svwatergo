@@ -23,6 +23,7 @@ def main() -> int:
     p.add_argument("--out-dir", required=True)
     p.add_argument("--target-col", default="ropumprun_label", help="Target column (default ropumprun_label)")
     p.add_argument("--task", choices=["binary", "multiclass"], default="binary")
+    p.add_argument("--backend", choices=["auto", "sklearn", "cuml"], default="auto")
     p.add_argument("--positive-label", default="on", help="Binary positive class when target is string labels")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--sample", choices=["head", "random"], default="random")
@@ -86,6 +87,7 @@ def main() -> int:
         Path(args.out_dir),
         target_col=str(args.target_col),
         task=str(args.task),
+        backend=str(args.backend),
         positive_label=str(args.positive_label),
         limit=int(args.limit),
         sample_mode=str(args.sample),
