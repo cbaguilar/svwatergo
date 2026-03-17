@@ -27,161 +27,155 @@ export function Key() {
     const setCC = (compname) => { setCurComponent(compname) };
     return (
         <g>
-            <rect rx="10" x="0" y="10" width="210px" height="660px" fill="#e5d6d6" />
-            <text x="88" y="40" {...titleProps}>
+            <rect rx="10" x="8" y="8" width="384px" height="484px" fill="#e5d6d6" />
+            <text x="200" y="38" {...titleProps} textAnchor="middle">
                 KEY
             </text>
 
-            <g transform={`translate(40, 70) scale(0.9)`}>
+            <g transform={`translate(44, 50) scale(0.64)`}>
                 <KeyElementWrapper
-                    x="10" y="0"
+                    x="48" y="0"
                     component={<SensorIndicator outerText="Sensor" textDir="down" loadIfBlank={false}/>}
                     compname='SensorIndicator'
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="70" y="25"
+                    x="244" y="14"
                     component={<SensorIndicator outerText="WaterScope Meter" textDir="down" WaterScope loadIfBlank={false}/>}
                     compname='SensorIndicator WaterScope'
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="130" y="0"
+                    x="411" y="0"
                     component={<PumpSymbol outerText="Pump" textDir="down" />}
                     compname='PumpSymbol'
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="10" y="100"
+                    x="48" y="102"
                     component={<ValveIndicator outerText="Valve" textDir="down" />}
                     compname='ValveIndicator'
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="130" y="100"
-                    component={<ThreeWayValveIndicator outerText="3-Way Valve" textDir='down' />}
+                    x="411" y="118"
+                    component={<ThreeWayValveIndicator />}
                     compname='ThreeWayValveIndicator'
                     isOn={isOn}
                     setCCFunc={setCC} />
+                <text {...smallTextProps} x="411" y="162" textAnchor="middle">
+                    3-Way Valve
+                </text>
                 <KeyElementWrapper
-                    x="0" y="232"
+                    x="48" y="278"
                     component={<MultiMediaFilter />}
                     compname='MultiMediaFilter'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="0" y="265" textAnchor="middle">
+                <text {...smallTextProps} x="50" y="308" textAnchor="middle">
                     MultiMedia
                 </text>
-                <text {...smallTextProps} x="0" y="280" textAnchor="middle">
+                <text {...smallTextProps} x="50" y="323" textAnchor="middle">
                     Filter
                 </text>
                 <KeyElementWrapper
-                    x="70" y="211"
-                    component={<ChemicalFeed />}
+                    x="244" y="214"
+                    component={<ChemicalFeed text={<TextArray textArray={["Chemical", "Feed"]} />} textDir="down" />}
                     compname='ChemicalFeed'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="70" y="265" textAnchor="middle">
-                    Chemical
-                </text>
-                <text {...smallTextProps} x="70" y="280" textAnchor="middle">
-                    Feed
-                </text>
                 <KeyElementWrapper
-                    x="140" y="170"
+                    x="411" y="226"
                     component={<CheckValve />}
                     compname='CheckValve'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="140" y="193" textAnchor="middle">
+                <text {...smallTextProps} x="427" y="252" textAnchor="middle">
                     Check Valve
                 </text>
                 <KeyElementWrapper
-                    x="140" y="235"
+                    x="411" y="294"
                     component={<SingleFilter outerText='Filter' textDir="down" />}
                     compname='SingleFilter'
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="10" y="320"
+                    x="48" y="390"
                     component={<DoubleFilter />}
                     compname='DoubleFilter'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="10" y="360" textAnchor="middle">
+                <text {...smallTextProps} x="52" y="424" textAnchor="middle">
                     Double Filter
                 </text>
                 <KeyElementWrapper
-                    x="110" y="295"
+                    x="244" y="346"
                     component={<AnimatedPipe paths={[[[40, 0], [-40, 0]]]} />}
                     compname='AnimatedPipe'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="110" y="310" textAnchor="middle">
+                <text {...smallTextProps} x="244" y="362" textAnchor="middle">
                     Pre RO Pipe
                 </text>
                 <KeyElementWrapper
-                    x="110" y="325"
+                    x="244" y="380"
                     component={<AnimatedPipe stroke={LIGHTBLUECOLOR} paths={[[[40, 0], [-40, 0]]]} />}
                     compname='AnimatedPipe stroke={LIGHTBLUECOLOR}'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="110" y="340" textAnchor="middle">
+                <text {...smallTextProps} x="244" y="396" textAnchor="middle">
                     Post RO Pipe
                 </text>
                 <KeyElementWrapper
-                    x="110" y="355"
+                    x="244" y="414"
                     component={<AnimatedPipe stroke={PINKCOLOR} paths={[[[40, 0], [-40, 0]]]} />}
                     compname='AnimatedPipe stroke={PINKCOLOR}'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="110" y="370" textAnchor="middle">
+                <text {...smallTextProps} x="244" y="430" textAnchor="middle">
                     Concentrate Pipe
                 </text>
                 <KeyElementWrapper
-                    x="0" y="417"
+                    x="40" y="540"
                     component={<LiquidFillGaugeWrapper />}
                     compname='LiquidFillGaugeWrapper'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="0" y="475" textAnchor="middle">
+                <text {...smallTextProps} x="40" y="594" textAnchor="middle">
                     Tank
                 </text>
                 <KeyElementWrapper
-                    x="73" y="425"
-                    component={<PressureTank />}
+                    x="244" y="500"
+                    component={<PressureTank text="Pressure Tank" textDir="down" />}
                     compname='PressureTank'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="75" y="475" textAnchor="middle">
-                    Pressure Tank
-                </text>
                 <KeyElementWrapper
-                    x="143" y="410"
+                    x="411" y="420"
                     component={<VariableValveIndicator dir="right" />}
                     compname='VariableValveIndicator'
                     isOn={isOn}
                     setCCFunc={setCC} />
-                <text {...smallTextProps} x="145" y="445" textAnchor="middle">
+                <text {...smallTextProps} x="411" y="456" textAnchor="middle">
                     Variable
                 </text>
-                <text {...smallTextProps} x="145" y="460" textAnchor="middle">
+                <text {...smallTextProps} x="411" y="471" textAnchor="middle">
                     Valve
                 </text>
                 <KeyElementWrapper
-                    x="40" y="510"
+                    x="244" y="640"
                     component={<ROVessel outerText='RO Vessel' textDir='down' />}
                     compname='ROVessel'
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="149" y="510"
+                    x="411" y="590"
                     component={<Drain text='Drain' textDir='down' />}
                     compname='Drain'
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="9" y="590"
+                    x="411" y="530"
                     component={<ThreeWayVariableValveIndicator
                         outerText={<TextArray textArray={["3-Way", "Variable Valve"]} />}
                         textDir='down'
@@ -190,7 +184,7 @@ export function Key() {
                     isOn={isOn}
                     setCCFunc={setCC} />
                 <KeyElementWrapper
-                    x="110" y="570"
+                    x="411" y="650"
                     component={<ArrowPolyLine stroke={"BLACK"} points="40,0 -40,0" />}
                     compname="ArrowPolyLine stroke='black'"
                     isOn={isOn}

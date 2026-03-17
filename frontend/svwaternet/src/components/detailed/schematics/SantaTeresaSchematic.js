@@ -17,7 +17,7 @@ function FeedTankSystem({ md, pipe_info }) {
     return (
         <g>
             <rect rx="10" x="220" y="10" width="220px" height="210px" fill="#fceade" />
-            <text x="247" y="40" {...titleProps}>
+            <text x="330" y="40" textAnchor="middle" {...titleProps}>
                 FEED TANK SYSTEM
             </text>
             <AnimatedPipe
@@ -109,7 +109,7 @@ function ROSystem({ md, pipe_info }) {
     return (
         <>
             <rect rx="10" x="450" y="10" width="650px" height="770px" fill="#d3e4fc" />
-            <text x="770" y="40" {...titleProps} textAnchor="middle">
+            <text x="775" y="40" {...titleProps} textAnchor="middle">
                 REVERSE OSMOSIS SYSTEM
             </text>
             <AnimatedPipe

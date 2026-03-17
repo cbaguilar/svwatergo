@@ -16,7 +16,7 @@ function FeedTankSystem({ md }) {
         <g>
             {/* svg rectangle in the upper-right corner with class bg-yellow disabled color-palatte */}
             <rect rx="10" x="220" y="10" width="210px" height="250px" fill="#ffcc9c" />
-            <text x="240" y="40" {...titleProps}>
+            <text x="325" y="40" textAnchor="middle" {...titleProps}>
                 FEED TANK SYSTEM
             </text>
             <AnimatedPipe
@@ -74,7 +74,7 @@ function ROSystem({ md }) {
             {/* large light blue rectangle to the right of this that goes lower */}
             <rect rx="10" x="440" y="10" width="670px" height="770px" fill="#d6dce5" />
 
-            <text x="860" y="40"{...titleProps}>REVERSE OSMOSIS SYSTEM</text>
+            <text x="775" y="40" textAnchor="middle" {...titleProps}>REVERSE OSMOSIS SYSTEM</text>
             <text x="200" y="30"{...normalTextProps}></text>
             <text y="55" textAnchor="end" {...smallTextProps}>
                 <TextArray

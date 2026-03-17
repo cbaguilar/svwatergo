@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
+import CIcon from '@coreui/icons-react'
+import { cilDataTransferDown } from '@coreui/icons'
 import {
   CBadge,
   CButton,
@@ -380,6 +382,8 @@ const DetailedDashboard = () => {
   const [urlStateReady, setURLStateReady] = useState(false)
   const [dragSelect, setDragSelect] = useState(null)
   const chartRef = useRef(null)
+  const schematicContainerRef = useRef(null)
+  const keySvgRef = useRef(null)
   const suppressNextChartClickRef = useRef(false)
   const chartPointsRef = useRef([])
   const timelineRowsRef = useRef([])
@@ -1045,6 +1049,37 @@ const DetailedDashboard = () => {
     return () => setHeaderContent(null)
   }, [headerTimePicker, setHeaderContent])
 
+  const downloadSvgNode = (svgNode, filename) => {
+    if (!svgNode) return
+    const clone = svgNode.cloneNode(true)
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+    if (!clone.getAttribute('viewBox')) {
+      const width = clone.getAttribute('width') || svgNode.clientWidth || 0
+      const height = clone.getAttribute('height') || svgNode.clientHeight || 0
+      if (width && height) clone.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    }
+    const serialized = new XMLSerializer().serializeToString(clone)
+    const blob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  const handleDownloadDashboardSvg = () => {
+    const svgNode = schematicContainerRef.current?.querySelector('svg')
+    downloadSvgNode(svgNode, `${siteKey}-dashboard.svg`)
+  }
+
+  const handleDownloadKeySvg = () => {
+    downloadSvgNode(keySvgRef.current, `${siteKey}-key.svg`)
+  }
+
   const liveTrendPanel = (
     <CRow className="mb-4">
       <CCol>
@@ -1165,9 +1200,15 @@ const DetailedDashboard = () => {
       <CRow className="mb-3">
         <CCol lg={8} className="mb-4 mb-lg-0">
           <CCard className="detailed-schematic-card">
-            <CCardHeader>Detailed Process Flow</CCardHeader>
+            <CCardHeader className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+              <span>Detailed Process Flow</span>
+              <CButton color="secondary" variant="outline" size="sm" onClick={handleDownloadDashboardSvg}>
+                <CIcon icon={cilDataTransferDown} size="sm" className="me-1" />
+                Download SVG
+              </CButton>
+            </CCardHeader>
             <CCardBody className="detailed-schematic-body">
-              <div className="w-100" style={{ height: 420 }}>
+              <div ref={schematicContainerRef} className="w-100" style={{ height: 420 }}>
                 <Schematic md={md} />
               </div>
             </CCardBody>
@@ -1177,27 +1218,41 @@ const DetailedDashboard = () => {
           <CCard>
             <CCardHeader className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
               <span>{detailSidePanelMode === 'status' ? 'Sensor Status' : 'Component Key'}</span>
-              <CButtonGroup size="sm" aria-label="Detailed dashboard side panel">
-                <CButton
-                  color={detailSidePanelMode === 'status' ? 'primary' : 'secondary'}
-                  variant={detailSidePanelMode === 'status' ? undefined : 'outline'}
-                  onClick={() => setDetailSidePanelMode('status')}
-                >
-                  Status
+              <div className="d-flex align-items-center gap-2 flex-wrap">
+                <CButton color="secondary" variant="outline" size="sm" onClick={handleDownloadKeySvg}>
+                  <CIcon icon={cilDataTransferDown} size="sm" className="me-1" />
+                  Download SVG
                 </CButton>
-                <CButton
-                  color={detailSidePanelMode === 'key' ? 'primary' : 'secondary'}
-                  variant={detailSidePanelMode === 'key' ? undefined : 'outline'}
-                  onClick={() => setDetailSidePanelMode('key')}
-                >
-                  Key
-                </CButton>
-              </CButtonGroup>
+                <CButtonGroup size="sm" aria-label="Detailed dashboard side panel">
+                  <CButton
+                    color={detailSidePanelMode === 'status' ? 'primary' : 'secondary'}
+                    variant={detailSidePanelMode === 'status' ? undefined : 'outline'}
+                    onClick={() => setDetailSidePanelMode('status')}
+                  >
+                    Status
+                  </CButton>
+                  <CButton
+                    color={detailSidePanelMode === 'key' ? 'primary' : 'secondary'}
+                    variant={detailSidePanelMode === 'key' ? undefined : 'outline'}
+                    onClick={() => setDetailSidePanelMode('key')}
+                  >
+                    Key
+                  </CButton>
+                </CButtonGroup>
+              </div>
             </CCardHeader>
             <CCardBody className="sensor-status-card-body sensor-status-panel-body">
               {detailSidePanelMode === 'key' ? (
                 <div className="schematic-key-panel">
-                  <svg width="100%" height="100%" viewBox="0 0 210 680" role="img" aria-label="Detailed schematic key">
+                  <svg
+                    ref={keySvgRef}
+                    width="100%"
+                    height="100%"
+                    viewBox="0 0 400 500"
+                    preserveAspectRatio="xMidYMid meet"
+                    role="img"
+                    aria-label="Detailed schematic key"
+                  >
                     <Key />
                   </svg>
                 </div>

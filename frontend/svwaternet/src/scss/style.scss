@@ -217,14 +217,16 @@ body {
 
 .schematic-key-panel {
   height: 420px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .schematic-key-panel svg {
   display: block;
   width: 100%;
-  min-height: 640px;
+  height: 100%;
 }
 
 @include color-mode(dark) {
