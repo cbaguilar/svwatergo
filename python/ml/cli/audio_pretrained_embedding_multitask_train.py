@@ -40,6 +40,7 @@ def main() -> int:
     p.add_argument("--random-state", type=int, default=42)
 
     p.add_argument("--encoder-hidden", default="512,256")
+    p.add_argument("--latent-dim", type=int, default=64)
     p.add_argument("--encoder-dropout", type=float, default=0.2)
     p.add_argument("--epochs", type=int, default=40)
     p.add_argument("--batch-size", type=int, default=128)
@@ -97,6 +98,7 @@ def main() -> int:
         extract_num_workers=int(args.extract_num_workers),
         extract_log_every=int(args.extract_log_every),
         encoder_hidden=str(args.encoder_hidden),
+        latent_dim=int(args.latent_dim),
         encoder_dropout=float(args.encoder_dropout),
         epochs=int(args.epochs),
         batch_size=int(args.batch_size),

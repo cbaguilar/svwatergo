@@ -11,6 +11,7 @@ WINDOW_S="${WINDOW_S:-10}"
 TARGET_COLS="${TARGET_COLS:-ropumprun_duty_target,wellpumprun_duty_target,feedpumprun_duty_target,deliveryrun_duty_target,flushrun_duty_target}"
 POSITIVE_THRESHOLD="${POSITIVE_THRESHOLD:-0.5}"
 ENCODER_HIDDEN="${ENCODER_HIDDEN:-512,256}"
+LATENT_DIM="${LATENT_DIM:-64}"
 ENCODER_DROPOUT="${ENCODER_DROPOUT:-0.2}"
 EPOCHS="${EPOCHS:-60}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
@@ -108,6 +109,7 @@ for SITE in "${SITES[@]}"; do
     --extract-num-workers "$EXTRACT_NUM_WORKERS" \
     --extract-log-every "$EXTRACT_LOG_EVERY" \
     --encoder-hidden "$ENCODER_HIDDEN" \
+    --latent-dim "$LATENT_DIM" \
     --encoder-dropout "$ENCODER_DROPOUT" \
     --epochs "$EPOCHS" \
     --batch-size "$BATCH_SIZE" \

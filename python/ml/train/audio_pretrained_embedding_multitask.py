@@ -357,6 +357,7 @@ def fit_audio_pretrained_embedding_multitask(
     extract_num_workers: int = 0,
     extract_log_every: int = 0,
     encoder_hidden: str = "512,256",
+    latent_dim: int = 64,
     encoder_dropout: float = 0.2,
     epochs: int = 40,
     batch_size: int = 128,
@@ -711,7 +712,9 @@ def fit_audio_pretrained_embedding_multitask(
             return y, z, p
 
     hidden = [int(x.strip()) for x in str(encoder_hidden).split(",") if x.strip()]
-    z_dim = int(Z_pann.shape[1])
+    z_dim = int(latent_dim)
+    if z_dim <= 0:
+        raise ValueError("latent_dim must be > 0")
     plc_dim = int(Z_plc.shape[1]) if Z_plc is not None else 0
     if mode == "multiclass":
         y_dim = int(len(np.unique(Y)))
