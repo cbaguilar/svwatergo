@@ -178,9 +178,9 @@ def _accumulate_group_means(
             if group_mode == "binary_actuator":
                 labels: List[str] = []
                 for actuator in actuators:
-                    if bool(getattr(row, f"__group__{actuator}")):
+                    if bool(g.iloc[row_i][f"__group__{actuator}"]):
                         labels.append(f"{ACTUATOR_ABBREV.get(actuator, actuator)} ON")
-                if bool(getattr(row, "__group__all_off")):
+                if bool(g.iloc[row_i]["__group__all_off"]):
                     labels.append("All Off")
             else:
                 labels = [str(getattr(row, combo_col))]
