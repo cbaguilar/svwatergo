@@ -695,6 +695,7 @@ def _fit_and_write_plc_pca(
 ) -> tuple[pd.DataFrame, Optional[Path], Optional[Path], Optional[Path]]:
     if not bool(args.write_plc_pca):
         return samples, None, None, None
+    out_dataset_root.mkdir(parents=True, exist_ok=True)
 
     explicit_cols = [c.strip() for c in str(args.plc_pca_cols).split(",") if c.strip()] or None
     always_exclude = [
