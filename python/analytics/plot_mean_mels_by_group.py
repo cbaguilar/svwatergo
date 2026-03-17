@@ -47,6 +47,17 @@ def _parse_csv(text: str) -> List[str]:
     return [x.strip() for x in str(text or "").split(",") if x.strip()]
 
 
+def _parse_label_map(text: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for part in str(text or "").split(","):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
 def _resolve_combo_col(df: pd.DataFrame, requested: str) -> str:
     req = str(requested or "").strip()
     candidates = [req] if req else []
@@ -92,6 +103,15 @@ def _load_and_tag_samples(paths: Sequence[str], site_names: Sequence[str]) -> pd
     if not dfs:
         raise ValueError("No sample parquet files loaded")
     return pd.concat(dfs, axis=0, ignore_index=True, sort=False)
+
+
+def _display_scope_value(scope_type: str, scope_value: str, label_map: Dict[str, str]) -> str:
+    scope_type = str(scope_type)
+    scope_value = str(scope_value)
+    if scope_type == "source" and "|" in scope_value:
+        site_part, src_part = [x.strip() for x in scope_value.split("|", 1)]
+        return f"{label_map.get(site_part, site_part)} | {src_part}"
+    return label_map.get(scope_value, scope_value)
 
 
 def _group_key_rows(df: pd.DataFrame, combo_col: str, source_col: str) -> Tuple[pd.DataFrame, Dict[Tuple[str, str], Dict[str, str]]]:
@@ -253,6 +273,11 @@ def main() -> int:
     p.add_argument("--top-k", type=int, default=8, help="Top combos per scope to render")
     p.add_argument("--min-samples", type=int, default=1)
     p.add_argument("--cmap", default="magma")
+    p.add_argument(
+        "--site-label-map",
+        default="bluerock=Site A,santateresa=Site B,pryorfarm=Site C",
+        help="Comma-separated raw=display site label mapping used in titles",
+    )
     p.add_argument("--out-dir", required=True)
     args = p.parse_args()
 
@@ -263,6 +288,7 @@ def main() -> int:
     source_col = _resolve_source_col(df, args.source_col)
     actuators = _available_actuators(df, _parse_csv(args.actuators))
     group_mode = str(args.group_mode)
+    label_map = _parse_label_map(args.site_label_map)
 
     sums, counts, _mel_shape = _accumulate_group_means(
         df,
@@ -308,13 +334,14 @@ def main() -> int:
         if not items:
             continue
         safe_scope = re.sub(r"[^A-Za-z0-9._-]+", "_", str(scope_value))
+        display_scope = _display_scope_value(str(scope_type), str(scope_value), label_map)
         out_path = out_dir / scope_type / f"{safe_scope}.png"
         _render_scope_grid(
             out_path=out_path,
             title=(
-                f"Mean Mel by pooled binary actuator state | {scope_type}={scope_value}"
+                f"Mean Mel by pooled binary actuator state | {scope_type}={display_scope}"
                 if group_mode == "binary_actuator"
-                else f"Mean Mel by {combo_col} | {scope_type}={scope_value}"
+                else f"Mean Mel by {combo_col} | {scope_type}={display_scope}"
             ),
             means=items,
             vmin=vmin,
