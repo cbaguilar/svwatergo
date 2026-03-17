@@ -16,6 +16,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--input-parquet", required=True)
     p.add_argument("--out-png", required=True)
     p.add_argument("--projection", choices=["2d", "3d"], default="3d")
+    p.add_argument("--layout", choices=["true_pred", "true_only"], default="true_pred")
     p.add_argument("--true-prefix", default="pann_true_pc")
     p.add_argument("--pred-prefix", default="pann_pred_pc")
     p.add_argument("--quantile-limits", default="1,99")
@@ -136,9 +137,12 @@ def main() -> int:
         raise SystemExit("input parquet is empty")
 
     proj = str(args.projection)
+    layout = str(args.layout)
     true_cols = [f"{args.true_prefix}{i}" for i in (1, 2)] + ([f"{args.true_prefix}3"] if proj == "3d" else [])
     pred_cols = [f"{args.pred_prefix}{i}" for i in (1, 2)] + ([f"{args.pred_prefix}3"] if proj == "3d" else [])
-    req = true_cols + pred_cols
+    req = list(true_cols)
+    if layout == "true_pred":
+        req += pred_cols
     missing = [c for c in req if c not in df.columns]
     if missing:
         raise SystemExit(f"missing PCA columns: {', '.join(missing)}")
@@ -149,13 +153,22 @@ def main() -> int:
     q0, q1 = float(q_parts[0]), float(q_parts[1])
     merged = pd.DataFrame(
         {
-            "pc1": pd.concat([df[true_cols[0]], df[pred_cols[0]]], ignore_index=True),
-            "pc2": pd.concat([df[true_cols[1]], df[pred_cols[1]]], ignore_index=True),
+            "pc1": pd.concat(
+                [df[true_cols[0]]] + ([df[pred_cols[0]]] if layout == "true_pred" else []),
+                ignore_index=True,
+            ),
+            "pc2": pd.concat(
+                [df[true_cols[1]]] + ([df[pred_cols[1]]] if layout == "true_pred" else []),
+                ignore_index=True,
+            ),
         }
     )
     limit_cols = ["pc1", "pc2"]
     if proj == "3d":
-        merged["pc3"] = pd.concat([df[true_cols[2]], df[pred_cols[2]]], ignore_index=True)
+        merged["pc3"] = pd.concat(
+            [df[true_cols[2]]] + ([df[pred_cols[2]]] if layout == "true_pred" else []),
+            ignore_index=True,
+        )
         limit_cols.append("pc3")
     limits = _axis_limits(merged, limit_cols, q0, q1)
 
@@ -165,16 +178,19 @@ def main() -> int:
         raise SystemExit("none of the requested color columns exist in the parquet")
 
     ncols = len(keep_cols)
+    nrows = 2 if layout == "true_pred" else 1
     if proj == "3d":
-        fig = plt.figure(figsize=(5.2 * ncols, 9.2), constrained_layout=True)
-        axes = np.empty((2, ncols), dtype=object)
-        for rr in range(2):
+        fig = plt.figure(figsize=(5.2 * ncols, 4.8 if nrows == 1 else 9.2), constrained_layout=True)
+        axes = np.empty((nrows, ncols), dtype=object)
+        for rr in range(nrows):
             for cc in range(ncols):
-                axes[rr, cc] = fig.add_subplot(2, ncols, rr * ncols + cc + 1, projection="3d")
+                axes[rr, cc] = fig.add_subplot(nrows, ncols, rr * ncols + cc + 1, projection="3d")
     else:
-        fig, axes = plt.subplots(2, ncols, figsize=(5.0 * ncols, 8.0), constrained_layout=True)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(5.0 * ncols, 4.2 if nrows == 1 else 8.0), constrained_layout=True)
         if ncols == 1:
-            axes = np.asarray(axes).reshape(2, 1)
+            axes = np.asarray(axes).reshape(nrows, 1)
+        elif nrows == 1:
+            axes = np.asarray(axes).reshape(1, ncols)
 
     for j, color_col in enumerate(keep_cols):
         _plot_panel(
@@ -189,18 +205,19 @@ def main() -> int:
             title=f"True PCA colored by {color_col}",
             limits=limits,
         )
-        _plot_panel(
-            fig,
-            axes[1, j],
-            df,
-            xyz_cols=pred_cols,
-            color_col=color_col,
-            point_size=float(args.point_size),
-            alpha=float(args.alpha),
-            categorical_max_unique=int(args.categorical_max_unique),
-            title=f"Pred PCA colored by {color_col}",
-            limits=limits,
-        )
+        if layout == "true_pred":
+            _plot_panel(
+                fig,
+                axes[1, j],
+                df,
+                xyz_cols=pred_cols,
+                color_col=color_col,
+                point_size=float(args.point_size),
+                alpha=float(args.alpha),
+                categorical_max_unique=int(args.categorical_max_unique),
+                title=f"Pred PCA colored by {color_col}",
+                limits=limits,
+            )
 
     fig.suptitle(str(args.title_prefix))
     out = Path(args.out_png)

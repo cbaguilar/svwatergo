@@ -21,12 +21,12 @@ TARGET_SECONDS="${TARGET_SECONDS:-10}"
 EXTRACT_BATCH_SIZE="${EXTRACT_BATCH_SIZE:-32}"
 EXTRACT_NUM_WORKERS="${EXTRACT_NUM_WORKERS:-8}"
 EXTRACT_LOG_EVERY="${EXTRACT_LOG_EVERY:-512}"
-AUX_PLC_PCA="${AUX_PLC_PCA:-yes}"
+AUX_PLC_PCA="${AUX_PLC_PCA:-no}"
 AUX_PLC_INCLUDE_DUTY_COLS="${AUX_PLC_INCLUDE_DUTY_COLS:-no}"
 AUX_PLC_COMPONENTS="${AUX_PLC_COMPONENTS:-8}"
 AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-0.3}"
 PANN_PCA_COMPONENTS="${PANN_PCA_COMPONENTS:-8}"
-PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-1.0}"
+PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-0.0}"
 BEST_MODEL_SPLIT="${BEST_MODEL_SPLIT:-val}"
 RENDER_AFTER_TRAIN="${RENDER_AFTER_TRAIN:-yes}"
 RENDER_PROJECTION="${RENDER_PROJECTION:-3d}"
@@ -114,11 +114,16 @@ for SITE in "${SITES[@]}"; do
     --pann-pca-weight "$PANN_PCA_WEIGHT"
 
   if [[ "$RENDER_AFTER_TRAIN" == "yes" ]]; then
+    RENDER_LAYOUT="true_pred"
+    if [[ "$PANN_PCA_WEIGHT" == "0" || "$PANN_PCA_WEIGHT" == "0.0" ]]; then
+      RENDER_LAYOUT="true_only"
+    fi
     echo "      render=$PANEL_PNG"
     "$PYTHON" python/analytics/plot_multilabel_pca_true_pred_panels.py \
       --input-parquet "$OUT_DIR/pann_pca_true_vs_pred.parquet" \
       --out-png "$PANEL_PNG" \
       --projection "$RENDER_PROJECTION" \
+      --layout "$RENDER_LAYOUT" \
       --quantile-limits "$RENDER_QUANTILE_LIMITS" \
       --point-size "$RENDER_POINT_SIZE" \
       --alpha "$RENDER_ALPHA" \
