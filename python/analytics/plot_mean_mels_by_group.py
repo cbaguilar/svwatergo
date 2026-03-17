@@ -149,7 +149,8 @@ def _binary_actuator_labels(df: pd.DataFrame, actuators: Sequence[str]) -> pd.Da
             active = pd.to_numeric(out[duty_col], errors="coerce").fillna(0.0).to_numpy(dtype=float) >= 0.5
         else:
             active = np.zeros(len(out), dtype=bool)
-        out[f"__group__{actuator}"] = active
+        out[f"__group__{actuator}__on"] = active
+        out[f"__group__{actuator}__off"] = ~np.asarray(active, dtype=bool)
         active_masks.append(np.asarray(active, dtype=bool))
     if active_masks:
         all_off = ~np.logical_or.reduce(active_masks)
@@ -198,8 +199,10 @@ def _accumulate_group_means(
             if group_mode == "binary_actuator":
                 labels: List[str] = []
                 for actuator in actuators:
-                    if bool(g.iloc[row_i][f"__group__{actuator}"]):
+                    if bool(g.iloc[row_i][f"__group__{actuator}__on"]):
                         labels.append(f"{ACTUATOR_ABBREV.get(actuator, actuator)} ON")
+                    if bool(g.iloc[row_i][f"__group__{actuator}__off"]):
+                        labels.append(f"{ACTUATOR_ABBREV.get(actuator, actuator)} OFF")
                 if bool(g.iloc[row_i]["__group__all_off"]):
                     labels.append("All Off")
             else:
@@ -269,7 +272,7 @@ def main() -> int:
     p.add_argument("--combo-col", default="actuation_combo")
     p.add_argument("--source-col", default="audio_source")
     p.add_argument("--group-mode", default="combo", choices=["combo", "binary_actuator"])
-    p.add_argument("--actuators", default="ropumprun,wellpumprun,feedpumprun,deliveryrun,inletrun,flushrun,concbypassrun,proddiversionrun")
+    p.add_argument("--actuators", default="wellpumprun,feedpumprun,ropumprun,deliveryrun,flushrun")
     p.add_argument("--top-k", type=int, default=8, help="Top combos per scope to render")
     p.add_argument("--min-samples", type=int, default=1)
     p.add_argument("--cmap", default="magma")

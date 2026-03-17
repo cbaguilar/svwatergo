@@ -29,7 +29,7 @@ ACTUATOR_ABBREV = {
     "feedpumprun": "P1",
     "deliveryrun": "P3",
     "inletrun": "IN",
-    "flushrun": "AV2",
+    "flushrun": "AV3",
     "concbypassrun": "CB",
     "proddiversionrun": "PD",
 }
