@@ -1219,10 +1219,12 @@ const DetailedDashboard = () => {
             <CCardHeader className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
               <span>{detailSidePanelMode === 'status' ? 'Sensor Status' : 'Component Key'}</span>
               <div className="d-flex align-items-center gap-2 flex-wrap">
-                <CButton color="secondary" variant="outline" size="sm" onClick={handleDownloadKeySvg}>
-                  <CIcon icon={cilDataTransferDown} size="sm" className="me-1" />
-                  Download SVG
-                </CButton>
+                {detailSidePanelMode === 'key' && (
+                  <CButton color="secondary" variant="outline" size="sm" onClick={handleDownloadKeySvg}>
+                    <CIcon icon={cilDataTransferDown} size="sm" className="me-1" />
+                    Download SVG
+                  </CButton>
+                )}
                 <CButtonGroup size="sm" aria-label="Detailed dashboard side panel">
                   <CButton
                     color={detailSidePanelMode === 'status' ? 'primary' : 'secondary'}
