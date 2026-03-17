@@ -1081,6 +1081,25 @@ def fit_audio_pretrained_embedding_multitask(
             jj = int(j + 1)
             plc_proj_df[f"plc_true_pc{jj}"] = Z_plc[:, j].astype("float64")
             plc_proj_df[f"plc_pred_pc{jj}"] = Z_plc_pred[:, j].astype("float64")
+        if mode == "multilabel":
+            for col in (
+                "ml__true_bits",
+                "ml__pred_bits",
+                "ml__true_label",
+                "ml__pred_label",
+                "ml__exact_match",
+                "ml__error_count",
+                "ml__hamming_error",
+                "ml__bce_loss",
+                "ml__pred_confidence_mean",
+                "ml__pred_confidence_min",
+                "ml__pred_confidence_combo",
+            ):
+                if col in pann_proj_df.columns:
+                    plc_proj_df[col] = pann_proj_df[col]
+            for col in pann_proj_df.columns:
+                if col.startswith("ml__true__") or col.startswith("ml__pred__") or col.startswith("ml__score__") or col.startswith("ml__correct__") or col.startswith("ml__bce__"):
+                    plc_proj_df[col] = pann_proj_df[col]
         plc_proj_df.to_parquet(plc_proj_path, index=False)
 
         if int(Z_plc.shape[1]) >= 3:

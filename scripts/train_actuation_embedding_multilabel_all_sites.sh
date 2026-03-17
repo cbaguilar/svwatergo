@@ -22,7 +22,9 @@ EXTRACT_BATCH_SIZE="${EXTRACT_BATCH_SIZE:-32}"
 EXTRACT_NUM_WORKERS="${EXTRACT_NUM_WORKERS:-8}"
 EXTRACT_LOG_EVERY="${EXTRACT_LOG_EVERY:-512}"
 AUX_PLC_PCA="${AUX_PLC_PCA:-no}"
+AUX_PLC_FEATURE_COLS="${AUX_PLC_FEATURE_COLS:-}"
 AUX_PLC_INCLUDE_DUTY_COLS="${AUX_PLC_INCLUDE_DUTY_COLS:-no}"
+AUX_PLC_TARGET_MODE="${AUX_PLC_TARGET_MODE:-pca}"
 AUX_PLC_COMPONENTS="${AUX_PLC_COMPONENTS:-8}"
 AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-0.3}"
 PANN_PCA_COMPONENTS="${PANN_PCA_COMPONENTS:-8}"
@@ -34,6 +36,7 @@ RENDER_QUANTILE_LIMITS="${RENDER_QUANTILE_LIMITS:-1,99}"
 RENDER_POINT_SIZE="${RENDER_POINT_SIZE:-8}"
 RENDER_ALPHA="${RENDER_ALPHA:-0.45}"
 RENDER_COLOR_COLS="${RENDER_COLOR_COLS:-ml__true_label,ml__pred_label,ml__pred_confidence_mean,ml__pred_confidence_combo,ml__exact_match,ml__hamming_error,ml__bce_loss,audio_source}"
+RENDER_AUX_PLC_PCA="${RENDER_AUX_PLC_PCA:-yes}"
 
 resolve_site_paths() {
   local site="$1"
@@ -44,7 +47,9 @@ resolve_site_paths() {
       EMBEDDINGS_NPZ="/mnt/d/datasets/svwatergo/derived/dataset=audio_actuation_dataset/site=bluerock/window_s=${WINDOW_S}/embeddings_panns.npz"
       OUT_DIR="/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_${WINDOW_S}s_panns_actuation_5bool_multilabel"
       PANEL_PNG="/mnt/d/datasets/svwatergo/derived/plots/bluerock_${WINDOW_S}s_panns_actuation_5bool_multilabel_true_pred_panels.png"
+      PLC_PANEL_PNG="/mnt/d/datasets/svwatergo/derived/plots/bluerock_${WINDOW_S}s_panns_actuation_5bool_plc_true_pred_panels.png"
       TITLE_PREFIX="Bluerock 5-Actuation Multilabel PCA"
+      PLC_TITLE_PREFIX="Bluerock 5-Actuation Aux PLC PCA"
       ;;
     pryorfarm)
       DATASET="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/dataset=audio_actuation_dataset/site=pryorfarm/window_s=${WINDOW_S}/samples.parquet"
@@ -52,7 +57,9 @@ resolve_site_paths() {
       EMBEDDINGS_NPZ="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/dataset=audio_actuation_dataset/site=pryorfarm/window_s=${WINDOW_S}/embeddings_panns.npz"
       OUT_DIR="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/checkpoints/pryorfarm_${WINDOW_S}s_panns_actuation_5bool_multilabel"
       PANEL_PNG="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/plots/pryorfarm_${WINDOW_S}s_panns_actuation_5bool_multilabel_true_pred_panels.png"
+      PLC_PANEL_PNG="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/plots/pryorfarm_${WINDOW_S}s_panns_actuation_5bool_plc_true_pred_panels.png"
       TITLE_PREFIX="Pryor Farm 5-Actuation Multilabel PCA"
+      PLC_TITLE_PREFIX="Pryor Farm 5-Actuation Aux PLC PCA"
       ;;
     santateresa)
       DATASET="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/dataset=audio_actuation_dataset/site=santateresa/window_s=${WINDOW_S}/samples.parquet"
@@ -60,7 +67,9 @@ resolve_site_paths() {
       EMBEDDINGS_NPZ="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/dataset=audio_actuation_dataset/site=santateresa/window_s=${WINDOW_S}/embeddings_panns.npz"
       OUT_DIR="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/checkpoints/santateresa_${WINDOW_S}s_panns_actuation_5bool_multilabel"
       PANEL_PNG="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/plots/santateresa_${WINDOW_S}s_panns_actuation_5bool_multilabel_true_pred_panels.png"
+      PLC_PANEL_PNG="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/plots/santateresa_${WINDOW_S}s_panns_actuation_5bool_plc_true_pred_panels.png"
       TITLE_PREFIX="Santa Teresa 5-Actuation Multilabel PCA"
+      PLC_TITLE_PREFIX="Santa Teresa 5-Actuation Aux PLC PCA"
       ;;
     *)
       echo "unknown site: $site" >&2
@@ -107,11 +116,13 @@ for SITE in "${SITES[@]}"; do
     --eval-every "$EVAL_EVERY" \
     --best-model-split "$BEST_MODEL_SPLIT" \
     --aux-plc-pca "$AUX_PLC_PCA" \
+    --aux-plc-target-mode "$AUX_PLC_TARGET_MODE" \
     --aux-plc-include-duty-cols "$AUX_PLC_INCLUDE_DUTY_COLS" \
     --aux-plc-components "$AUX_PLC_COMPONENTS" \
     --aux-plc-weight "$AUX_PLC_WEIGHT" \
     --pann-pca-components "$PANN_PCA_COMPONENTS" \
-    --pann-pca-weight "$PANN_PCA_WEIGHT"
+    --pann-pca-weight "$PANN_PCA_WEIGHT" \
+    ${AUX_PLC_FEATURE_COLS:+--aux-plc-feature-cols "$AUX_PLC_FEATURE_COLS"}
 
   if [[ "$RENDER_AFTER_TRAIN" == "yes" ]]; then
     RENDER_LAYOUT="true_pred"
@@ -129,5 +140,21 @@ for SITE in "${SITES[@]}"; do
       --alpha "$RENDER_ALPHA" \
       --title-prefix "$TITLE_PREFIX" \
       --color-cols "$RENDER_COLOR_COLS"
+
+    if [[ "$RENDER_AUX_PLC_PCA" == "yes" && -f "$OUT_DIR/plc_pca_true_vs_pred.parquet" ]]; then
+      echo "      render_aux_plc=$PLC_PANEL_PNG"
+      "$PYTHON" python/analytics/plot_multilabel_pca_true_pred_panels.py \
+        --input-parquet "$OUT_DIR/plc_pca_true_vs_pred.parquet" \
+        --out-png "$PLC_PANEL_PNG" \
+        --projection "$RENDER_PROJECTION" \
+        --layout "true_pred" \
+        --true-prefix "plc_true_pc" \
+        --pred-prefix "plc_pred_pc" \
+        --quantile-limits "$RENDER_QUANTILE_LIMITS" \
+        --point-size "$RENDER_POINT_SIZE" \
+        --alpha "$RENDER_ALPHA" \
+        --title-prefix "$PLC_TITLE_PREFIX" \
+        --color-cols "$RENDER_COLOR_COLS"
+    fi
   fi
 done
