@@ -363,6 +363,7 @@ def fit_audio_pretrained_embedding_multitask(
     learning_rate: float = 1e-3,
     weight_decay: float = 1e-4,
     eval_every: int = 5,
+    multilabel_pos_weight: bool = True,
     main_task_weight: float = 1.0,
     aux_plc_pca: bool = True,
     aux_plc_feature_cols: Optional[Sequence[str]] = None,
@@ -757,7 +758,17 @@ def fit_audio_pretrained_embedding_multitask(
     test_dl = DataLoader(ds_test, batch_size=int(batch_size), shuffle=False)
     val_dl = DataLoader(ds_val, batch_size=int(batch_size), shuffle=False)
 
-    bce = nn.BCEWithLogitsLoss()
+    bce_pos_weight_np: Optional[np.ndarray] = None
+    if mode == "multilabel" and bool(multilabel_pos_weight):
+        y_train_np = np.asarray(Y[idx_train], dtype=np.float32)
+        pos = np.sum(y_train_np >= 0.5, axis=0, dtype=np.float64)
+        neg = np.sum(y_train_np < 0.5, axis=0, dtype=np.float64)
+        bce_pos_weight_np = np.where(pos > 0.0, neg / np.maximum(pos, 1.0), 1.0).astype(np.float32, copy=False)
+        bce_pos_weight_np = np.where(np.isfinite(bce_pos_weight_np), bce_pos_weight_np, 1.0).astype(np.float32, copy=False)
+        bce_pos_weight_np = np.clip(bce_pos_weight_np, 1.0, 1e6).astype(np.float32, copy=False)
+        bce = nn.BCEWithLogitsLoss(pos_weight=torch.from_numpy(bce_pos_weight_np).to(device))
+    else:
+        bce = nn.BCEWithLogitsLoss()
     ce = nn.CrossEntropyLoss()
     huber = nn.SmoothL1Loss()
     optim = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=float(weight_decay))
@@ -1959,6 +1970,18 @@ def fit_audio_pretrained_embedding_multitask(
             "drop_state_unknown": bool(drop_state_unknown),
             "state_unknown_col": (str(state_unknown_col_used) if state_unknown_col_used else None),
             "drop_state_unknown_scope": str(drop_unknown_scope),
+            "multilabel_pos_weight": bool(multilabel_pos_weight),
+            "multilabel_pos_weight_values": (
+                [float(x) for x in bce_pos_weight_np.tolist()] if bce_pos_weight_np is not None else []
+            ),
+            "multilabel_pos_weight_by_target": (
+                {
+                    str(name): float(bce_pos_weight_np[i])
+                    for i, name in enumerate(list(y_meta.get("target_cols") or []))
+                }
+                if (bce_pos_weight_np is not None and mode == "multilabel")
+                else {}
+            ),
         },
         "best_model": {
             "path": str(best_ckpt_path) if best_ckpt_path.exists() else None,

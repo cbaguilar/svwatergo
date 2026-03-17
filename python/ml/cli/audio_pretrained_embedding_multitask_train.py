@@ -46,6 +46,7 @@ def main() -> int:
     p.add_argument("--learning-rate", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--eval-every", type=int, default=5)
+    p.add_argument("--multilabel-pos-weight", default="yes", choices=["yes", "no"])
     p.add_argument("--main-task-weight", type=float, default=1.0)
     p.add_argument("--best-model-metric", default="auto", choices=["auto", "main_task_metric", "plc_pca_r2"])
     p.add_argument("--best-model-split", default="val", choices=["val", "test"])
@@ -102,6 +103,7 @@ def main() -> int:
         learning_rate=float(args.learning_rate),
         weight_decay=float(args.weight_decay),
         eval_every=int(args.eval_every),
+        multilabel_pos_weight=(str(args.multilabel_pos_weight) == "yes"),
         main_task_weight=float(args.main_task_weight),
         best_model_metric=str(args.best_model_metric),
         best_model_split=str(args.best_model_split),
