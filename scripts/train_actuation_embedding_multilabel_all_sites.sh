@@ -28,6 +28,12 @@ AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-0.3}"
 PANN_PCA_COMPONENTS="${PANN_PCA_COMPONENTS:-8}"
 PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-1.0}"
 BEST_MODEL_SPLIT="${BEST_MODEL_SPLIT:-val}"
+RENDER_AFTER_TRAIN="${RENDER_AFTER_TRAIN:-yes}"
+RENDER_PROJECTION="${RENDER_PROJECTION:-3d}"
+RENDER_QUANTILE_LIMITS="${RENDER_QUANTILE_LIMITS:-1,99}"
+RENDER_POINT_SIZE="${RENDER_POINT_SIZE:-8}"
+RENDER_ALPHA="${RENDER_ALPHA:-0.45}"
+RENDER_COLOR_COLS="${RENDER_COLOR_COLS:-ml__true_label,ml__pred_label,ml__pred_confidence_mean,ml__pred_confidence_combo,ml__exact_match,ml__hamming_error,ml__bce_loss,audio_source}"
 
 resolve_site_paths() {
   local site="$1"
@@ -37,18 +43,24 @@ resolve_site_paths() {
       SPLIT="/mnt/d/datasets/svwatergo/derived/dataset=audio_actuation_dataset/site=bluerock/window_s=${WINDOW_S}/split_manifest.parquet"
       EMBEDDINGS_NPZ="/mnt/d/datasets/svwatergo/derived/dataset=audio_actuation_dataset/site=bluerock/window_s=${WINDOW_S}/embeddings_panns.npz"
       OUT_DIR="/mnt/d/datasets/svwatergo/derived/checkpoints/bluerock_${WINDOW_S}s_panns_actuation_5bool_multilabel"
+      PANEL_PNG="/mnt/d/datasets/svwatergo/derived/plots/bluerock_${WINDOW_S}s_panns_actuation_5bool_multilabel_true_pred_panels.png"
+      TITLE_PREFIX="Bluerock 5-Actuation Multilabel PCA"
       ;;
     pryorfarm)
       DATASET="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/dataset=audio_actuation_dataset/site=pryorfarm/window_s=${WINDOW_S}/samples.parquet"
       SPLIT="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/dataset=audio_actuation_dataset/site=pryorfarm/window_s=${WINDOW_S}/split_manifest.parquet"
       EMBEDDINGS_NPZ="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/dataset=audio_actuation_dataset/site=pryorfarm/window_s=${WINDOW_S}/embeddings_panns.npz"
       OUT_DIR="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/checkpoints/pryorfarm_${WINDOW_S}s_panns_actuation_5bool_multilabel"
+      PANEL_PNG="/mnt/d/datasets/svwatergo/derived_wyze_pryorfarm/plots/pryorfarm_${WINDOW_S}s_panns_actuation_5bool_multilabel_true_pred_panels.png"
+      TITLE_PREFIX="Pryor Farm 5-Actuation Multilabel PCA"
       ;;
     santateresa)
       DATASET="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/dataset=audio_actuation_dataset/site=santateresa/window_s=${WINDOW_S}/samples.parquet"
       SPLIT="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/dataset=audio_actuation_dataset/site=santateresa/window_s=${WINDOW_S}/split_manifest.parquet"
       EMBEDDINGS_NPZ="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/dataset=audio_actuation_dataset/site=santateresa/window_s=${WINDOW_S}/embeddings_panns.npz"
       OUT_DIR="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/checkpoints/santateresa_${WINDOW_S}s_panns_actuation_5bool_multilabel"
+      PANEL_PNG="/mnt/d/datasets/svwatergo/derived_wyze_santateresa/plots/santateresa_${WINDOW_S}s_panns_actuation_5bool_multilabel_true_pred_panels.png"
+      TITLE_PREFIX="Santa Teresa 5-Actuation Multilabel PCA"
       ;;
     *)
       echo "unknown site: $site" >&2
@@ -100,4 +112,17 @@ for SITE in "${SITES[@]}"; do
     --aux-plc-weight "$AUX_PLC_WEIGHT" \
     --pann-pca-components "$PANN_PCA_COMPONENTS" \
     --pann-pca-weight "$PANN_PCA_WEIGHT"
+
+  if [[ "$RENDER_AFTER_TRAIN" == "yes" ]]; then
+    echo "      render=$PANEL_PNG"
+    "$PYTHON" python/analytics/plot_multilabel_pca_true_pred_panels.py \
+      --input-parquet "$OUT_DIR/pann_pca_true_vs_pred.parquet" \
+      --out-png "$PANEL_PNG" \
+      --projection "$RENDER_PROJECTION" \
+      --quantile-limits "$RENDER_QUANTILE_LIMITS" \
+      --point-size "$RENDER_POINT_SIZE" \
+      --alpha "$RENDER_ALPHA" \
+      --title-prefix "$TITLE_PREFIX" \
+      --color-cols "$RENDER_COLOR_COLS"
+  fi
 done
