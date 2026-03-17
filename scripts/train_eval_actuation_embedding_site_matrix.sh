@@ -28,6 +28,7 @@ AUX_PLC_TARGET_MODE="${AUX_PLC_TARGET_MODE:-raw}"
 AUX_PLC_FEATURE_COLS="${AUX_PLC_FEATURE_COLS:-plc_pca1,plc_pca2,plc_pca3,plc_pca4,plc_pca5,plc_pca6,plc_pca7,plc_pca8}"
 AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-0.1}"
 PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-0.0}"
+RENDER_PLOTS="${RENDER_PLOTS:-yes}"
 
 resolve_site_paths() {
   local site="$1"
@@ -137,6 +138,7 @@ for TRAIN_SITE in "${SITES[@]}"; do
     --learning-rate "$LEARNING_RATE" \
     --weight-decay "$WEIGHT_DECAY" \
     --eval-every "$EVAL_EVERY" \
+    --render-plots "$RENDER_PLOTS" \
     --best-model-metric "$BEST_MODEL_METRIC" \
     --best-model-split "$BEST_MODEL_SPLIT" \
     --multilabel-pos-weight "$MULTILABEL_POS_WEIGHT" \
@@ -174,6 +176,7 @@ for TRAIN_SITE in "${SITES[@]}"; do
       --learning-rate "$LEARNING_RATE" \
       --weight-decay "$WEIGHT_DECAY" \
       --eval-every 1 \
+      --render-plots "$RENDER_PLOTS" \
       --best-model-metric "$BEST_MODEL_METRIC" \
       --best-model-split "$BEST_MODEL_SPLIT" \
       --multilabel-pos-weight "$MULTILABEL_POS_WEIGHT" \
@@ -222,6 +225,7 @@ if [[ "$INCLUDE_POOLED" == "yes" ]]; then
     --learning-rate "$LEARNING_RATE" \
     --weight-decay "$WEIGHT_DECAY" \
     --eval-every "$EVAL_EVERY" \
+    --render-plots "$RENDER_PLOTS" \
     --best-model-metric "$BEST_MODEL_METRIC" \
     --best-model-split "$BEST_MODEL_SPLIT" \
     --multilabel-pos-weight "$MULTILABEL_POS_WEIGHT" \
@@ -259,6 +263,7 @@ if [[ "$INCLUDE_POOLED" == "yes" ]]; then
       --learning-rate "$LEARNING_RATE" \
       --weight-decay "$WEIGHT_DECAY" \
       --eval-every 1 \
+      --render-plots "$RENDER_PLOTS" \
       --best-model-metric "$BEST_MODEL_METRIC" \
       --best-model-split "$BEST_MODEL_SPLIT" \
       --multilabel-pos-weight "$MULTILABEL_POS_WEIGHT" \
