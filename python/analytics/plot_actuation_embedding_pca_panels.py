@@ -73,6 +73,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--point-size", type=float, default=10.0)
     p.add_argument("--alpha", type=float, default=0.6)
     p.add_argument("--title-prefix", default="Bluerock PANN Embedding PCA")
+    p.add_argument("--extra-categorical-col", default="", help="Optional extra categorical column to render as its own panel")
+    p.add_argument("--extra-categorical-outname", default="", help="Optional output filename for --extra-categorical-col")
     return p.parse_args()
 
 
@@ -394,6 +396,71 @@ def _plot_one_actuator(
     plt.close(fig)
 
 
+def _plot_categorical_column(
+    df: pd.DataFrame,
+    *,
+    out_path: Path,
+    color_col: str,
+    x_col: str,
+    y_col: str,
+    z_col: str,
+    projection: str,
+    point_size: float,
+    alpha: float,
+    title_prefix: str,
+    limits,
+) -> None:
+    if color_col not in df.columns:
+        raise SystemExit(f"missing categorical color column: {color_col}")
+
+    ser = df[color_col].astype("string").fillna("<NA>").astype(str)
+    order = sorted(ser.unique().tolist())
+    if not order:
+        return
+
+    fig = plt.figure(figsize=(10, 7.5), dpi=160)
+    ax = fig.add_subplot(111, projection=("3d" if projection == "3d" else None))
+    cmap = plt.get_cmap("tab20", max(len(order), 1))
+    handle_colors = []
+    for i, label in enumerate(order):
+        m = ser.to_numpy() == label
+        color = cmap(i)
+        handle_colors.append(color)
+        if projection == "3d":
+            ax.scatter(
+                df.loc[m, x_col],
+                df.loc[m, y_col],
+                df.loc[m, z_col],
+                s=float(point_size),
+                alpha=float(alpha),
+                color=color,
+                linewidths=0.0,
+            )
+        else:
+            ax.scatter(
+                df.loc[m, x_col],
+                df.loc[m, y_col],
+                s=float(point_size),
+                alpha=float(alpha),
+                color=color,
+                linewidths=0.0,
+            )
+
+    _apply_common_style(
+        ax,
+        title=f"{title_prefix} | {color_col}",
+        x_label="PCA 1",
+        y_label="PCA 2",
+        z_label="PCA 3",
+        limits=limits,
+    )
+    ax.legend(handles=_legend_handles(order, handle_colors), loc="best", fontsize=9, framealpha=0.9, title=color_col)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> int:
     args = _parse_args()
     inp = Path(args.input_parquet)
@@ -452,6 +519,26 @@ def main() -> int:
             work,
             out_path=out_path,
             actuator=actuator,
+            x_col=x_col,
+            y_col=y_col,
+            z_col=z_col,
+            projection=projection,
+            point_size=float(args.point_size),
+            alpha=float(args.alpha),
+            title_prefix=str(args.title_prefix),
+            limits=limits,
+        )
+        if out_path.exists():
+            print(f"[ok] wrote {out_path}", flush=True)
+
+    extra_categorical_col = str(args.extra_categorical_col).strip()
+    if extra_categorical_col:
+        extra_outname = str(args.extra_categorical_outname).strip() or f"{extra_categorical_col}.png"
+        out_path = out_dir / extra_outname
+        _plot_categorical_column(
+            work,
+            out_path=out_path,
+            color_col=extra_categorical_col,
             x_col=x_col,
             y_col=y_col,
             z_col=z_col,

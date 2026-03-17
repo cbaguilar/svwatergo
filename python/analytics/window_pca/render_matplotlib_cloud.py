@@ -16,6 +16,18 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--y-col", default="")
     p.add_argument("--z-col", default="")
     p.add_argument("--color-col", default="", help="Optional color column")
+    p.add_argument(
+        "--color-mode",
+        choices=["auto", "continuous", "categorical"],
+        default="auto",
+        help="How to interpret --color-col. auto treats low-cardinality columns as categorical.",
+    )
+    p.add_argument(
+        "--categorical-max-unique",
+        type=int,
+        default=24,
+        help="In auto mode, numeric color columns with at most this many unique values are treated as categorical.",
+    )
     p.add_argument("--max-points", type=int, default=1_500_000)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--point-size", type=float, default=0.8)
@@ -63,6 +75,17 @@ def _infer_xyz(df: pd.DataFrame, mode: str, x_col: str, y_col: str, z_col: str) 
     if mode == "voxels" and {"pc1", "pc2", "pc3"}.issubset(df.columns):
         return "pc1", "pc2", "pc3"
     raise SystemExit("Missing coordinate columns; pass --x-col --y-col --z-col.")
+
+
+def _use_categorical_color(series: pd.Series, color_mode: str, categorical_max_unique: int) -> bool:
+    if color_mode == "categorical":
+        return True
+    if color_mode == "continuous":
+        return False
+    if not pd.api.types.is_numeric_dtype(series):
+        return True
+    nunique = int(series.nunique(dropna=True))
+    return 0 < nunique <= int(categorical_max_unique)
 
 
 def main() -> None:
@@ -138,7 +161,23 @@ def main() -> None:
     color_col = str(args.color_col).strip()
     if color_col and color_col in work.columns:
         c = work[color_col]
-        if pd.api.types.is_numeric_dtype(c):
+        if _use_categorical_color(c, str(args.color_mode), int(args.categorical_max_unique)):
+            labels = c.astype("string").fillna("<NA>").astype(str)
+            uniq = sorted(labels.unique().tolist())
+            cmap = plt.get_cmap("tab20", max(len(uniq), 1))
+            handles = []
+            for i, label in enumerate(uniq):
+                mask = labels.to_numpy() == label
+                color = cmap(i)
+                ax.scatter(
+                    work.loc[mask, x_col], work.loc[mask, y_col], work.loc[mask, z_col],
+                    color=[color], s=float(args.point_size),
+                    alpha=float(args.alpha), linewidths=0,
+                    label=str(label),
+                )
+                handles.append(plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=str(label)))
+            ax.legend(handles=handles, title=color_col, fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
+        else:
             cnum = pd.to_numeric(c, errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
             sc = ax.scatter(
                 work[x_col], work[y_col], work[z_col],
@@ -146,13 +185,6 @@ def main() -> None:
                 alpha=float(args.alpha), linewidths=0,
             )
             fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, label=color_col)
-        else:
-            codes, _ = pd.factorize(c.astype(str).fillna("nan"), sort=True)
-            ax.scatter(
-                work[x_col], work[y_col], work[z_col],
-                c=codes, cmap="tab20", s=float(args.point_size),
-                alpha=float(args.alpha), linewidths=0,
-            )
     else:
         ax.scatter(
             work[x_col], work[y_col], work[z_col],
