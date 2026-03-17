@@ -455,6 +455,7 @@ def fit_audio_pretrained_embedding_multitask(
     pann_pca_components: int = 8,
     pann_pca_variance_ratio: float = 0.0,
     pann_pca_weight: float = 1.0,
+    render_plots: bool = True,
     best_model_metric: str = "auto",
     best_model_split: str = "val",
     source_filter_col: str = "",
@@ -1217,7 +1218,7 @@ def fit_audio_pretrained_embedding_multitask(
                     plc_proj_df[col] = pann_proj_df[col]
         plc_proj_df.to_parquet(plc_proj_path, index=False)
 
-        if int(Z_plc.shape[1]) >= 3:
+        if bool(render_plots) and int(Z_plc.shape[1]) >= 3:
             try:
                 import matplotlib.pyplot as plt  # type: ignore
                 Z_plc_view = np.asarray(Z_plc, dtype=np.float32)
@@ -1498,7 +1499,7 @@ def fit_audio_pretrained_embedding_multitask(
     pann_plot_path: Optional[Path] = None
     pann_plot_multicolor_path: Optional[Path] = None
     pann_plot_multicolor_pc13_path: Optional[Path] = None
-    if int(Z_pann.shape[1]) >= 2:
+    if bool(render_plots) and int(Z_pann.shape[1]) >= 2:
         try:
             import matplotlib.pyplot as plt  # type: ignore
 
@@ -1950,7 +1951,7 @@ def fit_audio_pretrained_embedding_multitask(
                 )
 
     conf_artifacts: Dict[str, Any] = {}
-    if not is_plc_encoder:
+    if bool(render_plots) and (not is_plc_encoder):
         conf_dir = out_dir / "confusion_multitask"
         test_conf = confusion_by_split.get("test") or {}
         if test_conf.get("labels"):
@@ -2073,6 +2074,7 @@ def fit_audio_pretrained_embedding_multitask(
             "plc_contrastive_temperature": float(plc_con_temp),
             "best_model_metric": str(metric_mode),
             "best_model_split": str(split_mode),
+            "render_plots": bool(render_plots),
             "source_filter_col": (src_filter_col if src_filter_vals else None),
             "source_filter_values": (src_filter_vals if src_filter_vals else []),
             "drop_state_unknown": bool(drop_state_unknown),
