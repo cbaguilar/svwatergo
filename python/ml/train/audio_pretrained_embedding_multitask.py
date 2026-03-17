@@ -849,7 +849,7 @@ def fit_audio_pretrained_embedding_multitask(
         loss_sum = 0.0
         n_rows = 0
         for batch in train_dl:
-            if len(batch) == 4:
+            if len(batch) == 3:
                 xb, yb, zlb = batch
                 zlb = zlb.to(device)
             else:
