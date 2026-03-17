@@ -57,13 +57,13 @@ const ABBR = {
 
 const SITE_SENSOR_OVERRIDES = {
   bluerock: {
-    runflush: { dataKey: 'flushrun', abbreviation: 'flushRun', label: 'flushRun' },
+    runflush: { dataKey: 'flushrun' },
   },
   santateresa: {
-    runflush: { dataKey: 'flushrun', abbreviation: 'flushrun', label: 'flushrun' },
+    runflush: { dataKey: 'flushrun' },
   },
   pryorfarm: {
-    runflush: { dataKey: 'flushrun', abbreviation: 'flushrun', label: 'flushrun' },
+    runflush: { dataKey: 'flushrun' },
   },
 }
 
