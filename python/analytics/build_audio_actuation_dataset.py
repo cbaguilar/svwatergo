@@ -39,6 +39,8 @@ from python.analytics.build_audio_event_dataset import (
     _window_features_for_segments,
 )
 from python.ml.train.audio_pretrained_embeddings import _PannsBackend, _extract_embeddings
+from python.analytics.window_pca.model import fit_pca, transform_pca
+from python.analytics.window_pca.selection import select_pca_columns
 
 
 ACTUATORS: tuple[str, ...] = (
@@ -125,6 +127,22 @@ def parse_args() -> argparse.Namespace:
         type=_parse_bool_text,
         help="Write embedding vectors as a joined parquet alongside the npz cache (yes/no)",
     )
+    p.add_argument(
+        "--write-plc-pca",
+        nargs="?",
+        const=True,
+        default=True,
+        type=_parse_bool_text,
+        help="Fit and write PLC/window-feature PCA targets alongside the actuation dataset (yes/no)",
+    )
+    p.add_argument("--plc-pca-components", type=int, default=8)
+    p.add_argument("--plc-pca-fill-value", type=float, default=0.0)
+    p.add_argument("--plc-pca-clip-abs", type=float, default=None)
+    p.add_argument("--plc-pca-controls-weight", type=float, default=1.0)
+    p.add_argument("--plc-pca-fit-split", default="train", choices=["train", "all"])
+    p.add_argument("--plc-pca-cols", default="", help="Optional explicit PLC PCA columns")
+    p.add_argument("--plc-pca-include-regex", action="append", default=[])
+    p.add_argument("--plc-pca-exclude-regex", action="append", default=[])
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -386,6 +404,9 @@ def _write_outputs(
     missing_mels: int,
     embedding_npz: Optional[Path],
     embedding_joined: Optional[Path],
+    plc_pca_targets_path: Optional[Path],
+    plc_pca_model_path: Optional[Path],
+    plc_pca_meta_path: Optional[Path],
 ) -> None:
     out_dataset_root.mkdir(parents=True, exist_ok=True)
     samples_path = out_dataset_root / "samples.parquet"
@@ -430,6 +451,9 @@ def _write_outputs(
             "combo_stats_json": str(stats_path),
             "embedding_npz": (str(embedding_npz) if embedding_npz else None),
             "embedding_joined_parquet": (str(embedding_joined) if embedding_joined else None),
+            "plc_pca_targets_parquet": (str(plc_pca_targets_path) if plc_pca_targets_path else None),
+            "plc_pca_model_npz": (str(plc_pca_model_path) if plc_pca_model_path else None),
+            "plc_pca_model_json": (str(plc_pca_meta_path) if plc_pca_meta_path else None),
         },
         "split": {
             "seed": int(args.split_seed),
@@ -450,6 +474,12 @@ def _write_outputs(
         print(f"[ok] wrote {embedding_npz}", flush=True)
     if embedding_joined:
         print(f"[ok] wrote {embedding_joined}", flush=True)
+    if plc_pca_targets_path:
+        print(f"[ok] wrote {plc_pca_targets_path}", flush=True)
+    if plc_pca_model_path:
+        print(f"[ok] wrote {plc_pca_model_path}", flush=True)
+    if plc_pca_meta_path:
+        print(f"[ok] wrote {plc_pca_meta_path}", flush=True)
 
 
 def _write_embeddings(
@@ -492,6 +522,146 @@ def _write_embeddings(
                 joined[f"embedding_{j:04d}"] = emb[:, j].astype(np.float32)
             joined.to_parquet(emb_joined, index=False)
     return emb_npz, emb_joined
+
+
+def _json_ready_feature_ranges(feature_ranges: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for col, node in feature_ranges.items():
+        out_node: Dict[str, Any] = {}
+        for key, value in node.items():
+            if isinstance(value, np.generic):
+                out_node[str(key)] = value.item()
+            else:
+                out_node[str(key)] = value
+        out[str(col)] = out_node
+    return out
+
+
+def _fit_and_write_plc_pca(
+    *,
+    samples: pd.DataFrame,
+    out_dataset_root: Path,
+    args: argparse.Namespace,
+) -> tuple[pd.DataFrame, Optional[Path], Optional[Path], Optional[Path]]:
+    if not bool(args.write_plc_pca):
+        return samples, None, None, None
+
+    explicit_cols = [c.strip() for c in str(args.plc_pca_cols).split(",") if c.strip()] or None
+    always_exclude = [
+        "sample_id",
+        "site",
+        "audio_source",
+        "camera",
+        "day_utc",
+        "segment_path",
+        "segment_start_ts_utc",
+        "segment_end_ts_utc",
+        "mel_shard_path",
+        "mel_local_path",
+        "mel_shard_local_index",
+        "event_window_id",
+        "split_group_id",
+        "split",
+        "split_seed",
+        "actuation_combo",
+        "actuation_bits",
+        "actuation_unknown",
+        "has_mel",
+        "window_seconds",
+        "n_rows",
+    ] + [f"{a}_state" for a in ACTUATORS] + [f"{a}_duty_target" for a in ACTUATORS]
+
+    cols = select_pca_columns(
+        samples,
+        explicit_cols=explicit_cols,
+        include_regex=list(args.plc_pca_include_regex or []),
+        exclude_regex=list(args.plc_pca_exclude_regex or []),
+        always_exclude=always_exclude,
+    )
+    if not cols:
+        raise SystemExit("No PLC PCA columns selected for actuation dataset. Set --plc-pca-cols or broaden include regex.")
+
+    fit_split = str(args.plc_pca_fit_split).strip().lower()
+    if fit_split == "train" and "split" in samples.columns:
+        fit_df = samples.loc[samples["split"].astype(str).str.lower() == "train"].copy()
+    else:
+        fit_df = samples.copy()
+    if fit_df.empty:
+        raise SystemExit("No rows available to fit PLC PCA")
+
+    unknown_col = next((c for c in ("state_unknown", "state__unknown") if c in fit_df.columns), None)
+    if unknown_col is not None:
+        fit_df = fit_df[pd.to_numeric(fit_df[unknown_col], errors="coerce").fillna(0.0) < 0.5].copy()
+        if fit_df.empty:
+            raise SystemExit(f"All fit rows removed by PLC PCA unknown filter using column: {unknown_col}")
+
+    bundle = fit_pca(
+        fit_df,
+        cols,
+        n_components=int(args.plc_pca_components),
+        standardize=True,
+        fill_value=float(args.plc_pca_fill_value),
+        clip_abs=args.plc_pca_clip_abs,
+        controls_weight=float(args.plc_pca_controls_weight),
+    )
+    proj_df, Z = transform_pca(
+        samples.copy(),
+        bundle,
+        fill_value=float(args.plc_pca_fill_value),
+        clip_abs=args.plc_pca_clip_abs,
+    )
+
+    out = samples.copy()
+    for j in range(int(Z.shape[1])):
+        out[f"plc_pca{j+1}"] = Z[:, j].astype(np.float64)
+
+    pca_targets_path = out_dataset_root / "plc_window_pca_targets.parquet"
+    pca_model_path = out_dataset_root / "plc_window_pca_model.npz"
+    pca_meta_path = out_dataset_root / "plc_window_pca_model.json"
+
+    target_cols = ["sample_id", "split"] + [f"plc_pca{j+1}" for j in range(int(Z.shape[1]))]
+    target_cols = [c for c in target_cols if c in out.columns]
+    out[target_cols].to_parquet(pca_targets_path, index=False)
+
+    np.savez_compressed(
+        str(pca_model_path),
+        cols=np.asarray(bundle.cols, dtype=object),
+        scaler_mean=np.asarray(getattr(bundle.scaler, "mean_", np.zeros((len(bundle.cols),), dtype=np.float64)), dtype=np.float64),
+        scaler_scale=np.asarray(getattr(bundle.scaler, "scale_", np.ones((len(bundle.cols),), dtype=np.float64)), dtype=np.float64),
+        components=np.asarray(bundle.pca.components_, dtype=np.float64),
+        explained_variance=np.asarray(bundle.pca.explained_variance_, dtype=np.float64),
+        explained_variance_ratio=np.asarray(bundle.pca.explained_variance_ratio_, dtype=np.float64),
+        singular_values=np.asarray(getattr(bundle.pca, "singular_values_", np.asarray([], dtype=np.float64)), dtype=np.float64),
+        control_mask=np.asarray(bundle.control_mask, dtype=bool),
+        controls_weight=np.asarray([bundle.controls_weight], dtype=np.float64),
+        controls_regex=np.asarray(bundle.controls_regex, dtype=object),
+        fit_split=np.asarray([fit_split], dtype=object),
+        fill_value=np.asarray([float(args.plc_pca_fill_value)], dtype=np.float64),
+        clip_abs=np.asarray(
+            [np.nan if args.plc_pca_clip_abs is None else float(args.plc_pca_clip_abs)],
+            dtype=np.float64,
+        ),
+    )
+
+    meta = {
+        "cols": list(bundle.cols),
+        "n_cols": int(len(bundle.cols)),
+        "n_components": int(bundle.pca.n_components_),
+        "controls_weight": float(bundle.controls_weight),
+        "controls_regex": list(bundle.controls_regex),
+        "fit_split": fit_split,
+        "fill_value": float(args.plc_pca_fill_value),
+        "clip_abs": (None if args.plc_pca_clip_abs is None else float(args.plc_pca_clip_abs)),
+        "explained_variance_ratio": [float(x) for x in np.asarray(bundle.pca.explained_variance_ratio_, dtype=np.float64).tolist()],
+        "feature_ranges": _json_ready_feature_ranges(bundle.feature_ranges),
+        "target_parquet": str(pca_targets_path),
+        "model_npz": str(pca_model_path),
+    }
+    pca_meta_path.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"[ok] wrote {pca_targets_path}", flush=True)
+    print(f"[ok] wrote {pca_model_path}", flush=True)
+    print(f"[ok] wrote {pca_meta_path}", flush=True)
+    return out, pca_targets_path, pca_model_path, pca_meta_path
 
 
 def main() -> None:
@@ -700,6 +870,11 @@ def main() -> None:
         val_ratio=float(args.val_ratio),
     )
 
+    samples, plc_pca_targets_path, plc_pca_model_path, plc_pca_meta_path = _fit_and_write_plc_pca(
+        samples=samples,
+        out_dataset_root=out_dataset_root,
+        args=args,
+    )
     embedding_npz, embedding_joined = _write_embeddings(samples=samples, out_dataset_root=out_dataset_root, args=args)
     _write_outputs(
         samples=samples,
@@ -709,6 +884,9 @@ def main() -> None:
         missing_mels=missing_mels,
         embedding_npz=embedding_npz,
         embedding_joined=embedding_joined,
+        plc_pca_targets_path=plc_pca_targets_path,
+        plc_pca_model_path=plc_pca_model_path,
+        plc_pca_meta_path=plc_pca_meta_path,
     )
 
 
