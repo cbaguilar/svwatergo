@@ -13,13 +13,14 @@ def main() -> int:
         description="Train on frozen PANN embeddings: multiclass, multilabel, or PLC-PCA encoder mode"
     )
     p.add_argument("--dataset", nargs="+", required=True, help="Labeled dataset parquet path(s)")
-    p.add_argument("--split-manifest", default="", help="Optional split manifest parquet path")
+    p.add_argument("--split-manifest", nargs="+", default=None, help="Optional split manifest parquet path(s)")
     p.add_argument("--split-col", default="split")
     p.add_argument("--dataset-id-col", default="sample_id")
     p.add_argument("--split-id-col", default="sample_id")
     p.add_argument("--audio-path-col", default="segment_path")
-    p.add_argument("--embeddings-npz", default="", help="Optional precomputed embeddings npz aligned to dataset rows")
+    p.add_argument("--embeddings-npz", nargs="+", default=None, help="Optional precomputed embeddings npz aligned to dataset rows")
     p.add_argument("--embeddings-key", default="embeddings")
+    p.add_argument("--init-model", default="", help="Optional multitask checkpoint to load before training; use with --epochs 0 for eval-only")
     p.add_argument("--source-filter-col", default="audio_source")
     p.add_argument("--source-filter-values", default="", help="Optional comma-separated source values to keep")
     p.add_argument("--drop-state-unknown", default="yes", choices=["yes", "no"])
@@ -69,8 +70,14 @@ def main() -> int:
     args = p.parse_args()
 
     dfs = [pd.read_parquet(pth) for pth in args.dataset]
+    dataset_row_counts = [int(len(df_part)) for df_part in dfs]
     df = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
-    split_manifest_df = pd.read_parquet(args.split_manifest) if str(args.split_manifest).strip() else None
+    split_manifest_paths = [str(pth).strip() for pth in (args.split_manifest or []) if str(pth).strip()]
+    split_manifest_df = (
+        pd.concat([pd.read_parquet(pth) for pth in split_manifest_paths], axis=0, ignore_index=True, sort=False)
+        if split_manifest_paths
+        else None
+    )
 
     res = fit_audio_pretrained_embedding_multitask(
         df,
@@ -85,8 +92,10 @@ def main() -> int:
         dataset_id_col=str(args.dataset_id_col),
         split_manifest_id_col=str(args.split_id_col),
         audio_path_col=str(args.audio_path_col),
-        embeddings_npz=(Path(args.embeddings_npz) if str(args.embeddings_npz).strip() else None),
+        embeddings_npz=([Path(pth) for pth in (args.embeddings_npz or [])] or None),
+        dataset_row_counts=dataset_row_counts,
         embeddings_key=str(args.embeddings_key),
+        init_model_path=(Path(args.init_model) if str(args.init_model).strip() else None),
         source_filter_col=str(args.source_filter_col),
         source_filter_values=[c.strip() for c in str(args.source_filter_values).split(",") if c.strip()],
         drop_state_unknown=(str(args.drop_state_unknown) == "yes"),

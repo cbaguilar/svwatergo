@@ -27,6 +27,81 @@ class AudioPretrainedEmbeddingMultitaskResult:
     model_path: Path
 
 
+class AudioPretrainedEmbeddingMultitaskModelFactory:
+    @staticmethod
+    def build(*, in_dim: int, hidden: Sequence[int], z_dim: int, y_dim: int, plc_dim: int, drop: float):
+        import torch.nn as nn  # type: ignore
+
+        class _Model(nn.Module):
+            def __init__(self, in_dim: int, hidden: List[int], z_dim: int, y_dim: int, plc_dim: int, drop: float):
+                super().__init__()
+                layers: List[nn.Module] = []
+                d = int(in_dim)
+                for h in hidden:
+                    layers.extend([nn.Linear(d, int(h)), nn.ReLU(), nn.Dropout(float(drop))])
+                    d = int(h)
+                self.encoder = nn.Sequential(*layers) if layers else nn.Identity()
+                self.z = nn.Linear(d, int(z_dim))
+                self.cls = nn.Linear(int(z_dim), int(y_dim)) if int(y_dim) > 0 else None
+                self.plc = nn.Linear(int(z_dim), int(plc_dim)) if int(plc_dim) > 0 else None
+
+            def forward(self, x):
+                h = self.encoder(x)
+                z = self.z(h)
+                y = self.cls(z) if self.cls is not None else None
+                p = self.plc(z) if self.plc is not None else None
+                return y, z, p
+
+        return _Model(int(in_dim), [int(x) for x in hidden], int(z_dim), int(y_dim), int(plc_dim), float(drop))
+
+
+def _load_precomputed_embeddings(
+    *,
+    embeddings_npz: Optional[Sequence[Path]],
+    embeddings_key: str,
+    expected_rows: int,
+    dataset_row_counts: Optional[Sequence[int]],
+) -> Optional[np.ndarray]:
+    paths = [Path(p) for p in (embeddings_npz or [])]
+    if not paths:
+        return None
+    emb_key = str(embeddings_key or "embeddings").strip() or "embeddings"
+    if len(paths) == 1:
+        z = np.load(str(paths[0]))
+        if emb_key not in z.files:
+            raise ValueError(f"Embeddings key {emb_key!r} not found in {paths[0]}. Available: {list(z.files)}")
+        X_emb = np.asarray(z[emb_key], dtype=np.float32)
+        if int(X_emb.shape[0]) != int(expected_rows):
+            raise ValueError(
+                f"embeddings_npz row mismatch: rows={int(X_emb.shape[0])} expected={int(expected_rows)}. "
+                "Use the same dataset rows as the embedding cache."
+            )
+        print(f"[embed] using precomputed npz -> {paths[0]} key={emb_key} shape={tuple(X_emb.shape)}", flush=True)
+        return X_emb
+
+    counts = [int(x) for x in (dataset_row_counts or [])]
+    if len(counts) != len(paths):
+        raise ValueError("dataset_row_counts must match embeddings_npz when multiple embedding caches are provided")
+    chunks: List[np.ndarray] = []
+    for pth, n_rows in zip(paths, counts):
+        z = np.load(str(pth))
+        if emb_key not in z.files:
+            raise ValueError(f"Embeddings key {emb_key!r} not found in {pth}. Available: {list(z.files)}")
+        chunk = np.asarray(z[emb_key], dtype=np.float32)
+        if int(chunk.shape[0]) != int(n_rows):
+            raise ValueError(
+                f"embeddings_npz row mismatch for {pth}: rows={int(chunk.shape[0])} expected={int(n_rows)}"
+            )
+        chunks.append(chunk)
+        print(f"[embed] using precomputed npz -> {pth} key={emb_key} shape={tuple(chunk.shape)}", flush=True)
+    X_emb = np.concatenate(chunks, axis=0).astype(np.float32, copy=False)
+    if int(X_emb.shape[0]) != int(expected_rows):
+        raise ValueError(
+            f"Concatenated embeddings row mismatch: rows={int(X_emb.shape[0])} expected={int(expected_rows)}"
+        )
+    return X_emb
+
+
 def _coerce_binary_targets(
     df: pd.DataFrame,
     *,
@@ -349,8 +424,10 @@ def fit_audio_pretrained_embedding_multitask(
     dataset_id_col: str = "sample_id",
     split_manifest_id_col: str = "sample_id",
     audio_path_col: str = "segment_path",
-    embeddings_npz: Optional[Path] = None,
+    embeddings_npz: Optional[Sequence[Path]] = None,
+    dataset_row_counts: Optional[Sequence[int]] = None,
     embeddings_key: str = "embeddings",
+    init_model_path: Optional[Path] = None,
     random_state: int = 42,
     target_seconds: float = 10.0,
     extract_batch_size: int = 16,
@@ -388,6 +465,9 @@ def fit_audio_pretrained_embedding_multitask(
 ) -> AudioPretrainedEmbeddingMultitaskResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     state_unknown_col_used: Optional[str] = None
+    df = df.reset_index(drop=True).copy()
+    full_input_rows = int(len(df))
+    df["__emb_row_idx__"] = np.arange(len(df), dtype=np.int64)
 
     def _resolve_state_unknown_col(columns: Sequence[Any], requested: str) -> Optional[str]:
         cols = [str(c) for c in columns]
@@ -514,6 +594,7 @@ def fit_audio_pretrained_embedding_multitask(
         Y = np.asarray(y_all[np.asarray(keep_mask.to_numpy(), dtype=bool)], dtype=np.float32)
     split2 = split_norm.loc[keep_mask].reset_index(drop=True)
     path_ser = _coerce_audio_path_column(df2, str(audio_path_col))
+    emb_row_idx = df2["__emb_row_idx__"].to_numpy(dtype=np.int64, copy=False)
 
     idx_all = np.arange(len(df2), dtype=np.int64)
     idx_train = idx_all[split2.to_numpy() == "train"]
@@ -551,20 +632,14 @@ def fit_audio_pretrained_embedding_multitask(
 
     emb_cache = out_dir / "embeddings_panns.npz"
     emb_key = str(embeddings_key or "embeddings").strip() or "embeddings"
-    if embeddings_npz is not None:
-        emb_src = Path(embeddings_npz)
-        if not emb_src.exists():
-            raise ValueError(f"embeddings_npz not found: {emb_src}")
-        z = np.load(str(emb_src))
-        if emb_key not in z.files:
-            raise ValueError(f"Embeddings key {emb_key!r} not found in {emb_src}. Available: {list(z.files)}")
-        X_emb = np.asarray(z[emb_key], dtype=np.float32)
-        if int(X_emb.shape[0]) != int(len(path_ser)):
-            raise ValueError(
-                f"embeddings_npz row mismatch: rows={int(X_emb.shape[0])} expected={int(len(path_ser))}. "
-                "Use the same filtered dataset/split manifest as the embedding cache."
-            )
-        print(f"[embed] using precomputed npz -> {emb_src} key={emb_key} shape={tuple(X_emb.shape)}", flush=True)
+    X_emb_full = _load_precomputed_embeddings(
+        embeddings_npz=embeddings_npz,
+        embeddings_key=emb_key,
+        expected_rows=full_input_rows,
+        dataset_row_counts=dataset_row_counts,
+    )
+    if X_emb_full is not None:
+        X_emb = np.asarray(X_emb_full[emb_row_idx], dtype=np.float32, copy=False)
     else:
         backend = _PannsBackend(device="cuda")
         if emb_cache.exists():
@@ -691,26 +766,6 @@ def fit_audio_pretrained_embedding_multitask(
     except Exception as e:
         raise RuntimeError("This trainer requires torch. Install: pip install torch") from e
 
-    class _Model(nn.Module):
-        def __init__(self, in_dim: int, hidden: List[int], z_dim: int, y_dim: int, plc_dim: int, drop: float):
-            super().__init__()
-            layers: List[nn.Module] = []
-            d = int(in_dim)
-            for h in hidden:
-                layers.extend([nn.Linear(d, int(h)), nn.ReLU(), nn.Dropout(float(drop))])
-                d = int(h)
-            self.encoder = nn.Sequential(*layers) if layers else nn.Identity()
-            self.z = nn.Linear(d, int(z_dim))
-            self.cls = nn.Linear(int(z_dim), int(y_dim)) if int(y_dim) > 0 else None
-            self.plc = nn.Linear(int(z_dim), int(plc_dim)) if int(plc_dim) > 0 else None
-
-        def forward(self, x):
-            h = self.encoder(x)
-            z = self.z(h)
-            y = self.cls(z) if self.cls is not None else None
-            p = self.plc(z) if self.plc is not None else None
-            return y, z, p
-
     hidden = [int(x.strip()) for x in str(encoder_hidden).split(",") if x.strip()]
     z_dim = int(latent_dim)
     if z_dim <= 0:
@@ -722,7 +777,25 @@ def fit_audio_pretrained_embedding_multitask(
         y_dim = int(Y.shape[1])
     else:
         y_dim = 0
-    model = _Model(X_emb.shape[1], hidden, z_dim, y_dim, plc_dim, float(encoder_dropout))
+    model = AudioPretrainedEmbeddingMultitaskModelFactory.build(
+        in_dim=int(X_emb.shape[1]),
+        hidden=hidden,
+        z_dim=z_dim,
+        y_dim=y_dim,
+        plc_dim=plc_dim,
+        drop=float(encoder_dropout),
+    )
+    if init_model_path is not None:
+        init_path = Path(init_model_path)
+        if not init_path.exists():
+            raise ValueError(f"init_model_path not found: {init_path}")
+        import torch  # type: ignore
+
+        obj = torch.load(str(init_path), map_location="cpu")
+        if not isinstance(obj, dict) or "state_dict" not in obj:
+            raise ValueError(f"Invalid multitask checkpoint bundle: {init_path}")
+        model.load_state_dict(obj["state_dict"], strict=True)
+        print(f"[init] loaded checkpoint -> {init_path}", flush=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
