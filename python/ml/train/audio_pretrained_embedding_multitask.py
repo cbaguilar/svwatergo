@@ -914,7 +914,7 @@ def fit_audio_pretrained_embedding_multitask(
     if metric_mode == "auto":
         if bool(aux_plc_pca) and float(aux_plc_weight) > 0.0 and float(main_w) <= 0.0:
             metric_mode = "plc_pca_r2"
-        elif mode == "multilabel":
+        elif mode in ("multilabel", "multiclass"):
             metric_mode = "macro_f1"
         else:
             metric_mode = "main_task_metric"
@@ -975,6 +975,7 @@ def fit_audio_pretrained_embedding_multitask(
             ytt, ypt, ztt, zpt = _predict(test_dl)
             if mode == "multiclass":
                 test_metric = float(np.mean(ytt == ypt)) if len(ytt) else 0.0
+                test_macro_f1 = float(f1_score(ytt, ypt, average="macro", zero_division=0)) if len(ytt) else 0.0
             elif mode == "multilabel":
                 test_metric = float(np.mean(np.all(ytt == ypt, axis=1))) if len(ytt) else 0.0
                 test_macro_f1 = float(f1_score(ytt.astype(int), ypt.astype(int), average="macro", zero_division=0)) if len(ytt) else 0.0
@@ -986,6 +987,7 @@ def fit_audio_pretrained_embedding_multitask(
                 ytv, ypv, ztv, zpv = _predict(val_dl)
                 if mode == "multiclass":
                     val_metric = float(np.mean(ytv == ypv)) if len(ytv) else 0.0
+                    val_macro_f1 = float(f1_score(ytv, ypv, average="macro", zero_division=0)) if len(ytv) else 0.0
                 elif mode == "multilabel":
                     val_metric = float(np.mean(np.all(ytv == ypv, axis=1))) if len(ytv) else 0.0
                     val_macro_f1 = float(f1_score(ytv.astype(int), ypv.astype(int), average="macro", zero_division=0)) if len(ytv) else 0.0
@@ -1835,6 +1837,7 @@ def fit_audio_pretrained_embedding_multitask(
             acc = float(np.mean(yt == yp))
             return {
                 "accuracy": acc,
+                "macro_f1": float(f1_score(yt, yp, average="macro", zero_division=0)),
                 "f1_macro": float(f1_score(yt, yp, average="macro", zero_division=0)),
                 "precision_macro": float(precision_score(yt, yp, average="macro", zero_division=0)),
                 "recall_macro": float(recall_score(yt, yp, average="macro", zero_division=0)),
