@@ -23,12 +23,12 @@ ACTUATORS = (
 )
 
 ACTUATOR_ABBREV = {
-    "ropumprun": "RO",
+    "ropumprun": "P2",
     "wellpumprun": "WP",
-    "feedpumprun": "FP",
-    "deliveryrun": "DL",
+    "feedpumprun": "P1",
+    "deliveryrun": "P3",
     "inletrun": "IN",
-    "flushrun": "FL",
+    "flushrun": "AV2",
     "concbypassrun": "CB",
     "proddiversionrun": "PD",
 }
