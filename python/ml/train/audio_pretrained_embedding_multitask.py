@@ -598,6 +598,8 @@ def fit_audio_pretrained_embedding_multitask(
             np.savez_compressed(str(emb_cache), embeddings=X_emb)
             print(f"[embed] saved cache -> {emb_cache} shape={tuple(X_emb.shape)}", flush=True)
 
+    # Visualization-only PCA of the frozen input embeddings. This is no longer
+    # used as a supervised target for the learned latent.
     Z_pann, pann_meta = _fit_pca_targets(
         X_emb,
         idx_train,
@@ -727,31 +729,28 @@ def fit_audio_pretrained_embedding_multitask(
         Yt = torch.from_numpy(np.asarray(Y, dtype=np.int64))
     else:
         Yt = torch.from_numpy(np.asarray(Y, dtype=np.float32))
-    Zpann_t = torch.from_numpy(np.asarray(Z_pann, dtype=np.float32))
     if Z_plc is not None:
         Zplc_t = torch.from_numpy(np.asarray(Z_plc, dtype=np.float32))
-        ds_train = TensorDataset(Xt[idx_train], Yt[idx_train], Zpann_t[idx_train], Zplc_t[idx_train])
-        ds_test = TensorDataset(Xt[idx_test], Yt[idx_test], Zpann_t[idx_test], Zplc_t[idx_test])
+        ds_train = TensorDataset(Xt[idx_train], Yt[idx_train], Zplc_t[idx_train])
+        ds_test = TensorDataset(Xt[idx_test], Yt[idx_test], Zplc_t[idx_test])
         ds_val = (
-            TensorDataset(Xt[idx_val], Yt[idx_val], Zpann_t[idx_val], Zplc_t[idx_val])
+            TensorDataset(Xt[idx_val], Yt[idx_val], Zplc_t[idx_val])
             if len(idx_val)
             else TensorDataset(
                 torch.zeros((0, Xt.shape[1])),
                 torch.zeros((0,), dtype=Yt.dtype) if mode == "multiclass" else torch.zeros((0, Y.shape[1]), dtype=Yt.dtype),
-                torch.zeros((0, Zpann_t.shape[1])),
                 torch.zeros((0, Zplc_t.shape[1])),
             )
         )
     else:
-        ds_train = TensorDataset(Xt[idx_train], Yt[idx_train], Zpann_t[idx_train])
-        ds_test = TensorDataset(Xt[idx_test], Yt[idx_test], Zpann_t[idx_test])
+        ds_train = TensorDataset(Xt[idx_train], Yt[idx_train])
+        ds_test = TensorDataset(Xt[idx_test], Yt[idx_test])
         ds_val = (
-            TensorDataset(Xt[idx_val], Yt[idx_val], Zpann_t[idx_val])
+            TensorDataset(Xt[idx_val], Yt[idx_val])
             if len(idx_val)
             else TensorDataset(
                 torch.zeros((0, Xt.shape[1])),
                 torch.zeros((0,), dtype=Yt.dtype) if mode == "multiclass" else torch.zeros((0, Y.shape[1]), dtype=Yt.dtype),
-                torch.zeros((0, Zpann_t.shape[1])),
             )
         )
     train_dl = DataLoader(ds_train, batch_size=int(batch_size), shuffle=True)
@@ -778,11 +777,11 @@ def fit_audio_pretrained_embedding_multitask(
         plc_true, plc_pred = [], []
         with torch.no_grad():
             for batch in dl:
-                if len(batch) == 4:
-                    xb, yb, _zb, zlb = batch
+                if len(batch) == 3:
+                    xb, yb, zlb = batch
                     zlb = zlb.to(device)
                 else:
-                    xb, yb, _zb = batch
+                    xb, yb = batch
                     zlb = None
                 xb = xb.to(device)
                 logits, _z, _p = model(xb)
@@ -840,14 +839,13 @@ def fit_audio_pretrained_embedding_multitask(
         n_rows = 0
         for batch in train_dl:
             if len(batch) == 4:
-                xb, yb, zpb, zlb = batch
+                xb, yb, zlb = batch
                 zlb = zlb.to(device)
             else:
-                xb, yb, zpb = batch
+                xb, yb = batch
                 zlb = None
             xb = xb.to(device)
             yb = yb.to(device)
-            zpb = zpb.to(device)
             optim.zero_grad(set_to_none=True)
             logits, zhat, plc_pred = model(xb)
             if mode == "multiclass":
@@ -856,7 +854,6 @@ def fit_audio_pretrained_embedding_multitask(
                 l_cls = bce(logits, yb)
             else:
                 l_cls = torch.tensor(0.0, device=device)
-            l_pann = huber(zhat, zpb)
             if zlb is not None and plc_pred is not None:
                 l_plc = huber(plc_pred, zlb)
                 l_con = _paired_contrastive_loss(plc_pred, zlb, temperature=plc_con_temp)
@@ -865,7 +862,6 @@ def fit_audio_pretrained_embedding_multitask(
                 l_con = torch.tensor(0.0, device=device)
             loss = (
                 main_w * l_cls
-                + float(pann_pca_weight) * l_pann
                 + float(aux_plc_weight) * l_plc
                 + plc_con_w * l_con
             )
@@ -986,7 +982,7 @@ def fit_audio_pretrained_embedding_multitask(
             )
 
     ytr_t, ytr_p, _ztr_t, _ztr_p = _predict(
-        DataLoader(TensorDataset(Xt[idx_train], Yt[idx_train], Zpann_t[idx_train]), batch_size=int(batch_size))
+        DataLoader(TensorDataset(Xt[idx_train], Yt[idx_train]), batch_size=int(batch_size))
     )
     yte_t, yte_p, _zte_t, _zte_p = _predict(test_dl)
     if len(idx_val):
@@ -1874,7 +1870,7 @@ def fit_audio_pretrained_embedding_multitask(
             "target_col": (str(target_col) if mode == "multiclass" else None),
             "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
-            "pann_pca_weight": float(pann_pca_weight),
+            "pann_pca_weight": 0.0,
             "aux_plc_weight": float(aux_plc_weight),
             "plc_contrastive_weight": float(plc_con_w),
             "plc_contrastive_temperature": float(plc_con_temp),
@@ -1897,7 +1893,7 @@ def fit_audio_pretrained_embedding_multitask(
                 "target_col": (str(target_col) if mode == "multiclass" else None),
                 "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
                 "main_task_weight": float(main_w),
-                "pann_pca_weight": float(pann_pca_weight),
+                "pann_pca_weight": 0.0,
                 "aux_plc_weight": float(aux_plc_weight),
                 "plc_contrastive_weight": float(plc_con_w),
                 "plc_contrastive_temperature": float(plc_con_temp),
@@ -1915,14 +1911,13 @@ def fit_audio_pretrained_embedding_multitask(
         "n_train": int(len(idx_train)),
         "n_test": int(len(idx_test)),
         "n_val": int(len(idx_val)),
-        "pann_pca": {
+        "embedding_pca_visualization": {
             "n_components": int(pann_meta["n_components"]),
             "variance_ratio_captured": float(pann_meta["variance_ratio_captured"]),
-            "weight": float(pann_pca_weight),
+            "supervised_target": False,
         },
         "aux_plc_pca": plc_meta,
         "pca_alignment_metrics": {
-            "pann_pca": _r2_payload(Z_pann, Z_pann_pred),
             "plc_pca": plc_alignment,
         },
         "plc_alignment_metrics": {
