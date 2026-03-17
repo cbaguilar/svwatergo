@@ -236,9 +236,9 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
     fig, ax = plt.subplots(figsize=(10.5, 4.2), dpi=150, constrained_layout=True)
     colors = plot_df["partition_has_rows"].map({True: "#1f77b4", False: "#d62728"}).fillna("#1f77b4")
     ax.bar(plot_df["day_dt"], plot_df["lost_minutes"], width=0.9, color=colors)
-    ax.set_title("Site A Daily Lost Minutes")
-    ax.set_xlabel("DAY")
-    ax.set_ylabel("LOST MINUTES")
+    ax.set_title("Impact of Compressed Retries on Site A Data Loss")
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Total Data Loss, Minutes")
     ax.grid(axis="y", alpha=0.25)
     ax.set_axisbelow(True)
 
@@ -262,7 +262,7 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
     ax.annotate(
         "Added message retries\nwith zip compression",
         xy=(ann1_day, ann1_y),
-        xytext=(pd.Timestamp("2024-03-18", tz="UTC"), max(text_top * 0.78, ann1_y + 140.0)),
+        xytext=(pd.Timestamp("2024-03-16", tz="UTC"), max(text_top * 0.78, ann1_y + 140.0)),
         textcoords="data",
         arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
         ha="left",
