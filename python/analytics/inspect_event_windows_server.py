@@ -32,6 +32,7 @@ except Exception:
     wavfile = None
 
 
+DEFAULT_DATA_ROOT = "/mnt/d/datasets/svwatergo"
 DEFAULT_SAMPLES = (
     "/mnt/d/datasets/svwatergo/derived/"
     "dataset=audio_event_dataset/site=bluerock/window_s=10/samples.parquet"
@@ -40,7 +41,7 @@ DEFAULT_SAMPLES_GLOB = (
     "/mnt/d/datasets/svwatergo/derived/"
     "dataset=audio_event_dataset/site=*/window_s=10/samples.parquet"
 )
-DEFAULT_MODELS_DIR = "/mnt/d/datasets/svwatergo/derived/checkpoints"
+DEFAULT_MODELS_DIR = DEFAULT_DATA_ROOT
 PARQUET_PRESETS = [
     (
         "Bluerock Camera 5 PCA",
@@ -59,6 +60,14 @@ PARQUET_PRESETS = [
         "/mnt/d/datasets/svwatergo/derived_wyze_santateresa/plots/santateresa_actuation_embedding_pca.parquet",
     ),
 ]
+
+
+def _dataset_super_root(path: Path) -> Optional[Path]:
+    parts = list(path.resolve().parts)
+    for i, part in enumerate(parts):
+        if part == "svwatergo":
+            return Path(*parts[: i + 1])
+    return None
 
 
 def _ensure_repo_on_syspath() -> None:
