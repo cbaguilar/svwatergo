@@ -461,6 +461,13 @@ def _plot_categorical_column(
     plt.close(fig)
 
 
+def _default_extra_categorical_col(df: pd.DataFrame) -> str:
+    for col in ("state__mode_tw", "state__mode", "state_mode", "state", "mode"):
+        if col in df.columns:
+            return str(col)
+    return ""
+
+
 def main() -> int:
     args = _parse_args()
     inp = Path(args.input_parquet)
@@ -531,7 +538,7 @@ def main() -> int:
         if out_path.exists():
             print(f"[ok] wrote {out_path}", flush=True)
 
-    extra_categorical_col = str(args.extra_categorical_col).strip()
+    extra_categorical_col = str(args.extra_categorical_col).strip() or _default_extra_categorical_col(work)
     if extra_categorical_col:
         extra_outname = str(args.extra_categorical_outname).strip() or f"{extra_categorical_col}.png"
         out_path = out_dir / extra_outname
