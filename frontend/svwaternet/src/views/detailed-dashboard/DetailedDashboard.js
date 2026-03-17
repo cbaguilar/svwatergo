@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import {
   CBadge,
   CButton,
+  CButtonGroup,
   CCard,
   CCardBody,
   CCardHeader,
@@ -17,6 +18,7 @@ import PryorFarmsSchematic from '../../components/detailed/schematics/PryorFarms
 import { fetchStateRange } from '../../api/state'
 import { subscribeLatestState } from '../../api/stateStream'
 import { bitTables, decodeBitfield } from '../../utils/bitfields'
+import { Key } from '../../components/detailed'
 import { useHeaderContent } from '../../components/header/HeaderContentContext'
 import PlaybackTimePicker from './PlaybackTimePicker'
 
@@ -374,6 +376,7 @@ const DetailedDashboard = () => {
   })
   const [selectedMetricKeys, setSelectedMetricKeys] = useState([DEFAULT_METRIC_KEY])
   const [isTrendExpanded, setIsTrendExpanded] = useState(false)
+  const [detailSidePanelMode, setDetailSidePanelMode] = useState('status')
   const [urlStateReady, setURLStateReady] = useState(false)
   const [dragSelect, setDragSelect] = useState(null)
   const chartRef = useRef(null)
@@ -1172,90 +1175,118 @@ const DetailedDashboard = () => {
         </CCol>
         <CCol lg={4}>
           <CCard>
-            <CCardHeader>Sensor Status</CCardHeader>
-            <CCardBody className="sensor-status-card-body">
-              <div className="small text-body-secondary mb-2">Operational Snapshot</div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('state')}
-              >
-                <span>System State</span>
-                {roStatusBadge()}
-              </div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-3"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('lockout')}
-              >
-                <span>Backwash Lockout</span>
-                {boolBadge(data.lockout, 'Active', 'Inactive')}
-              </div>
-              <hr className="my-2" />
-              <div className="small text-body-secondary mb-2">Key Sensors</div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('wellpumprun')}
-              >
-                <span>Well Pump</span>
-                {boolBadge(data.wellpumprun)}
-              </div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('feedpumprun')}
-              >
-                <span>P1 Feed Pump</span>
-                {boolBadge(data.feedpumprun)}
-              </div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('inletrun')}
-              >
-                <span>AV1 Inlet Valve</span>
-                {valveOpenBadge(data.inletrun)}
-              </div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('ropumprun')}
-              >
-                <span>P2 RO Pump</span>
-                {boolBadge(data.ropumprun)}
-              </div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('proddiversionrun')}
-              >
-                <span>AV6 Product Diversion Valve</span>
-                {av6ModeBadge(data.proddiversionrun)}
-              </div>
-              <div
-                className="d-flex justify-content-between align-items-center mb-2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => selectTrendMetric('deliveryrun')}
-              >
-                <span>P3 Delivery Pump</span>
-                {boolBadge(data.deliveryrun)}
-              </div>
-              <hr className="my-2" />
-              <div className="small text-body-secondary mb-2">Alarm and Warning Registers</div>
-              {data.alarm && (
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <span>Alarm</span>
-                  {boolBadge(data.alarm, 'Active', 'Clear')}
+            <CCardHeader className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+              <span>{detailSidePanelMode === 'status' ? 'Sensor Status' : 'Component Key'}</span>
+              <CButtonGroup size="sm" aria-label="Detailed dashboard side panel">
+                <CButton
+                  color={detailSidePanelMode === 'status' ? 'primary' : 'secondary'}
+                  variant={detailSidePanelMode === 'status' ? undefined : 'outline'}
+                  onClick={() => setDetailSidePanelMode('status')}
+                >
+                  Status
+                </CButton>
+                <CButton
+                  color={detailSidePanelMode === 'key' ? 'primary' : 'secondary'}
+                  variant={detailSidePanelMode === 'key' ? undefined : 'outline'}
+                  onClick={() => setDetailSidePanelMode('key')}
+                >
+                  Key
+                </CButton>
+              </CButtonGroup>
+            </CCardHeader>
+            <CCardBody className="sensor-status-card-body sensor-status-panel-body">
+              {detailSidePanelMode === 'key' ? (
+                <div className="schematic-key-panel">
+                  <svg width="100%" height="100%" viewBox="0 0 210 680" role="img" aria-label="Detailed schematic key">
+                    <Key />
+                  </svg>
                 </div>
+              ) : (
+                <>
+                  <div className="small text-body-secondary mb-2">Operational Snapshot</div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-2"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('state')}
+                  >
+                    <span>System State</span>
+                    {roStatusBadge()}
+                  </div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-3"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('lockout')}
+                  >
+                    <span>Backwash Lockout</span>
+                    {boolBadge(data.lockout, 'Active', 'Inactive')}
+                  </div>
+                  <hr className="my-2" />
+                  <div className="small text-body-secondary mb-2">Key Sensors</div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-2"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('wellpumprun')}
+                  >
+                    <span>Well Pump</span>
+                    {boolBadge(data.wellpumprun)}
+                  </div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-2"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('feedpumprun')}
+                  >
+                    <span>P1 Feed Pump</span>
+                    {boolBadge(data.feedpumprun)}
+                  </div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-2"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('inletrun')}
+                  >
+                    <span>AV1 Inlet Valve</span>
+                    {valveOpenBadge(data.inletrun)}
+                  </div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-2"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('ropumprun')}
+                  >
+                    <span>P2 RO Pump</span>
+                    {boolBadge(data.ropumprun)}
+                  </div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-2"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('proddiversionrun')}
+                  >
+                    <span>AV6 Product Diversion Valve</span>
+                    {av6ModeBadge(data.proddiversionrun)}
+                  </div>
+                  <div
+                    className="d-flex justify-content-between align-items-center mb-2"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => selectTrendMetric('deliveryrun')}
+                  >
+                    <span>P3 Delivery Pump</span>
+                    {boolBadge(data.deliveryrun)}
+                  </div>
+                  <hr className="my-2" />
+                  <div className="small text-body-secondary mb-2">Alarm and Warning Registers</div>
+                  {data.alarm && (
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <span>Alarm</span>
+                      {boolBadge(data.alarm, 'Active', 'Clear')}
+                    </div>
+                  )}
+                  <div className="small text-body-secondary mt-2 mb-1">Active Warnings</div>
+                  <ul className="mb-0 ps-3 small">
+                    {activeWarningItems.length === 0 && <li>No active alarm/warning bits.</li>}
+                    {activeWarningItems.map((entry) => (
+                      <li key={entry}>{entry}</li>
+                    ))}
+                  </ul>
+                </>
               )}
-              <div className="small text-body-secondary mt-2 mb-1">Active Warnings</div>
-              <ul className="mb-0 ps-3 small">
-                {activeWarningItems.length === 0 && <li>No active alarm/warning bits.</li>}
-                {activeWarningItems.map((entry) => (
-                  <li key={entry}>{entry}</li>
-                ))}
-              </ul>
             </CCardBody>
           </CCard>
         </CCol>

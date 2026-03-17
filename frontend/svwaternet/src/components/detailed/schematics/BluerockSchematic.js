@@ -369,7 +369,7 @@ function ROSystem({ md }) {
                 sensorKey="residualtanklevel" md={md}
             />
             <SensorIndicator
-                WaterScope x="307" y="525.5" line="right" innerText='400' outerText='12345' textDir='left' />
+                WaterScope x="307" y="525.5" line="right" innerText='400' textDir='left' />
             <Drain x="312" y="717.5" text="To Septic Tank" textDir="down" />
             <SensorIndicator WaterScope x="492" y="707.5" line="up" innerText='200' textDir='left' outerText='123456' />
             <SensorIndicator

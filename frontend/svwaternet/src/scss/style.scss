@@ -207,8 +207,24 @@ body {
   font-size: 0.92rem;
 }
 
+.sensor-status-panel-body {
+  min-height: 420px;
+}
+
 .sensor-status-card-body .small {
   font-size: 0.8rem !important;
+}
+
+.schematic-key-panel {
+  height: 420px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.schematic-key-panel svg {
+  display: block;
+  width: 100%;
+  min-height: 640px;
 }
 
 @include color-mode(dark) {
