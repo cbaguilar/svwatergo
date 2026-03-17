@@ -12,6 +12,28 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+ACTUATORS = (
+    "ropumprun",
+    "wellpumprun",
+    "feedpumprun",
+    "deliveryrun",
+    "inletrun",
+    "flushrun",
+    "concbypassrun",
+    "proddiversionrun",
+)
+
+ACTUATOR_ABBREV = {
+    "ropumprun": "P2",
+    "wellpumprun": "WP",
+    "feedpumprun": "P1",
+    "deliveryrun": "P3",
+    "inletrun": "IN",
+    "flushrun": "AV2",
+    "concbypassrun": "CB",
+    "proddiversionrun": "PD",
+}
+
 
 def _infer_site_name(path: Path) -> str:
     text = str(path)
@@ -43,6 +65,14 @@ def _resolve_source_col(df: pd.DataFrame, requested: str) -> str:
         if cand and cand in df.columns:
             return cand
     raise ValueError(f"Unable to resolve source column from candidates: {candidates}")
+
+
+def _available_actuators(df: pd.DataFrame, requested: Sequence[str]) -> List[str]:
+    out: List[str] = []
+    for actuator in requested:
+        if f"{actuator}_state" in df.columns or f"{actuator}_duty_target" in df.columns:
+            out.append(str(actuator))
+    return out
 
 
 def _load_and_tag_samples(paths: Sequence[str], site_names: Sequence[str]) -> pd.DataFrame:
@@ -87,11 +117,35 @@ def _iter_shard_groups(df: pd.DataFrame) -> Iterable[Tuple[str, pd.DataFrame]]:
         yield str(shard_path), g
 
 
+def _binary_actuator_labels(df: pd.DataFrame, actuators: Sequence[str]) -> pd.DataFrame:
+    out = df.copy()
+    active_masks: List[np.ndarray] = []
+    for actuator in actuators:
+        state_col = f"{actuator}_state"
+        duty_col = f"{actuator}_duty_target"
+        if state_col in out.columns:
+            active = out[state_col].astype("string").fillna("unknown").eq("on").to_numpy()
+        elif duty_col in out.columns:
+            active = pd.to_numeric(out[duty_col], errors="coerce").fillna(0.0).to_numpy(dtype=float) >= 0.5
+        else:
+            active = np.zeros(len(out), dtype=bool)
+        out[f"__group__{actuator}"] = active
+        active_masks.append(np.asarray(active, dtype=bool))
+    if active_masks:
+        all_off = ~np.logical_or.reduce(active_masks)
+    else:
+        all_off = np.ones(len(out), dtype=bool)
+    out["__group__all_off"] = all_off
+    return out
+
+
 def _accumulate_group_means(
     df: pd.DataFrame,
     *,
     combo_col: str,
     source_col: str,
+    group_mode: str,
+    actuators: Sequence[str],
 ) -> Tuple[Dict[Tuple[str, str, str], np.ndarray], Dict[Tuple[str, str, str], int], Tuple[int, int]]:
     required = {"mel_shard_path", "mel_shard_local_index", combo_col, source_col, "site"}
     missing = [c for c in required if c not in df.columns]
@@ -101,6 +155,8 @@ def _accumulate_group_means(
     df2["mel_shard_local_index"] = pd.to_numeric(df2["mel_shard_local_index"], errors="coerce")
     df2 = df2[df2["mel_shard_local_index"].notna()].copy()
     df2["mel_shard_local_index"] = df2["mel_shard_local_index"].astype(int)
+    if group_mode == "binary_actuator":
+        df2 = _binary_actuator_labels(df2, actuators)
 
     sums: Dict[Tuple[str, str, str], np.ndarray] = {}
     counts: Dict[Tuple[str, str, str], int] = defaultdict(int)
@@ -117,20 +173,29 @@ def _accumulate_group_means(
         idx = g["mel_shard_local_index"].to_numpy(dtype=int)
         subset = mel[idx]
         for row_i, row in enumerate(g.itertuples(index=False)):
-            combo = str(getattr(row, combo_col))
             source = str(getattr(row, source_col))
             site = str(getattr(row, "site"))
-            keys = [
-                ("source", f"{site} | {source}", combo),
-                ("site", site, combo),
-                ("global", "All Sites", combo),
-            ]
+            if group_mode == "binary_actuator":
+                labels: List[str] = []
+                for actuator in actuators:
+                    if bool(getattr(row, f"__group__{actuator}")):
+                        labels.append(f"{ACTUATOR_ABBREV.get(actuator, actuator)} ON")
+                if bool(getattr(row, "__group__all_off")):
+                    labels.append("All Off")
+            else:
+                labels = [str(getattr(row, combo_col))]
             sample = subset[row_i].astype(np.float64, copy=False)
-            for k in keys:
-                if k not in sums:
-                    sums[k] = np.zeros_like(sample, dtype=np.float64)
-                sums[k] += sample
-                counts[k] += 1
+            for label in labels:
+                keys = [
+                    ("source", f"{site} | {source}", label),
+                    ("site", site, label),
+                    ("global", "All Sites", label),
+                ]
+                for k in keys:
+                    if k not in sums:
+                        sums[k] = np.zeros_like(sample, dtype=np.float64)
+                    sums[k] += sample
+                    counts[k] += 1
 
     if mel_shape is None:
         raise ValueError("No mel shards loaded from selected rows")
@@ -183,6 +248,8 @@ def main() -> int:
     p.add_argument("--site-names", default="", help="Optional comma-separated site names matching --samples-parquet order")
     p.add_argument("--combo-col", default="actuation_combo")
     p.add_argument("--source-col", default="audio_source")
+    p.add_argument("--group-mode", default="combo", choices=["combo", "binary_actuator"])
+    p.add_argument("--actuators", default="ropumprun,wellpumprun,feedpumprun,deliveryrun,inletrun,flushrun,concbypassrun,proddiversionrun")
     p.add_argument("--top-k", type=int, default=8, help="Top combos per scope to render")
     p.add_argument("--min-samples", type=int, default=1)
     p.add_argument("--cmap", default="magma")
@@ -194,8 +261,16 @@ def main() -> int:
     df = _load_and_tag_samples(args.samples_parquet, site_names)
     combo_col = _resolve_combo_col(df, args.combo_col)
     source_col = _resolve_source_col(df, args.source_col)
+    actuators = _available_actuators(df, _parse_csv(args.actuators))
+    group_mode = str(args.group_mode)
 
-    sums, counts, _mel_shape = _accumulate_group_means(df, combo_col=combo_col, source_col=source_col)
+    sums, counts, _mel_shape = _accumulate_group_means(
+        df,
+        combo_col=combo_col,
+        source_col=source_col,
+        group_mode=group_mode,
+        actuators=actuators,
+    )
     summary = _build_summary_df(counts)
     summary = summary.loc[summary["n_samples"] >= int(args.min_samples)].reset_index(drop=True)
     if len(summary) <= 0:
@@ -236,7 +311,11 @@ def main() -> int:
         out_path = out_dir / scope_type / f"{safe_scope}.png"
         _render_scope_grid(
             out_path=out_path,
-            title=f"Mean Mel by {combo_col} | {scope_type}={scope_value}",
+            title=(
+                f"Mean Mel by pooled binary actuator state | {scope_type}={scope_value}"
+                if group_mode == "binary_actuator"
+                else f"Mean Mel by {combo_col} | {scope_type}={scope_value}"
+            ),
             means=items,
             vmin=vmin,
             vmax=vmax,
@@ -247,6 +326,8 @@ def main() -> int:
         "samples_parquet": [str(x) for x in args.samples_parquet],
         "combo_col": str(combo_col),
         "source_col": str(source_col),
+        "group_mode": group_mode,
+        "actuators": actuators,
         "top_k": int(args.top_k),
         "min_samples": int(args.min_samples),
         "summary_csv": str(summary_csv),
