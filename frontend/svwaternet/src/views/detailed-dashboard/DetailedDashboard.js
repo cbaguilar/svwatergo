@@ -55,6 +55,18 @@ const ABBR = {
   permtemp: 'TT1',
 }
 
+const SITE_SENSOR_OVERRIDES = {
+  bluerock: {
+    runflush: { dataKey: 'flushrun', abbreviation: 'flushRun', label: 'flushRun' },
+  },
+  santateresa: {
+    runflush: { dataKey: 'flushrun', abbreviation: 'flushrun', label: 'flushrun' },
+  },
+  pryorfarm: {
+    runflush: { dataKey: 'flushrun', abbreviation: 'flushrun', label: 'flushrun' },
+  },
+}
+
 const SENSOR_META = {
   permeateflow: { label: 'Permeate Flow', unit: 'GPM', type: 'number' },
   feedflow: { label: 'Feed Flow', unit: 'GPM', type: 'number' },
@@ -108,6 +120,22 @@ const SITE_TO_SYSTEM = {
   bluerock: 'Bluerock',
   santateresa: 'Santa Teresa',
   pryorfarm: 'Pryor Farms',
+}
+
+function getSiteSensorOverride(siteKey, key) {
+  return SITE_SENSOR_OVERRIDES[siteKey]?.[key] || null
+}
+
+function resolveMetricDataKey(siteKey, key) {
+  return getSiteSensorOverride(siteKey, key)?.dataKey || key
+}
+
+function getMetricValue(row, siteKey, key) {
+  if (!row || !key) return undefined
+  const resolvedKey = resolveMetricDataKey(siteKey, key)
+  const resolvedValue = row?.[resolvedKey]
+  if (resolvedValue !== undefined) return resolvedValue
+  return row?.[key]
 }
 
 function toTs(row) {
@@ -249,19 +277,21 @@ function parseURLState() {
   }
 }
 
-function inferSensorType(rows, key) {
+function inferSensorType(rows, siteKey, key) {
   const configured = SENSOR_META[key]?.type
   if (configured) return configured
   for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const v = rows[i]?.[key]
+    const v = getMetricValue(rows[i], siteKey, key)
     if (typeof v === 'boolean') return 'boolean'
     if (typeof v === 'number') return 'number'
   }
   return 'number'
 }
 
-function sensorDisplayName(key) {
+function sensorDisplayName(siteKey, key) {
   if (!key) return 'Sensor'
+  const override = getSiteSensorOverride(siteKey, key)
+  if (override?.label) return override.label
   if (SENSOR_META[key]?.label) return SENSOR_META[key].label
   return key.replaceAll('_', ' ').replace(/\b\w/g, (m) => m.toUpperCase())
 }
@@ -292,12 +322,15 @@ function formatDataAgeLabel(lastDataAtMs) {
   return `${ageHour}h ago`
 }
 
-const buildLiveMd = (data = {}, onSelectSensor = () => {}, selectedKeys = []) => {
+const buildLiveMd = (data = {}, siteKey, onSelectSensor = () => {}, selectedKeys = []) => {
   const selectedSet = new Set(selectedKeys)
   return {
   get: (key, field) => {
-    const value = data?.[key]
-    if (field === 'abbreviated_name') return ABBR[key] || key?.slice(0, 3)?.toUpperCase() || ''
+    const override = getSiteSensorOverride(siteKey, key)
+    const value = getMetricValue(data, siteKey, key)
+    if (field === 'abbreviated_name') {
+      return override?.abbreviation || ABBR[key] || key?.slice(0, 3)?.toUpperCase() || ''
+    }
     if (field === 'units') return SENSOR_META[key]?.unit || ''
     if (field === 'current_value') return value
     if (field === 'is_selected') return selectedSet.has(key)
@@ -457,15 +490,15 @@ const DetailedDashboard = () => {
       return next.slice(-6)
     })
   }
-  const selectedMetricLabel = sensorDisplayName(selectedMetricKey)
+  const selectedMetricLabel = sensorDisplayName(siteKey, selectedMetricKey)
   const selectTrendMetric = (key) => {
     if (!key) return
     setSelectedMetricKeys([key])
   }
 
   const md = useMemo(
-    () => buildLiveMd(data, handleSelectSensor, selectedMetricKeys),
-    [data, selectedMetricKeys],
+    () => buildLiveMd(data, siteKey, handleSelectSensor, selectedMetricKeys),
+    [data, siteKey, selectedMetricKeys],
   )
 
   useEffect(() => {
@@ -621,7 +654,9 @@ const DetailedDashboard = () => {
     if (stateCode === 1) return <CBadge color="danger">EStop Pressed!</CBadge>
     if (stateCode === 2) return <CBadge color="success">RO Running</CBadge>
     if (stateCode === 3) return <CBadge color="warning">RO Standby</CBadge>
-    if (stateCode === 5 || stateCode === 8) return <CBadge color="info">Flushing</CBadge>
+    if (stateCode === 4) return <CBadge color="info">Feed Flush</CBadge>
+    if (stateCode === 5) return <CBadge color="info">Permeate Flush</CBadge>
+    if (stateCode === 8) return <CBadge color="info">Flushing</CBadge>
     return <CBadge color="secondary">Unknown</CBadge>
   }
 
@@ -674,24 +709,24 @@ const DetailedDashboard = () => {
   const hoverIndex = hoverPointIndex >= 0 && hoverPointIndex < chartPoints.length ? hoverPointIndex : -1
   const hoveredPoint = hoverIndex >= 0 ? chartPoints[hoverIndex] : null
   const hoveredRowIndex = hoverIndex >= 0 ? chartPointToRowIndex.get(hoverIndex) : null
-  const hasBooleanMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) === 'boolean')
-  const hasNumericMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, key) !== 'boolean')
+  const hasBooleanMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, siteKey, key) === 'boolean')
+  const hasNumericMetric = activeMetricKeys.some((key) => inferSensorType(timelineRows, siteKey, key) !== 'boolean')
 
   const chartData = {
     datasets: activeMetricKeys.map((metricKey, datasetIdx) => {
-      const metricType = inferSensorType(timelineRows, metricKey)
+      const metricType = inferSensorType(timelineRows, siteKey, metricKey)
       const unit = SENSOR_META[metricKey]?.unit || ''
       const label =
         metricType === 'boolean'
-          ? `${sensorDisplayName(metricKey)} (On/Off)`
-          : `${sensorDisplayName(metricKey)}${unit ? ` (${unit})` : ''}`
+          ? `${sensorDisplayName(siteKey, metricKey)} (On/Off)`
+          : `${sensorDisplayName(siteKey, metricKey)}${unit ? ` (${unit})` : ''}`
       const lineColor = metricPalette[datasetIdx % metricPalette.length]
       const fillColor = metricType === 'boolean' ? 'rgba(34,197,94,0.22)' : 'rgba(14,165,233,0.10)'
       return {
         metricKey,
         label,
         data: chartPoints.map((p) => {
-          const raw = p.row?.[metricKey]
+          const raw = getMetricValue(p.row, siteKey, metricKey)
           return {
             x: p.ts,
             y: metricType === 'boolean' ? (raw ? 1 : 0) : Number(raw ?? 0),
