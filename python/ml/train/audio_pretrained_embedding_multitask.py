@@ -1705,11 +1705,27 @@ def fit_audio_pretrained_embedding_multitask(
                 "recall_macro": float(recall_score(yt, yp, average="macro", zero_division=0)),
                 "n_rows": int(len(yt)),
             }
+        yt_bin = np.asarray(yt).astype(int)
+        yp_bin = np.asarray(yp).astype(int)
         exact = float(np.mean(np.all(yt == yp, axis=1)))
         per_target = {}
         for j, c in enumerate(y_meta["target_cols"]):
-            per_target[str(c)] = {"accuracy": float(np.mean(yt[:, j] == yp[:, j]))}
-        return {"exact_match": exact, "per_target": per_target, "n_rows": int(len(yt))}
+            ytj = yt_bin[:, j]
+            ypj = yp_bin[:, j]
+            per_target[str(c)] = {
+                "accuracy": float(np.mean(ytj == ypj)),
+                "precision": float(precision_score(ytj, ypj, zero_division=0)),
+                "recall": float(recall_score(ytj, ypj, zero_division=0)),
+                "f1": float(f1_score(ytj, ypj, zero_division=0)),
+            }
+        return {
+            "exact_match": exact,
+            "per_target": per_target,
+            "macro_precision": float(precision_score(yt_bin, yp_bin, average="macro", zero_division=0)),
+            "macro_recall": float(recall_score(yt_bin, yp_bin, average="macro", zero_division=0)),
+            "macro_f1": float(f1_score(yt_bin, yp_bin, average="macro", zero_division=0)),
+            "n_rows": int(len(yt)),
+        }
 
     by_source_test: Dict[str, Any] = {}
     if len(idx_test) > 0:
