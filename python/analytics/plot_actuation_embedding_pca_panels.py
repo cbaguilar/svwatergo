@@ -62,6 +62,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--z-col", default="pca3")
     p.add_argument("--projection", default="3d", choices=["2d", "3d"])
     p.add_argument("--combo-col", default="actuation_bits")
+    p.add_argument(
+        "--actuators",
+        default=",".join(ACTUATORS),
+        help="Comma-separated actuator subset/order for combo grid and per-actuator panels",
+    )
     p.add_argument("--combo-top-k", type=int, default=12)
     p.add_argument("--drop-unknown", default="yes", choices=["yes", "no"])
     p.add_argument("--quantile-limits", default="1,99", help="Lower,upper percentiles for shared axis limits")
@@ -108,6 +113,41 @@ def _legend_handles(labels, colors):
     ]
 
 
+def _parse_actuator_list(text: str) -> list[str]:
+    vals = [x.strip() for x in str(text).split(",") if x.strip()]
+    if not vals:
+        raise SystemExit("--actuators must include at least one actuator")
+    unknown = [x for x in vals if x not in ACTUATORS]
+    if unknown:
+        raise SystemExit(f"unknown actuator(s): {', '.join(unknown)}")
+    return vals
+
+
+def _state_to_bit(series: pd.Series) -> pd.Series:
+    state_code = {"off": "0", "transition": "1", "on": "2", "unknown": "u"}
+    ser = series.astype("string").fillna("unknown").astype(str)
+    return ser.map(state_code).fillna("u").astype("string")
+
+
+def _resolve_combo_series(df: pd.DataFrame, *, combo_col: str, actuators: list[str]) -> pd.Series:
+    if len(actuators) == len(ACTUATORS) and list(actuators) == list(ACTUATORS) and combo_col in df.columns:
+        return df[combo_col].astype("string").fillna("<NA>").astype(str)
+
+    parts: list[pd.Series] = []
+    missing: list[str] = []
+    for actuator in actuators:
+        state_col = f"{actuator}_state"
+        if state_col not in df.columns:
+            missing.append(state_col)
+            continue
+        parts.append(_state_to_bit(df[state_col]))
+    if missing:
+        raise SystemExit(f"missing state columns for requested actuator subset: {', '.join(missing)}")
+    if not parts:
+        raise SystemExit("no actuator state columns available to build combo labels")
+    return pd.concat(parts, axis=1).agg("".join, axis=1).astype("string").astype(str)
+
+
 def _top_combo_labels(df: pd.DataFrame, combo_col: str, top_k: int) -> tuple[pd.Series, list[str], pd.Series]:
     cats = df[combo_col].astype("string").fillna("<NA>").astype(str)
     if int(top_k) <= 0:
@@ -119,22 +159,22 @@ def _top_combo_labels(df: pd.DataFrame, combo_col: str, top_k: int) -> tuple[pd.
     return plot_label, top, cats
 
 
-def _combo_grid_rows(top_labels: list[str]) -> list[list[str]]:
+def _combo_grid_rows(top_labels: list[str], actuators: list[str]) -> list[list[str]]:
     rows: list[list[str]] = []
     for label in top_labels:
         bits = str(label)
         row = [bits]
-        for i, actuator in enumerate(ACTUATORS):
+        for i, actuator in enumerate(actuators):
             ch = bits[i] if i < len(bits) else "u"
             row.append(BIT_ABBREV.get(ch, str(ch)))
         rows.append(row)
     return rows
 
 
-def _draw_combo_grid(ax, *, top_labels: list[str], counts: list[int], colors: list, combo_col: str) -> None:
+def _draw_combo_grid(ax, *, top_labels: list[str], counts: list[int], colors: list, combo_col: str, actuators: list[str]) -> None:
     ax.axis("off")
-    headers = [combo_col, "n"] + [ACTUATOR_ABBREV[a] for a in ACTUATORS]
-    body_rows = _combo_grid_rows(top_labels)
+    headers = [combo_col, "n"] + [ACTUATOR_ABBREV[a] for a in actuators]
+    body_rows = _combo_grid_rows(top_labels, actuators)
     table_rows = []
     for idx, row in enumerate(body_rows):
         table_rows.append([row[0], str(int(counts[idx]))] + row[1:])
@@ -182,13 +222,17 @@ def _plot_combo_bits(
     z_col: str,
     projection: str,
     combo_col: str,
+    actuators: list[str],
     top_k: int,
     point_size: float,
     alpha: float,
     title_prefix: str,
     limits,
 ) -> None:
-    plot_label, top, cats = _top_combo_labels(df, combo_col, top_k)
+    combo_series = _resolve_combo_series(df, combo_col=combo_col, actuators=actuators)
+    work = df.copy()
+    work["_combo_plot_label"] = combo_series
+    plot_label, top, cats = _top_combo_labels(work, "_combo_plot_label", top_k)
     uniq = sorted(plot_label.unique().tolist())
     color_map = {str(label): plt.get_cmap("tab20", max(len(uniq), 1))(i) for i, label in enumerate(uniq)}
 
@@ -252,9 +296,9 @@ def _plot_combo_bits(
         color = top_colors[i]
         if projection == "3d":
             ax_plot.scatter(
-                df.loc[m, x_col],
-                df.loc[m, y_col],
-                df.loc[m, z_col],
+                work.loc[m, x_col],
+                work.loc[m, y_col],
+                work.loc[m, z_col],
                 s=float(point_size),
                 alpha=float(alpha),
                 color=color,
@@ -262,8 +306,8 @@ def _plot_combo_bits(
             )
         else:
             ax_plot.scatter(
-                df.loc[m, x_col],
-                df.loc[m, y_col],
+                work.loc[m, x_col],
+                work.loc[m, y_col],
                 s=float(point_size),
                 alpha=float(alpha),
                 color=color,
@@ -278,7 +322,7 @@ def _plot_combo_bits(
         z_label="PCA 3",
         limits=limits,
     )
-    _draw_combo_grid(ax_grid, top_labels=top, counts=counts, colors=top_colors, combo_col=combo_col)
+    _draw_combo_grid(ax_grid, top_labels=top, counts=counts, colors=top_colors, combo_col=combo_col, actuators=actuators)
     fig2.tight_layout()
     combo_grid_path = out_path.with_name(out_path.stem + "_with_grid" + out_path.suffix)
     fig2.savefig(combo_grid_path, bbox_inches="tight")
@@ -365,10 +409,11 @@ def main() -> int:
     z_col = str(args.z_col)
     projection = str(args.projection)
     combo_col = str(args.combo_col)
+    actuators = _parse_actuator_list(str(args.actuators))
     required = [x_col, y_col] + ([z_col] if projection == "3d" else [])
     if any(c not in df.columns for c in required):
         raise SystemExit(f"missing PCA columns: {', '.join(required)}")
-    if combo_col not in df.columns:
+    if combo_col not in df.columns and list(actuators) == list(ACTUATORS):
         raise SystemExit(f"missing combo column: {combo_col}")
 
     work = df.copy()
@@ -392,6 +437,7 @@ def main() -> int:
         z_col=z_col,
         projection=projection,
         combo_col=combo_col,
+        actuators=actuators,
         top_k=int(args.combo_top_k),
         point_size=float(args.point_size),
         alpha=float(args.alpha),
@@ -400,7 +446,7 @@ def main() -> int:
     )
     print(f"[ok] wrote {out_dir / 'actuation_bits_topk.png'}", flush=True)
 
-    for actuator in ACTUATORS:
+    for actuator in actuators:
         out_path = out_dir / f"{actuator}_state.png"
         _plot_one_actuator(
             work,
