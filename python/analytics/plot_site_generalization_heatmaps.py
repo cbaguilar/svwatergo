@@ -60,6 +60,12 @@ def _pivot_metric(df: pd.DataFrame, metric: str, order: Sequence[str]) -> pd.Dat
     return piv.astype(float)
 
 
+def _drop_all_na_axes(data: pd.DataFrame) -> pd.DataFrame:
+    keep_rows = ~data.isna().all(axis=1)
+    keep_cols = ~data.isna().all(axis=0)
+    return data.loc[keep_rows, keep_cols]
+
+
 def _draw_heatmap(
     ax,
     data: pd.DataFrame,
@@ -73,6 +79,7 @@ def _draw_heatmap(
 ):
     import matplotlib.pyplot as plt  # type: ignore
 
+    data = _drop_all_na_axes(data)
     arr = data.to_numpy(dtype=float)
     im = ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
     ax.set_title(title, fontsize=11)
@@ -224,7 +231,7 @@ def main() -> int:
     p.add_argument("--metrics", default=",".join(DEFAULT_METRICS))
     p.add_argument(
         "--site-label-map",
-        default="bluerock=Site A,santateresa=Site B,pryorfarm=Site C,all_sites=All Sites",
+        default="bluerock=Site A,santateresa=Site B,pryorfarm=Site C,all_sites=Pooled Train",
         help="Comma-separated raw=display label mapping",
     )
     p.add_argument("--out-dir", required=True)
@@ -239,8 +246,8 @@ def main() -> int:
     df_base = _apply_labels(pd.read_csv(baseline_csv), label_map)
     df_imp = _apply_labels(pd.read_csv(improved_csv), label_map) if improved_csv else None
     order = _ordered_domains(pd.concat([x for x in [df_base, df_imp] if x is not None], ignore_index=True), {})
-    if "All Sites" in order:
-        order = [x for x in order if x != "All Sites"] + ["All Sites"]
+    if "Pooled Train" in order:
+        order = [x for x in order if x != "Pooled Train"] + ["Pooled Train"]
 
     base_tables = {metric: _pivot_metric(df_base, metric, order) for metric in metrics}
     imp_tables = {metric: _pivot_metric(df_imp, metric, order) for metric in metrics} if df_imp is not None else None
