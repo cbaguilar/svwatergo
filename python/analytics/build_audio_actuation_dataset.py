@@ -55,6 +55,10 @@ ACTUATORS: tuple[str, ...] = (
 )
 
 
+def _parse_csv_list(text: str) -> List[str]:
+    return [x.strip() for x in str(text).split(",") if x.strip()]
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
@@ -88,6 +92,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-ratio", type=float, default=0.70)
     p.add_argument("--test-ratio", type=float, default=0.15)
     p.add_argument("--val-ratio", type=float, default=0.15)
+    p.add_argument(
+        "--split-actuators",
+        default="ropumprun,wellpumprun,feedpumprun,deliveryrun,flushrun",
+        help="Comma-separated actuator subset used for split stratification key",
+    )
+    p.add_argument(
+        "--split-min-positive-count",
+        type=int,
+        default=3,
+        help="Minimum positive row count required in val and test for each split actuator",
+    )
 
     p.add_argument("--mel-n-fft", type=int, default=1024)
     p.add_argument("--mel-win-length", type=int, default=1024)
@@ -200,6 +215,28 @@ def _build_actuation_labels(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _build_selected_actuation_key(df: pd.DataFrame, actuators: Sequence[str]) -> pd.DataFrame:
+    out = df.copy()
+    combo_parts: List[pd.Series] = []
+    bit_parts: List[pd.Series] = []
+    state_code = {"off": "0", "transition": "1", "on": "2", "unknown": "u"}
+    used: List[str] = []
+    for actuator in actuators:
+        state_col = f"{actuator}_state"
+        if state_col not in out.columns:
+            raise ValueError(f"Missing state column for split actuator: {state_col}")
+        state = out[state_col].astype("string").fillna("unknown")
+        combo_parts.append(pd.Series(f"{actuator}=", index=out.index, dtype="string") + state.astype("string"))
+        bit_parts.append(state.map(state_code).fillna("u").astype("string"))
+        used.append(str(actuator))
+    combo_df = pd.concat(combo_parts, axis=1)
+    bits_df = pd.concat(bit_parts, axis=1)
+    out["split_actuators"] = ",".join(used)
+    out["split_actuation_combo"] = combo_df.agg("|".join, axis=1).astype("string")
+    out["split_actuation_bits"] = bits_df.agg("".join, axis=1).astype("string")
+    return out
+
+
 def _attach_event_windows_for_combo(
     df: pd.DataFrame,
     *,
@@ -255,6 +292,8 @@ def _split_assign_by_combo(
     df: pd.DataFrame,
     *,
     combo_col: str,
+    split_actuators: Sequence[str],
+    min_positive_count: int,
     seed: int,
     train_ratio: float,
     test_ratio: float,
@@ -306,6 +345,30 @@ def _split_assign_by_combo(
         }
 
     group_to_split: Dict[str, str] = {}
+    positive_col_names = [f"{a}_split_positive" for a in split_actuators]
+    for actuator in split_actuators:
+        duty_col = f"{actuator}_duty_target"
+        if duty_col not in out.columns:
+            raise ValueError(f"Missing duty target for split actuator: {duty_col}")
+        out[f"{actuator}_split_positive"] = (
+            pd.to_numeric(out[duty_col], errors="coerce") >= 0.5
+        ).fillna(False)
+    group_pos = (
+        out.groupby("split_group_id", as_index=False)[positive_col_names]
+        .sum()
+    )
+    group_pos_map: Dict[str, Dict[str, int]] = {}
+    for row in group_pos.itertuples(index=False):
+        gid = str(row.split_group_id)
+        group_pos_map[gid] = {
+            actuator: int(getattr(row, f"{actuator}_split_positive"))
+            for actuator in split_actuators
+        }
+    split_positive_counts = {
+        "train": {str(a): 0 for a in split_actuators},
+        "test": {str(a): 0 for a in split_actuators},
+        "val": {str(a): 0 for a in split_actuators},
+    }
 
     def _delta_error(cur_v: int, proj_v: int, target_v: int) -> float:
         cur_over = max(0, cur_v - target_v)
@@ -339,6 +402,26 @@ def _split_assign_by_combo(
         current[split] += int(n)
         combo_current_rows[combo][split] += int(n)
         combo_current_windows[combo][split] += 1
+        pos_node = group_pos_map.get(gid, {})
+        for actuator in split_actuators:
+            split_positive_counts[split][str(actuator)] += int(pos_node.get(str(actuator), 0))
+
+    def _reassign(gid: str, combo: str, n: int, new_split: str) -> None:
+        old_split = group_to_split.get(gid)
+        if old_split == new_split or old_split is None:
+            return
+        current[old_split] -= int(n)
+        combo_current_rows[combo][old_split] -= int(n)
+        combo_current_windows[combo][old_split] -= 1
+        current[new_split] += int(n)
+        combo_current_rows[combo][new_split] += int(n)
+        combo_current_windows[combo][new_split] += 1
+        pos_node = group_pos_map.get(gid, {})
+        for actuator in split_actuators:
+            val = int(pos_node.get(str(actuator), 0))
+            split_positive_counts[old_split][str(actuator)] -= val
+            split_positive_counts[new_split][str(actuator)] += val
+        group_to_split[gid] = new_split
 
     for combo in combos:
         combo_rows = grp[grp["combo"].astype(str) == combo].sort_values("_hash").reset_index(drop=True)
@@ -363,11 +446,55 @@ def _split_assign_by_combo(
         if gid not in group_to_split:
             _assign(gid, str(row.combo), int(row.n_rows), allowed=None)
 
+    min_pos = max(0, int(min_positive_count))
+    if min_pos > 0 and len(split_actuators) > 0:
+        grp_rows = {
+            str(row.split_group_id): {"combo": str(row.combo), "n_rows": int(row.n_rows)}
+            for row in grp.itertuples(index=False)
+        }
+        for target_split in ("test", "val"):
+            for actuator in split_actuators:
+                actuator = str(actuator)
+                need = min_pos - int(split_positive_counts[target_split][actuator])
+                if need <= 0:
+                    continue
+                candidate_ids: List[str] = []
+                for gid, meta in grp_rows.items():
+                    old_split = group_to_split.get(gid, "")
+                    if old_split == target_split:
+                        continue
+                    gain = int(group_pos_map.get(gid, {}).get(actuator, 0))
+                    if gain <= 0:
+                        continue
+                    if old_split in ("test", "val"):
+                        donor_after = int(split_positive_counts[old_split][actuator]) - gain
+                        if donor_after < min_pos:
+                            continue
+                    candidate_ids.append(gid)
+                candidate_ids = sorted(
+                    candidate_ids,
+                    key=lambda gid: (
+                        0 if group_to_split.get(gid) == "train" else 1,
+                        _cost(grp_rows[gid]["combo"], grp_rows[gid]["n_rows"], target_split)
+                        - _cost(grp_rows[gid]["combo"], grp_rows[gid]["n_rows"], group_to_split.get(gid, "train")),
+                        grp_rows[gid]["n_rows"],
+                        gid,
+                    ),
+                )
+                for gid in candidate_ids:
+                    if split_positive_counts[target_split][actuator] >= min_pos:
+                        break
+                    meta = grp_rows[gid]
+                    _reassign(gid, meta["combo"], meta["n_rows"], target_split)
+
     out["split"] = out["split_group_id"].map(group_to_split).astype("string")
     out["split_seed"] = int(seed)
     out["split_target_train"] = float(train_ratio)
     out["split_target_test"] = float(test_ratio)
     out["split_target_val"] = float(val_ratio)
+    out["split_min_positive_count"] = int(min_positive_count)
+    for actuator in split_actuators:
+        out[f"{actuator}_split_positive"] = out[f"{actuator}_split_positive"].astype(bool)
     return out
 
 
@@ -392,6 +519,23 @@ def _build_stats(samples: pd.DataFrame) -> Dict[str, Any]:
         .sort_values(["split", "n_samples"], ascending=[True, False])
     )
     stats["by_split_source"] = by_source.to_dict(orient="records")
+    if "split_actuation_combo" in samples.columns:
+        by_split_key = (
+            samples.groupby(["split", "split_actuation_combo"], dropna=False)
+            .size()
+            .reset_index(name="n_samples")
+            .sort_values(["split", "n_samples"], ascending=[True, False])
+        )
+        stats["by_split_split_combo"] = by_split_key.to_dict(orient="records")
+    split_positive_stats: Dict[str, Dict[str, int]] = {}
+    for col in sorted([c for c in samples.columns if c.endswith("_split_positive")]):
+        actuator = col[: -len("_split_positive")]
+        split_positive_stats[actuator] = {
+            str(k): int(v)
+            for k, v in samples.groupby("split")[col].sum().sort_index().to_dict().items()
+        }
+    if split_positive_stats:
+        stats["split_positive_counts"] = split_positive_stats
     return stats
 
 
@@ -426,10 +570,14 @@ def _write_outputs(
         "segment_end_ts_utc",
         "actuation_combo",
         "actuation_bits",
+        "split_actuators",
+        "split_actuation_combo",
+        "split_actuation_bits",
         "event_window_id",
         "split_group_id",
         "split",
         "split_seed",
+        "split_min_positive_count",
     ]
     split_manifest = samples[[c for c in split_cols if c in samples.columns]].copy()
     split_manifest.to_parquet(split_manifest_path, index=False)
@@ -460,6 +608,8 @@ def _write_outputs(
             "train_ratio": float(args.train_ratio),
             "test_ratio": float(args.test_ratio),
             "val_ratio": float(args.val_ratio),
+            "split_actuators": _parse_csv_list(str(args.split_actuators)),
+            "min_positive_count": int(args.split_min_positive_count),
             "actual": {k: float(v) for k, v in samples["split"].value_counts(normalize=True).sort_index().to_dict().items()},
         },
         "actuators": list(ACTUATORS),
@@ -855,6 +1005,13 @@ def main() -> None:
         raise SystemExit("No rows after PLC join/labeling.")
 
     samples = pd.concat(out_rows, ignore_index=True)
+    split_actuators = _parse_csv_list(str(args.split_actuators))
+    if not split_actuators:
+        raise SystemExit("--split-actuators must include at least one actuator")
+    invalid_actuators = [a for a in split_actuators if a not in ACTUATORS]
+    if invalid_actuators:
+        raise SystemExit(f"Unknown split actuators: {', '.join(invalid_actuators)}")
+    samples = _build_selected_actuation_key(samples, split_actuators)
     samples = _attach_event_windows_for_combo(
         samples,
         combo_col="actuation_combo",
@@ -863,7 +1020,9 @@ def main() -> None:
     )
     samples = _split_assign_by_combo(
         samples,
-        combo_col="actuation_combo",
+        combo_col="split_actuation_combo",
+        split_actuators=split_actuators,
+        min_positive_count=int(args.split_min_positive_count),
         seed=int(args.split_seed),
         train_ratio=float(args.train_ratio),
         test_ratio=float(args.test_ratio),
