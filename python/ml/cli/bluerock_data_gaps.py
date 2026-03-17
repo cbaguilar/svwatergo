@@ -233,14 +233,55 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
     plot_df["day_dt"] = pd.to_datetime(plot_df["day"], utc=True, errors="coerce")
     plot_df["lost_minutes"] = pd.to_numeric(plot_df["lost_minutes"], errors="coerce").fillna(0.0)
 
-    fig, ax = plt.subplots(figsize=(14, 4.8), dpi=150, constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(10.5, 4.2), dpi=150, constrained_layout=True)
     colors = plot_df["partition_has_rows"].map({True: "#1f77b4", False: "#d62728"}).fillna("#1f77b4")
     ax.bar(plot_df["day_dt"], plot_df["lost_minutes"], width=0.9, color=colors)
-    ax.set_title("Bluerock Daily Lost Minutes")
-    ax.set_xlabel("day")
-    ax.set_ylabel("lost minutes")
+    ax.set_title("Site A Daily Lost Minutes")
+    ax.set_xlabel("DAY")
+    ax.set_ylabel("LOST MINUTES")
     ax.grid(axis="y", alpha=0.25)
     ax.set_axisbelow(True)
+
+    x_start = pd.Timestamp("2024-02-20", tz="UTC")
+    x_end = pd.Timestamp("2024-04-15", tz="UTC")
+    ax.set_xlim(x_start, x_end)
+
+    ymax = float(plot_df["lost_minutes"].max()) if not plot_df.empty else 0.0
+    text_top = max(ymax * 1.12, 120.0)
+    ax.set_ylim(0.0, text_top)
+
+    def _lost_minutes_on(day: str) -> float:
+        day_ts = pd.Timestamp(day, tz="UTC")
+        match = plot_df.loc[plot_df["day_dt"] == day_ts, "lost_minutes"]
+        if match.empty:
+            return 0.0
+        return float(match.iloc[0])
+
+    ann1_day = pd.Timestamp("2024-03-18", tz="UTC")
+    ann1_y = _lost_minutes_on("2024-03-18")
+    ax.annotate(
+        "Added message retries\nwith zip compression",
+        xy=(ann1_day, ann1_y),
+        xytext=(ann1_day, max(text_top * 0.78, ann1_y + 80.0)),
+        textcoords="data",
+        arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
+        ha="left",
+        va="bottom",
+        fontsize=9,
+    )
+
+    ann2_day = pd.Timestamp("2024-03-25", tz="UTC")
+    ann2_y = _lost_minutes_on("2024-03-25")
+    ax.annotate(
+        "Error with domain name,\nadding IP fallback",
+        xy=(ann2_day, ann2_y),
+        xytext=(ann2_day, max(text_top * 0.58, ann2_y + 80.0)),
+        textcoords="data",
+        arrowprops={"arrowstyle": "->", "color": "#444444", "lw": 1.0},
+        ha="left",
+        va="bottom",
+        fontsize=9,
+    )
 
     if not plot_df.empty:
         fig.autofmt_xdate(rotation=45, ha="right")
