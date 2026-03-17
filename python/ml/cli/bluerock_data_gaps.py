@@ -232,6 +232,12 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
     plot_df = daily.copy()
     plot_df["day_dt"] = pd.to_datetime(plot_df["day"], utc=True, errors="coerce")
     plot_df["lost_minutes"] = pd.to_numeric(plot_df["lost_minutes"], errors="coerce").fillna(0.0)
+    annotation_bbox = {
+        "boxstyle": "round,pad=0.25",
+        "facecolor": "white",
+        "edgecolor": "#d0d0d0",
+        "alpha": 0.92,
+    }
 
     fig, ax = plt.subplots(figsize=(10.5, 4.2), dpi=150, constrained_layout=True)
     colors = plot_df["partition_has_rows"].map({True: "#1f77b4", False: "#d62728"}).fillna("#1f77b4")
@@ -268,6 +274,7 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
         ha="left",
         va="bottom",
         fontsize=9,
+        bbox=annotation_bbox,
     )
 
     ann_reg_day = pd.Timestamp("2024-03-24", tz="UTC")
@@ -281,6 +288,7 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
         ha="left",
         va="bottom",
         fontsize=9,
+        bbox=annotation_bbox,
     )
 
     ann2_day = pd.Timestamp("2024-03-27", tz="UTC")
@@ -294,6 +302,7 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
         ha="left",
         va="bottom",
         fontsize=9,
+        bbox=annotation_bbox,
     )
 
     ann3_day = pd.Timestamp("2024-03-29", tz="UTC")
@@ -307,6 +316,7 @@ def _write_daily_lost_minutes_plot(daily: pd.DataFrame, out_png: Path) -> None:
         ha="left",
         va="bottom",
         fontsize=9,
+        bbox=annotation_bbox,
     )
 
     if not plot_df.empty:
