@@ -185,8 +185,33 @@ def _coerce_target(
     positive_label: str,
 ) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
     out = df.copy()
-    if target_col not in out.columns:
-        raise ValueError(f"Target column not found: {target_col}")
+    requested_target_col = str(target_col)
+    if requested_target_col not in out.columns:
+        cols = [str(c) for c in out.columns]
+        lower_to_col = {c.lower(): c for c in cols}
+        candidates = [requested_target_col]
+        normalized = requested_target_col.replace("___", "__")
+        if normalized not in candidates:
+            candidates.append(normalized)
+        mode_tw_alias = re.sub(r"__([A-Za-z0-9]+)__tw$", r"__\1_tw", requested_target_col)
+        if mode_tw_alias not in candidates:
+            candidates.append(mode_tw_alias)
+        normalized_alias = re.sub(r"__([A-Za-z0-9]+)__tw$", r"__\1_tw", normalized)
+        if normalized_alias not in candidates:
+            candidates.append(normalized_alias)
+
+        resolved = None
+        for cand in candidates:
+            if cand in out.columns:
+                resolved = cand
+                break
+            hit = lower_to_col.get(cand.lower())
+            if hit is not None:
+                resolved = hit
+                break
+        if resolved is None:
+            raise ValueError(f"Target column not found: {requested_target_col}")
+        target_col = str(resolved)
 
     y_meta: Dict[str, Any] = {"target_col": target_col, "task": task}
     if task == "binary":
