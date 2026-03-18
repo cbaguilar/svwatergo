@@ -260,9 +260,9 @@ def _plot_actuator_window(
     if times.isna().any():
         raise ValueError(f"Invalid timestamps found in {time_col}")
 
-    def _binary_intervals(ts: pd.Series, vals: pd.Series) -> List[Tuple[float, float]]:
+    def _state_intervals(ts: pd.Series, vals: pd.Series, *, mode: str) -> List[Tuple[float, float]]:
         tser = pd.to_datetime(ts, errors="coerce")
-        vser = pd.to_numeric(vals, errors="coerce").fillna(0.0)
+        vser = pd.to_numeric(vals, errors="coerce")
         if len(tser) == 0:
             return []
         tnum = mdates.date2num(tser.dt.to_pydatetime())
@@ -279,45 +279,28 @@ def _plot_actuator_window(
         intervals: List[Tuple[float, float]] = []
         start_num: Optional[float] = None
         acc_width = 0.0
-        prev_on = False
+        prev_match = False
         for i, raw_v in enumerate(vser.to_numpy(dtype=np.float64, copy=False)):
-            is_on = bool(raw_v >= 0.5)
+            if mode == "on":
+                is_match = bool(np.isfinite(raw_v) and raw_v >= 0.5)
+            elif mode == "unknown":
+                is_match = bool(not np.isfinite(raw_v))
+            else:
+                raise ValueError(f"Unsupported interval mode: {mode}")
             width = float(max(next_widths[i], 0.0))
-            if is_on and not prev_on:
+            if is_match and not prev_match:
                 start_num = float(tnum[i])
                 acc_width = width
-            elif is_on and prev_on:
+            elif is_match and prev_match:
                 acc_width += width
-            elif (not is_on) and prev_on and start_num is not None:
+            elif (not is_match) and prev_match and start_num is not None:
                 intervals.append((start_num, max(acc_width, 1e-9)))
                 start_num = None
                 acc_width = 0.0
-            prev_on = is_on
-        if prev_on and start_num is not None:
+            prev_match = is_match
+        if prev_match and start_num is not None:
             intervals.append((start_num, max(acc_width, 1e-9)))
         return intervals
-
-    def _gap_intervals(ts: pd.Series) -> List[Tuple[float, float]]:
-        tser = pd.to_datetime(ts, errors="coerce")
-        if len(tser) < 2:
-            return []
-        tnum = mdates.date2num(tser.dt.to_pydatetime())
-        diffs = np.diff(tnum)
-        pos_diffs = diffs[diffs > 0]
-        if pos_diffs.size == 0:
-            return []
-        cadence = float(np.median(pos_diffs))
-        if not np.isfinite(cadence) or cadence <= 0.0:
-            return []
-        gap_threshold = float(pd.Timedelta(seconds=20) / pd.Timedelta(days=1))
-        gaps: List[Tuple[float, float]] = []
-        for i, delta in enumerate(diffs):
-            if float(delta) > gap_threshold:
-                gap_start = float(tnum[i] + cadence)
-                gap_width = float(delta - cadence)
-                if gap_width > 1e-9:
-                    gaps.append((gap_start, gap_width))
-        return gaps
 
     fig, ax = plt.subplots(1, 1, figsize=(16, max(5.0, 1.1 * len(target_cols) * 2.0)), constrained_layout=True)
     lane_h = 0.36
@@ -327,11 +310,7 @@ def _plot_actuator_window(
     ytick_lab: List[str] = []
     real_color = "#1f77b4"
     pred_color = "#d62728"
-    gap_color = "#d9d9d9"
-    gap_intervals = _gap_intervals(times)
-    total_height = float(len(target_cols) * (2.0 * lane_h + lane_gap + group_gap))
-    if gap_intervals:
-        ax.broken_barh(gap_intervals, (0.0, total_height), facecolors=gap_color, edgecolors="none", alpha=0.55, zorder=0)
+    unknown_color = "#bdbdbd"
 
     for i, col in enumerate(target_cols):
         true_col = col
@@ -348,12 +327,18 @@ def _plot_actuator_window(
         real_y = base_y + lane_h + lane_gap
         pred_y = base_y
 
-        true_intervals = _binary_intervals(times, yt)
-        pred_intervals = _binary_intervals(times, yp)
+        true_intervals = _state_intervals(times, yt, mode="on")
+        pred_intervals = _state_intervals(times, yp, mode="on")
+        true_unknown_intervals = _state_intervals(times, yt, mode="unknown")
+        pred_unknown_intervals = _state_intervals(times, yp, mode="unknown")
+        if true_unknown_intervals:
+            ax.broken_barh(true_unknown_intervals, (real_y, lane_h), facecolors=unknown_color, edgecolors="none", alpha=0.9, zorder=1)
+        if pred_unknown_intervals:
+            ax.broken_barh(pred_unknown_intervals, (pred_y, lane_h), facecolors=unknown_color, edgecolors="none", alpha=0.9, zorder=1)
         if true_intervals:
-            ax.broken_barh(true_intervals, (real_y, lane_h), facecolors=real_color, edgecolors="none", alpha=0.88)
+            ax.broken_barh(true_intervals, (real_y, lane_h), facecolors=real_color, edgecolors="none", alpha=0.88, zorder=2)
         if pred_intervals:
-            ax.broken_barh(pred_intervals, (pred_y, lane_h), facecolors=pred_color, edgecolors="none", alpha=0.72)
+            ax.broken_barh(pred_intervals, (pred_y, lane_h), facecolors=pred_color, edgecolors="none", alpha=0.72, zorder=2)
 
         group_center = base_y + lane_h + (lane_gap / 2.0)
         label_x = float(mdates.date2num(times.iloc[0].to_pydatetime()))
@@ -379,7 +364,7 @@ def _plot_actuator_window(
         handles=[
             Patch(facecolor=real_color, edgecolor="none", alpha=0.88, label="real"),
             Patch(facecolor=pred_color, edgecolor="none", alpha=0.72, label="predicted"),
-            Patch(facecolor=gap_color, edgecolor="none", alpha=0.55, label="data gap"),
+            Patch(facecolor=unknown_color, edgecolor="none", alpha=0.9, label="unknown"),
         ],
         loc="upper right",
     )
