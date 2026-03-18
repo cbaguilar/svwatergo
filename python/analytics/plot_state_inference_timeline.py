@@ -25,6 +25,23 @@ def _load(df_path: str, *, time_col: str, state_col: Optional[str]) -> pd.DataFr
     return df.sort_values(time_col, kind="mergesort").reset_index(drop=True)
 
 
+def _r2_score(y_true: pd.Series, y_pred: pd.Series) -> Optional[float]:
+    yt = pd.to_numeric(y_true, errors="coerce")
+    yp = pd.to_numeric(y_pred, errors="coerce")
+    mask = yt.notna() & yp.notna()
+    if int(mask.sum()) < 2:
+        return None
+    yt_np = yt.loc[mask].to_numpy(dtype=np.float64, copy=False)
+    yp_np = yp.loc[mask].to_numpy(dtype=np.float64, copy=False)
+    ss_res = float(np.sum((yt_np - yp_np) ** 2))
+    yt_mean = float(np.mean(yt_np))
+    ss_tot = float(np.sum((yt_np - yt_mean) ** 2))
+    if ss_tot <= 0.0:
+        return None
+    r2 = 1.0 - (ss_res / ss_tot)
+    return float(r2) if np.isfinite(r2) else None
+
+
 def _state_palette(states: Sequence[str]) -> Dict[str, tuple]:
     try:
         import matplotlib.pyplot as plt  # type: ignore
@@ -116,13 +133,19 @@ def main() -> int:
             if col not in primary.columns:
                 raise ValueError(f"Missing value column in inference parquet: {col}")
             ax = axes[i]
-            ax.plot(primary[str(args.time_col)], pd.to_numeric(primary[col], errors="coerce"), lw=1.2, label=f"pred {col}")
+            pred_series = pd.to_numeric(primary[col], errors="coerce")
+            ax.plot(primary[str(args.time_col)], pred_series, lw=1.2, label=f"pred {col}")
+            title = col
             if ref is not None:
                 ref_col = ref_value_cols[i]
                 if ref_col not in ref.columns:
                     raise ValueError(f"Missing reference value column: {ref_col}")
-                ax.plot(ref[str(args.reference_time_col)], pd.to_numeric(ref[ref_col], errors="coerce"), lw=1.2, alpha=0.85, label=f"ref {ref_col}")
-            ax.set_title(col)
+                ref_series = pd.to_numeric(ref[ref_col], errors="coerce")
+                ax.plot(ref[str(args.reference_time_col)], ref_series, lw=1.2, alpha=0.85, label=f"ref {ref_col}")
+                r2 = _r2_score(ref_series, pred_series)
+                if r2 is not None:
+                    title = f"{col} | R2={r2:.3f}"
+            ax.set_title(title)
             ax.set_ylabel(col)
             ax.grid(alpha=0.25)
             ax.legend(loc="best")
