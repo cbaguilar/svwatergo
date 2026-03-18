@@ -8,6 +8,24 @@ import numpy as np
 import pandas as pd
 
 
+DEFAULT_LABEL_MAP = ",".join(
+    [
+        "bluerock=Site A",
+        "pryorfarm=Site C",
+        "santateresa=Site B",
+        "all_sites=Pooled Train",
+        "bluerock__rpi_audio=Site A RPi Audio",
+        "bluerock__wyze_Bluerock_Cam_1=Site A Wyze Cam 1",
+        "bluerock__wyze_Bluerock_Cam_2=Site A Wyze Cam 2",
+        "bluerock__wyze_camera_5=Site A Wyze Cam 5",
+        "pryorfarm__wyze_Pryor_Farms_1_inside_near_door=Site C Inside Near Door",
+        "pryorfarm__wyze_Pryor_Farms_3_behind_ro=Site C Behind RO",
+        "santateresa__wyze_Santa_Teresa_Cam_1=Site B Cam 1",
+        "santateresa__wyze_Santa_Teresa_Outside=Site B Outside",
+    ]
+)
+
+
 def _parse_label_map(text: str) -> Dict[str, str]:
     out: Dict[str, str] = {}
     for part in str(text or "").split(","):
@@ -19,15 +37,35 @@ def _parse_label_map(text: str) -> Dict[str, str]:
     return out
 
 
+def _sanitize_label(text: str) -> str:
+    s = str(text)
+    replacements = [
+        ("pryor_farms", "Site C"),
+        ("pryorfarm", "Site C"),
+        ("pryor farms", "Site C"),
+        ("santa_teresa", "Site B"),
+        ("santateresa", "Site B"),
+        ("santa teresa", "Site B"),
+        ("bluerock", "Site A"),
+    ]
+    lower = s.lower()
+    for old, new in replacements:
+        if old in lower:
+            idx = lower.find(old)
+            s = s[:idx] + new + s[idx + len(old) :]
+            lower = s.lower()
+    return s
+
+
 def _apply_labels(df: pd.DataFrame, *, train_col: str, eval_col: str, label_map: Dict[str, str]) -> pd.DataFrame:
     out = df.copy()
-    out[train_col] = out[train_col].astype(str).map(lambda x: label_map.get(x, x))
-    out[eval_col] = out[eval_col].astype(str).map(lambda x: label_map.get(x, x))
+    out[train_col] = out[train_col].astype(str).map(lambda x: _sanitize_label(label_map.get(x, x)))
+    out[eval_col] = out[eval_col].astype(str).map(lambda x: _sanitize_label(label_map.get(x, x)))
     return out
 
 
 def _ordered_domains(df: pd.DataFrame, *, train_col: str, eval_col: str) -> List[str]:
-    raw = sorted(set(df[train_col].astype(str)).union(df[eval_col].astype(str)))
+    raw = sorted(set(df[train_col].astype(str)).union(df[eval_col].astype(str)), key=lambda x: str(x).lower())
     for special in ("Pooled Train", "all_sites"):
         if special in raw:
             raw = [x for x in raw if x != special] + [special]
@@ -161,7 +199,7 @@ def main() -> int:
     p.add_argument("--out-dir", required=True)
     p.add_argument("--train-col", default="train_domain")
     p.add_argument("--eval-col", default="eval_domain")
-    p.add_argument("--label-map", default="")
+    p.add_argument("--label-map", default=DEFAULT_LABEL_MAP)
     p.add_argument("--title-prefix", default="")
     args = p.parse_args()
 
