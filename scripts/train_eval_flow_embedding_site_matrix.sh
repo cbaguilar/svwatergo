@@ -94,6 +94,31 @@ with csv_path.open("a", newline="", encoding="utf-8") as f:
 PY
 }
 
+resolve_target_cols() {
+  if [[ "$TARGET_COLS" != "auto_common" ]]; then
+    echo "$TARGET_COLS"
+    return 0
+  fi
+  "$PYTHON" - "${DATASET_BY_SITE[@]}" <<'PY'
+import sys
+import pandas as pd
+
+paths = sys.argv[1:]
+common = None
+for path in paths:
+    cols = set(pd.read_parquet(path).columns)
+    flow_cols = {
+        str(c) for c in cols
+        if str(c).endswith("__mean_tw") and "flow" in str(c).lower()
+    }
+    common = flow_cols if common is None else (common & flow_cols)
+common = sorted(common or [])
+if not common:
+    raise SystemExit("No common flow __mean_tw target columns found across selected sites")
+print(",".join(common))
+PY
+}
+
 cd "$REPO"
 mkdir -p "$MATRIX_ROOT"
 SUMMARY_CSV="$MATRIX_ROOT/site_matrix_summary.csv"
@@ -114,6 +139,9 @@ for SITE in "${SITES[@]}"; do
   EMB_BY_SITE["$SITE"]="$EMBEDDINGS_NPZ"
 done
 
+TARGET_COLS_RESOLVED="$(resolve_target_cols)"
+echo "[targets] using $TARGET_COLS_RESOLVED"
+
 for TRAIN_SITE in "${SITES[@]}"; do
   TRAIN_SITE="$(echo "$TRAIN_SITE" | xargs)"
   [[ -n "$TRAIN_SITE" ]] || continue
@@ -131,7 +159,7 @@ for TRAIN_SITE in "${SITES[@]}"; do
     --embeddings-key embeddings \
     --out-dir "$TRAIN_OUT" \
     --task-mode multiregression \
-    --target-cols "$TARGET_COLS" \
+    --target-cols "$TARGET_COLS_RESOLVED" \
     --encoder-hidden "$ENCODER_HIDDEN" \
     --latent-dim "$LATENT_DIM" \
     --encoder-dropout "$ENCODER_DROPOUT" \
@@ -167,7 +195,7 @@ for TRAIN_SITE in "${SITES[@]}"; do
       --embeddings-key embeddings \
       --out-dir "$EVAL_OUT" \
       --task-mode multiregression \
-      --target-cols "$TARGET_COLS" \
+      --target-cols "$TARGET_COLS_RESOLVED" \
       --encoder-hidden "$ENCODER_HIDDEN" \
       --latent-dim "$LATENT_DIM" \
       --encoder-dropout "$ENCODER_DROPOUT" \
@@ -214,7 +242,7 @@ if [[ "$INCLUDE_POOLED" == "yes" ]]; then
     --embeddings-key embeddings \
     --out-dir "$POOLED_OUT" \
     --task-mode multiregression \
-    --target-cols "$TARGET_COLS" \
+    --target-cols "$TARGET_COLS_RESOLVED" \
     --encoder-hidden "$ENCODER_HIDDEN" \
     --latent-dim "$LATENT_DIM" \
     --encoder-dropout "$ENCODER_DROPOUT" \
@@ -250,7 +278,7 @@ if [[ "$INCLUDE_POOLED" == "yes" ]]; then
       --embeddings-key embeddings \
       --out-dir "$EVAL_OUT" \
       --task-mode multiregression \
-      --target-cols "$TARGET_COLS" \
+      --target-cols "$TARGET_COLS_RESOLVED" \
       --encoder-hidden "$ENCODER_HIDDEN" \
       --latent-dim "$LATENT_DIM" \
       --encoder-dropout "$ENCODER_DROPOUT" \
