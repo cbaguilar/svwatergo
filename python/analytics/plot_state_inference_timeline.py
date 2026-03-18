@@ -95,13 +95,20 @@ def main() -> int:
     p.add_argument("--reference-time-col", default="segment_start_ts_utc")
     p.add_argument("--reference-state-col", default="true_label")
     p.add_argument("--reference-title", default="Reference Day")
+    p.add_argument("--primary-label", default="pred")
+    p.add_argument("--reference-label", default="ref")
+    p.add_argument("--overlay-parquet", default="", help="Optional third parquet for extra numeric overlay traces")
+    p.add_argument("--overlay-time-col", default="segment_start_ts_utc")
+    p.add_argument("--overlay-label", default="overlay")
     p.add_argument("--value-cols", default="", help="Comma-separated numeric columns to plot as time-series instead of state ribbons")
     p.add_argument("--reference-value-cols", default="", help="Optional comma-separated numeric columns from reference parquet")
+    p.add_argument("--overlay-value-cols", default="", help="Optional comma-separated numeric columns from overlay parquet")
     p.add_argument("--out-png", required=True)
     args = p.parse_args()
 
     value_cols = [str(c).strip() for c in str(args.value_cols).split(",") if str(c).strip()]
     ref_value_cols = [str(c).strip() for c in str(args.reference_value_cols).split(",") if str(c).strip()]
+    overlay_value_cols = [str(c).strip() for c in str(args.overlay_value_cols).split(",") if str(c).strip()]
     state_col: Optional[str] = None if value_cols else str(args.state_col)
     ref_state_col: Optional[str] = None if value_cols else str(args.reference_state_col)
 
@@ -112,6 +119,13 @@ def main() -> int:
             str(args.reference_parquet),
             time_col=str(args.reference_time_col),
             state_col=ref_state_col,
+        )
+    overlay = None
+    if str(args.overlay_parquet).strip():
+        overlay = _load(
+            str(args.overlay_parquet),
+            time_col=str(args.overlay_time_col),
+            state_col=None,
         )
 
     try:
@@ -126,25 +140,53 @@ def main() -> int:
             raise ValueError("reference_value_cols must match value_cols length")
         if ref is not None and not ref_value_cols:
             ref_value_cols = value_cols
+        if overlay is not None and overlay_value_cols and len(overlay_value_cols) != len(value_cols):
+            raise ValueError("overlay_value_cols must match value_cols length")
+        if overlay is not None and not overlay_value_cols:
+            overlay_value_cols = value_cols
         nrows = len(value_cols)
         fig, axes = plt.subplots(nrows, 1, figsize=(14, 2.5 * max(1, nrows)), sharex=False, constrained_layout=True)
         axes = np.atleast_1d(axes)
+        primary_label = str(args.primary_label).strip() or "pred"
+        reference_label = str(args.reference_label).strip() or "ref"
+        overlay_label = str(args.overlay_label).strip() or "overlay"
         for i, col in enumerate(value_cols):
             if col not in primary.columns:
                 raise ValueError(f"Missing value column in inference parquet: {col}")
             ax = axes[i]
             pred_series = pd.to_numeric(primary[col], errors="coerce")
-            ax.plot(primary[str(args.time_col)], pred_series, lw=1.2, label=f"pred {col}")
             title = col
+            primary_legend = primary_label
+            ref_series = None
             if ref is not None:
                 ref_col = ref_value_cols[i]
                 if ref_col not in ref.columns:
                     raise ValueError(f"Missing reference value column: {ref_col}")
                 ref_series = pd.to_numeric(ref[ref_col], errors="coerce")
-                ax.plot(ref[str(args.reference_time_col)], ref_series, lw=1.2, alpha=0.85, label=f"ref {ref_col}")
                 r2 = _r2_score(ref_series, pred_series)
                 if r2 is not None:
-                    title = f"{col} | R2={r2:.3f}"
+                    primary_legend = f"{primary_label} (R2={r2:.3f})"
+            ax.plot(primary[str(args.time_col)], pred_series, lw=1.2, label=primary_legend)
+            if ref is not None:
+                ax.plot(ref[str(args.reference_time_col)], ref_series, lw=1.2, alpha=0.85, label=reference_label)
+            if overlay is not None:
+                overlay_col = overlay_value_cols[i]
+                if overlay_col not in overlay.columns:
+                    raise ValueError(f"Missing overlay value column: {overlay_col}")
+                overlay_series = pd.to_numeric(overlay[overlay_col], errors="coerce")
+                overlay_legend = overlay_label
+                if ref_series is not None:
+                    overlay_r2 = _r2_score(ref_series, overlay_series)
+                    if overlay_r2 is not None:
+                        overlay_legend = f"{overlay_label} (R2={overlay_r2:.3f})"
+                ax.plot(
+                    overlay[str(args.overlay_time_col)],
+                    overlay_series,
+                    lw=1.2,
+                    alpha=0.9,
+                    linestyle="--",
+                    label=overlay_legend,
+                )
             ax.set_title(title)
             ax.set_ylabel(col)
             ax.grid(alpha=0.25)
