@@ -813,8 +813,8 @@ const DetailedDashboard = () => {
           },
           label: (ctx) => {
             const metricKey = ctx.dataset?.metricKey || DEFAULT_METRIC_KEY
-            const metricType = inferSensorType(timelineRows, metricKey)
-            const label = sensorDisplayName(metricKey)
+            const metricType = inferSensorType(timelineRows, siteKey, metricKey)
+            const label = sensorDisplayName(siteKey, metricKey)
             const unit = SENSOR_META[metricKey]?.unit || ''
             if (metricType === 'boolean') return `${label}: ${Number(ctx.parsed.y) > 0 ? 'On' : 'Off'}`
             const v = Number(ctx.parsed.y)
