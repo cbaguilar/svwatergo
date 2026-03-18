@@ -37,6 +37,28 @@ def _filter_df(
     return out
 
 
+def _source_filter_df(
+    df: pd.DataFrame,
+    *,
+    source_filter_col: str,
+    source_filter_values: Sequence[str],
+) -> pd.DataFrame:
+    values = [str(v).strip() for v in source_filter_values if str(v).strip()]
+    if not values:
+        return df
+    col = str(source_filter_col).strip()
+    if not col:
+        raise ValueError("source_filter_col must be set when source_filter_values are provided")
+    if col not in df.columns:
+        raise ValueError(f"Missing source_filter_col in dataset: {col}")
+    mask = df[col].astype(str).isin(values)
+    out = df.loc[mask].reset_index(drop=True)
+    if out.empty:
+        raise ValueError(f"No rows matched {col} in [{', '.join(values)}]")
+    print(f"[source_filter] col={col} values={values} rows={len(out)}/{len(df)}", flush=True)
+    return out
+
+
 def _load_checkpoint(path: Path) -> Dict[str, object]:
     try:
         import torch  # type: ignore
@@ -118,6 +140,8 @@ def main() -> int:
     p.add_argument("--out-json", default="", help="Optional compact metadata JSON path")
     p.add_argument("--filter-col", default="", help="Optional column to filter before inference")
     p.add_argument("--filter-values", default="", help="Optional comma-separated values for --filter-col")
+    p.add_argument("--source-filter-col", default="", help="Optional source column to filter before inference")
+    p.add_argument("--source-filter-values", default="", help="Optional comma-separated values for --source-filter-col")
     p.add_argument("--batch-size", type=int, default=1024)
     args = p.parse_args()
 
@@ -131,6 +155,11 @@ def main() -> int:
         df,
         filter_col=str(args.filter_col),
         filter_values=[x.strip() for x in str(args.filter_values).split(",") if x.strip()],
+    )
+    df = _source_filter_df(
+        df,
+        source_filter_col=str(args.source_filter_col),
+        source_filter_values=[x.strip() for x in str(args.source_filter_values).split(",") if x.strip()],
     )
 
     z = np.load(str(Path(args.embeddings_npz)))
