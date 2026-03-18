@@ -9,7 +9,7 @@ REPO="${REPO:-$REPO_DEFAULT}"
 WINDOW_S="${WINDOW_S:-10}"
 SITE_LIST="${SITE_LIST:-bluerock,pryorfarm,santateresa}"
 MATRIX_ROOT="${MATRIX_ROOT:-/mnt/d/datasets/svwatergo/domain_matrix/flow_source}"
-TARGET_COLS="${TARGET_COLS:-permeateflow__mean_tw,deliveryflow__mean_tw,feedflow__mean_tw,concentrateflow__mean_tw,recycleflow__mean_tw}"
+TARGET_COLS="${TARGET_COLS:-permeateflow__mean_tw,deliveryflow__mean_tw,feedflow__mean_tw,inletflow__mean_tw,concentrateflow__mean_tw,recycleflow__mean_tw}"
 ENCODER_HIDDEN="${ENCODER_HIDDEN:-1024,512,256}"
 LATENT_DIM="${LATENT_DIM:-64}"
 ENCODER_DROPOUT="${ENCODER_DROPOUT:-0.2}"
@@ -156,6 +156,42 @@ print(f"{train}|{test}|{val}")
 PY
 }
 
+resolve_target_cols() {
+  "$PYTHON" - "$TARGET_COLS" "${DATASET_BY_SITE[@]}" <<'PY'
+import sys
+import pandas as pd
+
+requested_raw = str(sys.argv[1]).strip()
+paths = sys.argv[2:]
+allowed = [
+    "permeateflow__mean_tw",
+    "deliveryflow__mean_tw",
+    "feedflow__mean_tw",
+    "inletflow__mean_tw",
+    "concentrateflow__mean_tw",
+    "recycleflow__mean_tw",
+]
+if requested_raw == "auto_common":
+    requested = allowed
+else:
+    requested = [x.strip() for x in requested_raw.split(",") if x.strip()]
+
+common = None
+for path in paths:
+    cols = set(pd.read_parquet(path).columns)
+    cur = {c for c in allowed if c in cols}
+    common = cur if common is None else (common & cur)
+common = common or set()
+resolved = [c for c in requested if c in common]
+dropped = [c for c in requested if c not in common]
+if not resolved:
+    raise SystemExit("No common requested flow target columns found across selected datasets")
+print(",".join(resolved))
+if dropped:
+    print("[targets] dropped missing/non-common: " + ",".join(dropped), file=sys.stderr)
+PY
+}
+
 cd "$REPO"
 mkdir -p "$MATRIX_ROOT"
 SUMMARY_CSV="$MATRIX_ROOT/source_matrix_summary.csv"
@@ -190,6 +226,9 @@ PY
   )
 done
 
+TARGET_COLS_RESOLVED="$(resolve_target_cols)"
+echo "[targets] using $TARGET_COLS_RESOLVED"
+
 for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
   IFS='|' read -r TRAIN_SITE TRAIN_SOURCE TRAIN_DATASET TRAIN_SPLIT TRAIN_EMB TRAIN_ROWS TEST_ROWS VAL_ROWS <<< "$TRAIN_SPEC"
   TRAIN_LABEL="${TRAIN_SITE}__${TRAIN_SOURCE}"
@@ -218,7 +257,7 @@ for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
     --source-filter-values "$TRAIN_SOURCE" \
     --out-dir "$TRAIN_OUT" \
     --task-mode multiregression \
-    --target-cols "$TARGET_COLS" \
+    --target-cols "$TARGET_COLS_RESOLVED" \
     --encoder-hidden "$ENCODER_HIDDEN" \
     --latent-dim "$LATENT_DIM" \
     --encoder-dropout "$ENCODER_DROPOUT" \
@@ -261,7 +300,7 @@ for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
       --source-filter-values "$EVAL_SOURCE" \
       --out-dir "$EVAL_OUT" \
       --task-mode multiregression \
-      --target-cols "$TARGET_COLS" \
+      --target-cols "$TARGET_COLS_RESOLVED" \
       --encoder-hidden "$ENCODER_HIDDEN" \
       --latent-dim "$LATENT_DIM" \
       --encoder-dropout "$ENCODER_DROPOUT" \

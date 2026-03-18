@@ -10,7 +10,7 @@ WINDOW_S="${WINDOW_S:-10}"
 SITE_LIST="${SITE_LIST:-bluerock,pryorfarm,santateresa}"
 INCLUDE_POOLED="${INCLUDE_POOLED:-yes}"
 MATRIX_ROOT="${MATRIX_ROOT:-/mnt/d/datasets/svwatergo/domain_matrix/flow_site}"
-TARGET_COLS="${TARGET_COLS:-permeateflow__mean_tw,deliveryflow__mean_tw,feedflow__mean_tw,concentrateflow__mean_tw,recycleflow__mean_tw}"
+TARGET_COLS="${TARGET_COLS:-permeateflow__mean_tw,deliveryflow__mean_tw,feedflow__mean_tw,inletflow__mean_tw,concentrateflow__mean_tw,recycleflow__mean_tw}"
 ENCODER_HIDDEN="${ENCODER_HIDDEN:-1024,512,256}"
 LATENT_DIM="${LATENT_DIM:-64}"
 ENCODER_DROPOUT="${ENCODER_DROPOUT:-0.2}"
@@ -95,34 +95,38 @@ PY
 }
 
 resolve_target_cols() {
-  if [[ "$TARGET_COLS" != "auto_common" ]]; then
-    echo "$TARGET_COLS"
-    return 0
-  fi
-  "$PYTHON" - "${DATASET_BY_SITE[@]}" <<'PY'
+  "$PYTHON" - "$TARGET_COLS" "${DATASET_BY_SITE[@]}" <<'PY'
 import sys
 import pandas as pd
 
-paths = sys.argv[1:]
+requested_raw = str(sys.argv[1]).strip()
+paths = sys.argv[2:]
+allowed = [
+    "permeateflow__mean_tw",
+    "deliveryflow__mean_tw",
+    "feedflow__mean_tw",
+    "inletflow__mean_tw",
+    "concentrateflow__mean_tw",
+    "recycleflow__mean_tw",
+]
+if requested_raw == "auto_common":
+    requested = allowed
+else:
+    requested = [x.strip() for x in requested_raw.split(",") if x.strip()]
+
 common = None
 for path in paths:
     cols = set(pd.read_parquet(path).columns)
-    flow_cols = {
-        str(c) for c in cols
-        if str(c).endswith("__mean_tw")
-        and str(c) in {
-            "permeateflow__mean_tw",
-            "deliveryflow__mean_tw",
-            "feedflow__mean_tw",
-            "concentrateflow__mean_tw",
-            "recycleflow__mean_tw",
-        }
-    }
-    common = flow_cols if common is None else (common & flow_cols)
+    cur = {c for c in allowed if c in cols}
+    common = cur if common is None else (common & cur)
 common = sorted(common or [])
-if not common:
-    raise SystemExit("No common flow __mean_tw target columns found across selected sites")
-print(",".join(common))
+resolved = [c for c in requested if c in common]
+dropped = [c for c in requested if c not in common]
+if not resolved:
+    raise SystemExit("No common requested flow __mean_tw target columns found across selected sites")
+print(",".join(resolved))
+if dropped:
+    print("[targets] dropped missing/non-common: " + ",".join(dropped), file=sys.stderr)
 PY
 }
 
