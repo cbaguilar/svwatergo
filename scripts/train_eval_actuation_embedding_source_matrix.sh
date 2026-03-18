@@ -28,6 +28,8 @@ AUX_PLC_FEATURE_COLS="${AUX_PLC_FEATURE_COLS:-plc_pca1,plc_pca2,plc_pca3,plc_pca
 AUX_PLC_WEIGHT="${AUX_PLC_WEIGHT:-0.1}"
 PANN_PCA_WEIGHT="${PANN_PCA_WEIGHT:-0.0}"
 RENDER_PLOTS="${RENDER_PLOTS:-yes}"
+MIN_TRAIN_ROWS="${MIN_TRAIN_ROWS:-1}"
+MIN_TEST_ROWS="${MIN_TEST_ROWS:-1}"
 
 resolve_site_paths() {
   local site="$1"
@@ -88,6 +90,60 @@ with csv_path.open("a", newline="", encoding="utf-8") as f:
 PY
 }
 
+append_skip_summary() {
+  local csv_path="$1"
+  local train_domain="$2"
+  local eval_domain="$3"
+  local status="$4"
+  local message="$5"
+  local train_rows="$6"
+  local test_rows="$7"
+  local val_rows="$8"
+  python3 - "$csv_path" "$train_domain" "$eval_domain" "$status" "$message" "$train_rows" "$test_rows" "$val_rows" <<'PY'
+import csv, pathlib, sys
+csv_path = pathlib.Path(sys.argv[1])
+row = {
+    "train_domain": sys.argv[2],
+    "eval_domain": sys.argv[3],
+    "status": sys.argv[4],
+    "message": sys.argv[5],
+    "macro_f1": None,
+    "exact_match": None,
+    "n_rows": None,
+    "train_rows": int(sys.argv[6]),
+    "test_rows": int(sys.argv[7]),
+    "val_rows": int(sys.argv[8]),
+}
+header = list(row.keys())
+exists = csv_path.exists()
+csv_path.parent.mkdir(parents=True, exist_ok=True)
+with csv_path.open("a", newline="", encoding="utf-8") as f:
+    w = csv.DictWriter(f, fieldnames=header)
+    if not exists:
+        w.writeheader()
+    w.writerow(row)
+PY
+}
+
+domain_split_counts() {
+  local dataset="$1"
+  local split_manifest="$2"
+  local source="$3"
+  "$PYTHON" - "$dataset" "$split_manifest" "$source" <<'PY'
+import pandas as pd, sys
+dataset, split_manifest, source = sys.argv[1:4]
+df = pd.read_parquet(dataset, columns=["sample_id", "audio_source"])
+sm = pd.read_parquet(split_manifest, columns=["sample_id", "split"])
+df = df[df["audio_source"].astype(str) == str(source)].copy()
+merged = df.merge(sm, on="sample_id", how="left")
+counts = merged["split"].astype(str).value_counts(dropna=False).to_dict()
+train = int(counts.get("train", 0))
+test = int(counts.get("test", 0))
+val = int(counts.get("val", 0))
+print(f"{train}|{test}|{val}")
+PY
+}
+
 cd "$REPO"
 mkdir -p "$MATRIX_ROOT"
 SUMMARY_CSV="$MATRIX_ROOT/source_matrix_summary.csv"
@@ -109,7 +165,9 @@ for SITE in "${SITES[@]}"; do
   EMB_BY_SITE["$SITE"]="$EMBEDDINGS_NPZ"
   while IFS= read -r SRC; do
     [[ -n "$SRC" ]] || continue
-    DOMAIN_SPECS+=("${SITE}|${SRC}|${DATASET}|${SPLIT}|${EMBEDDINGS_NPZ}")
+    COUNTS="$(domain_split_counts "$DATASET" "$SPLIT" "$SRC")"
+    IFS='|' read -r TRAIN_ROWS TEST_ROWS VAL_ROWS <<< "$COUNTS"
+    DOMAIN_SPECS+=("${SITE}|${SRC}|${DATASET}|${SPLIT}|${EMBEDDINGS_NPZ}|${TRAIN_ROWS}|${TEST_ROWS}|${VAL_ROWS}")
   done < <("$PYTHON" - "$DATASET" <<'PY'
 import pandas as pd, sys
 df = pd.read_parquet(sys.argv[1], columns=["audio_source"])
@@ -121,8 +179,17 @@ PY
 done
 
 for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
-  IFS='|' read -r TRAIN_SITE TRAIN_SOURCE TRAIN_DATASET TRAIN_SPLIT TRAIN_EMB <<< "$TRAIN_SPEC"
+  IFS='|' read -r TRAIN_SITE TRAIN_SOURCE TRAIN_DATASET TRAIN_SPLIT TRAIN_EMB TRAIN_ROWS TEST_ROWS VAL_ROWS <<< "$TRAIN_SPEC"
   TRAIN_LABEL="${TRAIN_SITE}__${TRAIN_SOURCE}"
+  if (( TRAIN_ROWS < MIN_TRAIN_ROWS || TEST_ROWS < MIN_TEST_ROWS )); then
+    echo "[SKIP TRAIN] domain=$TRAIN_LABEL train_rows=$TRAIN_ROWS test_rows=$TEST_ROWS val_rows=$VAL_ROWS"
+    for EVAL_SPEC in "${DOMAIN_SPECS[@]}"; do
+      IFS='|' read -r EVAL_SITE EVAL_SOURCE _ _ _ ETRAIN_ROWS ETEST_ROWS EVAL_ROWS <<< "$EVAL_SPEC"
+      EVAL_LABEL="${EVAL_SITE}__${EVAL_SOURCE}"
+      append_skip_summary "$SUMMARY_CSV" "$TRAIN_LABEL" "$EVAL_LABEL" "skipped_train" "insufficient train/test rows for training domain" "$TRAIN_ROWS" "$TEST_ROWS" "$VAL_ROWS"
+    done
+    continue
+  fi
   TRAIN_OUT="$MATRIX_ROOT/checkpoints/train_${TRAIN_LABEL}"
   mkdir -p "$TRAIN_OUT"
   echo "[TRAIN] domain=$TRAIN_LABEL"
@@ -161,8 +228,13 @@ for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
 
   BEST_CKPT="$TRAIN_OUT/audio_pretrained_embedding_multitask_best.pt"
   for EVAL_SPEC in "${DOMAIN_SPECS[@]}"; do
-    IFS='|' read -r EVAL_SITE EVAL_SOURCE EVAL_DATASET EVAL_SPLIT EVAL_EMB <<< "$EVAL_SPEC"
+    IFS='|' read -r EVAL_SITE EVAL_SOURCE EVAL_DATASET EVAL_SPLIT EVAL_EMB ETRAIN_ROWS ETEST_ROWS EVAL_ROWS <<< "$EVAL_SPEC"
     EVAL_LABEL="${EVAL_SITE}__${EVAL_SOURCE}"
+    if (( ETRAIN_ROWS < MIN_TRAIN_ROWS || ETEST_ROWS < MIN_TEST_ROWS )); then
+      echo "[SKIP EVAL] train=$TRAIN_LABEL eval=$EVAL_LABEL train_rows=$ETRAIN_ROWS test_rows=$ETEST_ROWS val_rows=$EVAL_ROWS"
+      append_skip_summary "$SUMMARY_CSV" "$TRAIN_LABEL" "$EVAL_LABEL" "skipped_eval" "insufficient train/test rows for eval domain" "$ETRAIN_ROWS" "$ETEST_ROWS" "$EVAL_ROWS"
+      continue
+    fi
     EVAL_OUT="$MATRIX_ROOT/evals/train_${TRAIN_LABEL}__eval_${EVAL_LABEL}"
     mkdir -p "$EVAL_OUT"
     echo "[EVAL] train=$TRAIN_LABEL eval=$EVAL_LABEL"
