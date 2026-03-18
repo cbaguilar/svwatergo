@@ -43,11 +43,18 @@ def _plot_ribbon(ax, df: pd.DataFrame, *, time_col: str, state_col: str, palette
         y[0, i] = code_map[str(s)]
     colors = [palette[s] for s in palette.keys()]
     from matplotlib.colors import ListedColormap  # type: ignore
+    import matplotlib.dates as mdates  # type: ignore
 
     cmap = ListedColormap(colors)
-    t_num = times.view("int64").to_numpy(dtype=np.int64, copy=False)
+    t_num = mdates.date2num(times.dt.to_pydatetime())
     if len(t_num) == 1:
-        t_num = np.asarray([t_num[0], t_num[0] + 1], dtype=np.int64)
+        t_num = np.asarray(
+            [
+                float(t_num[0]),
+                float(t_num[0] + (pd.Timedelta(seconds=1) / pd.Timedelta(days=1))),
+            ],
+            dtype=np.float64,
+        )
         y = np.repeat(y, 2, axis=1)
     ax.imshow(
         y,
