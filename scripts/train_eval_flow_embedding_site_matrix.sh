@@ -10,7 +10,7 @@ WINDOW_S="${WINDOW_S:-10}"
 SITE_LIST="${SITE_LIST:-bluerock,pryorfarm,santateresa}"
 INCLUDE_POOLED="${INCLUDE_POOLED:-yes}"
 MATRIX_ROOT="${MATRIX_ROOT:-/mnt/d/datasets/svwatergo/domain_matrix/flow_site}"
-TARGET_COLS="${TARGET_COLS:-permeateflow__mean_tw,deliveryflow__mean_tw,feedflow__mean_tw,concentrateflow__mean_tw,recycleflow__mean_tw,totalroflow__mean_tw,totalfeedflow__mean_tw,totalrecycleflow__mean_tw,totaldelflow__mean_tw,dailypermflow__mean_tw}"
+TARGET_COLS="${TARGET_COLS:-permeateflow__mean_tw,deliveryflow__mean_tw,feedflow__mean_tw,concentrateflow__mean_tw,recycleflow__mean_tw}"
 ENCODER_HIDDEN="${ENCODER_HIDDEN:-1024,512,256}"
 LATENT_DIM="${LATENT_DIM:-64}"
 ENCODER_DROPOUT="${ENCODER_DROPOUT:-0.2}"
@@ -109,7 +109,14 @@ for path in paths:
     cols = set(pd.read_parquet(path).columns)
     flow_cols = {
         str(c) for c in cols
-        if str(c).endswith("__mean_tw") and "flow" in str(c).lower()
+        if str(c).endswith("__mean_tw")
+        and str(c) in {
+            "permeateflow__mean_tw",
+            "deliveryflow__mean_tw",
+            "feedflow__mean_tw",
+            "concentrateflow__mean_tw",
+            "recycleflow__mean_tw",
+        }
     }
     common = flow_cols if common is None else (common & flow_cols)
 common = sorted(common or [])
