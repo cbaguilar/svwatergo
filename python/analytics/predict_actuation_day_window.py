@@ -252,14 +252,61 @@ def _plot_actuator_window(
     try:
         import matplotlib.dates as mdates  # type: ignore
         import matplotlib.pyplot as plt  # type: ignore
+        from matplotlib.patches import Patch  # type: ignore
     except Exception as e:  # pragma: no cover
         raise SystemExit("Missing matplotlib. Install: pip install matplotlib") from e
 
     times = pd.to_datetime(df[time_col], utc=True, errors="coerce").dt.tz_convert(timezone)
-    nrows = len(target_cols)
-    fig, axes = plt.subplots(nrows, 1, figsize=(15, max(2.4 * nrows, 4.0)), sharex=True, constrained_layout=True)
-    axes_arr = np.atleast_1d(axes)
-    for ax, col in zip(axes_arr, target_cols):
+    if times.isna().any():
+        raise ValueError(f"Invalid timestamps found in {time_col}")
+
+    def _binary_intervals(ts: pd.Series, vals: pd.Series) -> List[Tuple[float, float]]:
+        tser = pd.to_datetime(ts, errors="coerce")
+        vser = pd.to_numeric(vals, errors="coerce").fillna(0.0)
+        if len(tser) == 0:
+            return []
+        tnum = mdates.date2num(tser.dt.to_pydatetime())
+        if len(tnum) == 1:
+            default_w = float(pd.Timedelta(seconds=1) / pd.Timedelta(days=1))
+            next_widths = np.asarray([default_w], dtype=np.float64)
+        else:
+            next_widths = np.diff(tnum)
+            fallback = float(np.median(next_widths[next_widths > 0])) if np.any(next_widths > 0) else float(
+                pd.Timedelta(seconds=1) / pd.Timedelta(days=1)
+            )
+            next_widths = np.concatenate([next_widths, np.asarray([fallback], dtype=np.float64)])
+
+        intervals: List[Tuple[float, float]] = []
+        start_num: Optional[float] = None
+        acc_width = 0.0
+        prev_on = False
+        for i, raw_v in enumerate(vser.to_numpy(dtype=np.float64, copy=False)):
+            is_on = bool(raw_v >= 0.5)
+            width = float(max(next_widths[i], 0.0))
+            if is_on and not prev_on:
+                start_num = float(tnum[i])
+                acc_width = width
+            elif is_on and prev_on:
+                acc_width += width
+            elif (not is_on) and prev_on and start_num is not None:
+                intervals.append((start_num, max(acc_width, 1e-9)))
+                start_num = None
+                acc_width = 0.0
+            prev_on = is_on
+        if prev_on and start_num is not None:
+            intervals.append((start_num, max(acc_width, 1e-9)))
+        return intervals
+
+    fig, ax = plt.subplots(1, 1, figsize=(16, max(5.0, 1.1 * len(target_cols) * 2.0)), constrained_layout=True)
+    lane_h = 0.36
+    group_gap = 0.32
+    lane_gap = 0.10
+    ytick_pos: List[float] = []
+    ytick_lab: List[str] = []
+    real_color = "#1f77b4"
+    pred_color = "#d62728"
+
+    for i, col in enumerate(target_cols):
         true_col = col
         pred_col = f"pred__{col}"
         if true_col not in df.columns:
@@ -268,16 +315,46 @@ def _plot_actuator_window(
             raise ValueError(f"Missing prediction column for plotting: {pred_col}")
         yt = pd.to_numeric(df[true_col], errors="coerce")
         yp = pd.to_numeric(df[pred_col], errors="coerce")
-        ax.step(times, yt, where="post", lw=1.4, label="real", color="#1f77b4")
-        ax.step(times, yp, where="post", lw=1.2, label="predicted", color="#d62728", alpha=0.9)
-        ax.set_ylim(-0.1, 1.1)
-        ax.set_yticks([0, 1])
-        ax.set_ylabel(col.replace("_duty_target", ""))
-        ax.grid(alpha=0.25)
-        ax.legend(loc="upper right")
-    axes_arr[0].set_title(f"Bluerock rpi_audio actuator states on {day} ({timezone})")
-    axes_arr[-1].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M", tz=times.dt.tz))
-    axes_arr[-1].set_xlabel(f"Time ({timezone})")
+        mismatch = ((yt - yp).abs() > 1e-9)
+        match_ratio = float((~mismatch).mean()) if len(mismatch) else float("nan")
+        base_y = float((len(target_cols) - 1 - i) * (2.0 * lane_h + lane_gap + group_gap))
+        real_y = base_y + lane_h + lane_gap
+        pred_y = base_y
+
+        true_intervals = _binary_intervals(times, yt)
+        pred_intervals = _binary_intervals(times, yp)
+        if true_intervals:
+            ax.broken_barh(true_intervals, (real_y, lane_h), facecolors=real_color, edgecolors="none", alpha=0.88)
+        if pred_intervals:
+            ax.broken_barh(pred_intervals, (pred_y, lane_h), facecolors=pred_color, edgecolors="none", alpha=0.72)
+
+        group_center = base_y + lane_h + (lane_gap / 2.0)
+        label_x = float(mdates.date2num(times.iloc[0].to_pydatetime()))
+        ax.text(
+            label_x,
+            group_center + lane_h * 0.95,
+            f"{col.replace('_duty_target', '')}  match={match_ratio:.1%}",
+            fontsize=9,
+            color="#333333",
+            ha="left",
+            va="bottom",
+        )
+        ytick_pos.extend([real_y + lane_h / 2.0, pred_y + lane_h / 2.0])
+        ytick_lab.extend(["real", "pred"])
+
+    ax.set_title(f"Bluerock rpi_audio actuator states on {day} ({timezone})")
+    ax.set_yticks(ytick_pos)
+    ax.set_yticklabels(ytick_lab)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M", tz=times.dt.tz))
+    ax.set_xlabel(f"Time ({timezone})")
+    ax.grid(axis="x", alpha=0.25)
+    ax.legend(
+        handles=[
+            Patch(facecolor=real_color, edgecolor="none", alpha=0.88, label="real"),
+            Patch(facecolor=pred_color, edgecolor="none", alpha=0.72, label="predicted"),
+        ],
+        loc="upper right",
+    )
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=180)
     plt.close(fig)
