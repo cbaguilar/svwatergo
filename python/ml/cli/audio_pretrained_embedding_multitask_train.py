@@ -28,7 +28,7 @@ def main() -> int:
     p.add_argument("--drop-state-unknown-scope", default="train_only", choices=["all", "train_only"])
 
     p.add_argument("--out-dir", required=True)
-    p.add_argument("--task-mode", default="multiclass", choices=["multiclass", "multilabel", "plc_pca_encoder"])
+    p.add_argument("--task-mode", default="multiclass", choices=["multiclass", "multilabel", "multiregression", "plc_pca_encoder"])
     p.add_argument("--target-col", default="primary_class")
     p.add_argument("--target-cols", default="ropumprun_duty,deliveryrun_duty")
     p.add_argument("--positive-threshold", type=float, default=0.5)

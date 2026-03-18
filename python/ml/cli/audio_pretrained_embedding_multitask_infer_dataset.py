@@ -48,7 +48,7 @@ def _load_checkpoint(path: Path) -> Dict[str, object]:
     return obj
 
 
-def _select_metadata_cols(df: pd.DataFrame) -> List[str]:
+def _select_metadata_cols(df: pd.DataFrame, *, extra_cols: Optional[Sequence[str]] = None) -> List[str]:
     preferred = [
         "sample_id",
         "site",
@@ -62,6 +62,10 @@ def _select_metadata_cols(df: pd.DataFrame) -> List[str]:
     ]
     keep = [c for c in preferred if c in df.columns]
     extra = [str(c) for c in df.columns if str(c).startswith("state__") and str(c) not in keep]
+    for c in (extra_cols or []):
+        cs = str(c).strip()
+        if cs and cs in df.columns and cs not in keep and cs not in extra:
+            extra.append(cs)
     return keep + extra
 
 
@@ -96,6 +100,11 @@ def _attach_truth(
                 "|".join(f"{name}={'on' if int(v) == 1 else 'off'}" for name, v in zip(cols, row.tolist()))
                 for row in bits
             ]
+    elif mode == "multiregression":
+        cols = [str(c).strip() for c in target_cols if str(c).strip()]
+        if cols and all(c in out.columns for c in cols):
+            for name in cols:
+                out[f"true__{name}"] = pd.to_numeric(out[name], errors="coerce").astype(np.float32)
     return out
 
 
@@ -114,7 +123,7 @@ def main() -> int:
 
     ckpt = _load_checkpoint(Path(args.model))
     mode = str(ckpt.get("task_mode", "multiclass")).strip().lower()
-    if mode not in ("multiclass", "multilabel"):
+    if mode not in ("multiclass", "multilabel", "multiregression"):
         raise SystemExit(f"Unsupported task_mode for dataset inference: {mode!r}")
 
     df = pd.read_parquet(str(Path(args.dataset))).reset_index(drop=True)
@@ -161,6 +170,8 @@ def main() -> int:
     class_names = [str(x) for x in (ckpt.get("class_names") or [])]
     target_col = (str(ckpt.get("target_col") or "").strip() or None)
     target_cols = [str(x) for x in (ckpt.get("target_cols") or []) if str(x).strip()]
+    reg_mean = np.asarray(ckpt.get("regression_target_mean") or [], dtype=np.float32)
+    reg_std = np.asarray(ckpt.get("regression_target_std") or [], dtype=np.float32)
 
     rows: List[pd.DataFrame] = []
     X_t = torch.from_numpy(np.asarray(X, dtype=np.float32))
@@ -170,7 +181,7 @@ def main() -> int:
             xb = X_t[i0 : i0 + bs].to(device)
             logits, z_latent, _ = model(xb)
             batch_df = df.iloc[i0 : i0 + len(xb)].copy()
-            batch_df = batch_df[_select_metadata_cols(batch_df)]
+            batch_df = batch_df[_select_metadata_cols(batch_df, extra_cols=([target_col] if target_col else []) + target_cols)]
 
             if mode == "multiclass":
                 probs = torch.softmax(logits, dim=1).cpu().numpy().astype(np.float32, copy=False)
@@ -187,7 +198,7 @@ def main() -> int:
                 for j in range(probs.shape[1]):
                     cname = class_names[j] if j < len(class_names) else f"class_{j}"
                     batch_df[f"prob__{cname}"] = probs[:, j]
-            else:
+            elif mode == "multilabel":
                 probs = torch.sigmoid(logits).cpu().numpy().astype(np.float32, copy=False)
                 preds = (probs >= 0.5).astype(np.int64, copy=False)
                 batch_df["pred_confidence"] = np.max(np.maximum(probs, 1.0 - probs), axis=1).astype(np.float32, copy=False)
@@ -204,6 +215,12 @@ def main() -> int:
                 for j, name in enumerate(target_cols):
                     batch_df[f"prob__{name}"] = probs[:, j]
                     batch_df[f"pred__{name}"] = preds[:, j]
+            else:
+                pred = logits.cpu().numpy().astype(np.float32, copy=False)
+                if reg_mean.size and reg_std.size and reg_mean.shape[0] == pred.shape[1] and reg_std.shape[0] == pred.shape[1]:
+                    pred = (pred * reg_std.reshape(1, -1)) + reg_mean.reshape(1, -1)
+                for j, name in enumerate(target_cols):
+                    batch_df[f"pred__{name}"] = pred[:, j].astype(np.float32, copy=False)
 
             for j in range(int(z_latent.shape[1])):
                 batch_df[f"latent_{j:03d}"] = z_latent[:, j].detach().cpu().numpy().astype(np.float32, copy=False)

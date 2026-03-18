@@ -129,6 +129,31 @@ def _coerce_binary_targets(
     return Y, {"task": "multilabel", "target_cols": cols, "positive_threshold": float(positive_threshold)}
 
 
+def _coerce_multiregression_targets(
+    df: pd.DataFrame,
+    *,
+    target_cols: Sequence[str],
+) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
+    cols = [str(c).strip() for c in target_cols if str(c).strip()]
+    if not cols:
+        raise ValueError("target_cols cannot be empty for multiregression")
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing multiregression target columns: {', '.join(missing)}")
+    out = df.copy()
+    y_cols: List[np.ndarray] = []
+    keep_mask = np.ones(len(out), dtype=bool)
+    for c in cols:
+        s = pd.to_numeric(out[c], errors="coerce")
+        keep_mask &= s.notna().to_numpy()
+        y_cols.append(s.to_numpy(dtype=np.float32))
+    if int(keep_mask.sum()) <= 0:
+        raise ValueError("No valid rows for multiregression target after coercion")
+    out = out.loc[keep_mask].reset_index(drop=True)
+    Y = np.stack([col[keep_mask] for col in y_cols], axis=1).astype(np.float32)
+    return out, Y, {"task": "multiregression", "target_cols": cols, "classes": cols}
+
+
 def _select_plc_feature_columns(
     df: pd.DataFrame,
     *,
@@ -375,6 +400,51 @@ def _r2_payload(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, Any]:
     }
 
 
+def _metrics_multiregression(
+    *,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    target_cols: Sequence[str],
+) -> Dict[str, Any]:
+    yt = np.asarray(y_true, dtype=np.float64)
+    yp = np.asarray(y_pred, dtype=np.float64)
+    if yt.size <= 0:
+        return {}
+    if yt.ndim == 1:
+        yt = yt.reshape(-1, 1)
+        yp = yp.reshape(-1, 1)
+    per_target: Dict[str, Any] = {}
+    maes: List[float] = []
+    rmses: List[float] = []
+    r2s: List[float] = []
+    cols = [str(c) for c in target_cols]
+    for j in range(int(yt.shape[1])):
+        name = cols[j] if j < len(cols) else f"target_{j + 1}"
+        err = yp[:, j] - yt[:, j]
+        mae = float(np.mean(np.abs(err))) if len(err) else 0.0
+        rmse = float(np.sqrt(np.mean(np.square(err)))) if len(err) else 0.0
+        try:
+            r2 = float(r2_score(yt[:, j], yp[:, j]))
+        except Exception:
+            r2 = float("nan")
+        per_target[str(name)] = {
+            "mae": mae,
+            "rmse": rmse,
+            "r2": (r2 if np.isfinite(r2) else None),
+        }
+        maes.append(mae)
+        rmses.append(rmse)
+        if np.isfinite(r2):
+            r2s.append(r2)
+    return {
+        "per_target": per_target,
+        "mae_mean": float(np.mean(maes)) if maes else 0.0,
+        "rmse_mean": float(np.mean(rmses)) if rmses else 0.0,
+        "r2_mean": float(np.mean(r2s)) if r2s else None,
+        "n_rows": int(yt.shape[0]),
+    }
+
+
 def _named_values(values: Sequence[Any], names: Sequence[str], *, default_prefix: str = "target") -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for i, v in enumerate(values):
@@ -547,8 +617,8 @@ def fit_audio_pretrained_embedding_multitask(
         )
 
     mode = str(task_mode).strip().lower()
-    if mode not in ("multiclass", "multilabel", "plc_pca_encoder"):
-        raise ValueError("task_mode must be one of: multiclass, multilabel, plc_pca_encoder")
+    if mode not in ("multiclass", "multilabel", "multiregression", "plc_pca_encoder"):
+        raise ValueError("task_mode must be one of: multiclass, multilabel, multiregression, plc_pca_encoder")
     is_plc_encoder = mode == "plc_pca_encoder"
     if mode == "multiclass":
         df0, y_raw, y_meta = _coerce_target(
@@ -569,6 +639,15 @@ def fit_audio_pretrained_embedding_multitask(
             positive_label=str(positive_label),
         )
         df0 = df.copy()
+        y_all = np.asarray(y_raw, dtype=np.float32)
+    elif mode == "multiregression":
+        cols = list(target_cols or [])
+        if not cols:
+            cols = ["deliveryflow", "feedflow"]
+        df0, y_raw, y_meta = _coerce_multiregression_targets(
+            df,
+            target_cols=cols,
+        )
         y_all = np.asarray(y_raw, dtype=np.float32)
     else:
         df0 = df.copy()
@@ -772,9 +851,16 @@ def fit_audio_pretrained_embedding_multitask(
     if z_dim <= 0:
         raise ValueError("latent_dim must be > 0")
     plc_dim = int(Z_plc.shape[1]) if Z_plc is not None else 0
+    y_reg_mean_np: Optional[np.ndarray] = None
+    y_reg_std_np: Optional[np.ndarray] = None
+    if mode == "multiregression":
+        y_reg_mean_np = np.asarray(np.mean(Y[idx_train], axis=0), dtype=np.float32)
+        y_reg_std_np = np.asarray(np.std(Y[idx_train], axis=0), dtype=np.float32)
+        y_reg_std_np = np.where(y_reg_std_np > 1e-6, y_reg_std_np, 1.0).astype(np.float32, copy=False)
+
     if mode == "multiclass":
         y_dim = int(len(np.unique(Y)))
-    elif mode == "multilabel":
+    elif mode in ("multilabel", "multiregression"):
         y_dim = int(Y.shape[1])
     else:
         y_dim = 0
@@ -801,6 +887,12 @@ def fit_audio_pretrained_embedding_multitask(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     print(f"[device] embedding_multitask using {device}", flush=True)
+
+    y_reg_mean_t: Optional["torch.Tensor"] = None
+    y_reg_std_t: Optional["torch.Tensor"] = None
+    if mode == "multiregression" and y_reg_mean_np is not None and y_reg_std_np is not None:
+        y_reg_mean_t = torch.from_numpy(y_reg_mean_np).to(device)
+        y_reg_std_t = torch.from_numpy(y_reg_std_np).to(device)
 
     Xt = torch.from_numpy(np.asarray(X_emb, dtype=np.float32))
     if mode == "multiclass":
@@ -881,6 +973,12 @@ def fit_audio_pretrained_embedding_multitask(
                     yp = (torch.sigmoid(logits) >= 0.5).float()
                     y_true.append(yb.numpy())
                     y_pred.append(yp.cpu().numpy())
+                elif mode == "multiregression":
+                    if y_reg_mean_t is None or y_reg_std_t is None:
+                        raise RuntimeError("Missing regression normalization tensors")
+                    yp = logits * y_reg_std_t + y_reg_mean_t
+                    y_true.append(yb.numpy())
+                    y_pred.append(yp.cpu().numpy())
                 if zlb is not None and _p is not None:
                     plc_true.append(zlb.cpu().numpy())
                     plc_pred.append(_p.cpu().numpy())
@@ -891,7 +989,7 @@ def fit_audio_pretrained_embedding_multitask(
             if mode == "multiclass":
                 yt = np.zeros((0,), dtype=np.int64)
                 yp = np.zeros((0,), dtype=np.int64)
-            elif mode == "multilabel":
+            elif mode in ("multilabel", "multiregression"):
                 yt = np.zeros((0, Y.shape[1]), dtype=np.float32)
                 yp = np.zeros((0, Y.shape[1]), dtype=np.float32)
             else:
@@ -945,6 +1043,11 @@ def fit_audio_pretrained_embedding_multitask(
                 l_cls = ce(logits, yb.long())
             elif mode == "multilabel":
                 l_cls = bce(logits, yb)
+            elif mode == "multiregression":
+                if y_reg_mean_t is None or y_reg_std_t is None:
+                    raise RuntimeError("Missing regression normalization tensors")
+                yb_norm = (yb - y_reg_mean_t) / y_reg_std_t
+                l_cls = huber(logits, yb_norm)
             else:
                 l_cls = torch.tensor(0.0, device=device)
             if zlb is not None and plc_pred is not None:
@@ -979,6 +1082,8 @@ def fit_audio_pretrained_embedding_multitask(
             elif mode == "multilabel":
                 test_metric = float(np.mean(np.all(ytt == ypt, axis=1))) if len(ytt) else 0.0
                 test_macro_f1 = float(f1_score(ytt.astype(int), ypt.astype(int), average="macro", zero_division=0)) if len(ytt) else 0.0
+            elif mode == "multiregression":
+                test_metric = float(_metrics_multiregression(y_true=ytt, y_pred=ypt, target_cols=list(y_meta.get("target_cols") or [])).get("mae_mean", 0.0))
             else:
                 test_metric = None
             if ztt.size > 0 and zpt.size > 0:
@@ -991,6 +1096,8 @@ def fit_audio_pretrained_embedding_multitask(
                 elif mode == "multilabel":
                     val_metric = float(np.mean(np.all(ytv == ypv, axis=1))) if len(ytv) else 0.0
                     val_macro_f1 = float(f1_score(ytv.astype(int), ypv.astype(int), average="macro", zero_division=0)) if len(ytv) else 0.0
+                elif mode == "multiregression":
+                    val_metric = float(_metrics_multiregression(y_true=ytv, y_pred=ypv, target_cols=list(y_meta.get("target_cols") or [])).get("mae_mean", 0.0))
                 else:
                     val_metric = None
                 if ztv.size > 0 and zpv.size > 0:
@@ -998,7 +1105,11 @@ def fit_audio_pretrained_embedding_multitask(
 
             score = None
             if metric_mode == "main_task_metric":
-                score = val_metric if (split_mode == "val" and val_metric is not None) else test_metric
+                score_raw = val_metric if (split_mode == "val" and val_metric is not None) else test_metric
+                if mode == "multiregression" and score_raw is not None:
+                    score = -float(score_raw)
+                else:
+                    score = score_raw
             elif metric_mode == "macro_f1":
                 score = val_macro_f1 if (split_mode == "val" and val_macro_f1 is not None) else test_macro_f1
             elif metric_mode == "plc_pca_r2":
@@ -1014,10 +1125,12 @@ def fit_audio_pretrained_embedding_multitask(
                             "input_dim": int(X_emb.shape[1]),
                             "hidden": hidden,
                             "z_dim": int(z_dim),
-                            "n_targets": int(y_dim) if mode == "multiclass" else (int(Y.shape[1]) if mode == "multilabel" else 0),
+                            "n_targets": int(y_dim) if mode == "multiclass" else (int(Y.shape[1]) if mode in ("multilabel", "multiregression") else 0),
                             "target_col": (str(target_col) if mode == "multiclass" else None),
-                            "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
+                            "target_cols": (list(y_meta.get("target_cols") or []) if mode in ("multilabel", "multiregression") else []),
                             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
+                            "regression_target_mean": ([float(x) for x in y_reg_mean_np.tolist()] if y_reg_mean_np is not None else []),
+                            "regression_target_std": ([float(x) for x in y_reg_std_np.tolist()] if y_reg_std_np is not None else []),
                             "pann_pca_weight": float(pann_pca_weight),
                             "aux_plc_weight": float(aux_plc_weight),
                             "plc_contrastive_weight": float(plc_con_w),
@@ -1040,7 +1153,7 @@ def fit_audio_pretrained_embedding_multitask(
                                 "z_dim": int(z_dim),
                                 "task_mode": str(mode),
                                 "target_col": (str(target_col) if mode == "multiclass" else None),
-                                "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
+                                "target_cols": (list(y_meta.get("target_cols") or []) if mode in ("multilabel", "multiregression") else []),
                                 "main_task_weight": float(main_w),
                                 "pann_pca_weight": float(pann_pca_weight),
                                 "aux_plc_weight": float(aux_plc_weight),
@@ -1080,6 +1193,9 @@ def fit_audio_pretrained_embedding_multitask(
             if mode == "multiclass":
                 metric_name = "test_acc"
                 metric_value = test_metric
+            elif mode == "multiregression":
+                metric_name = f"{split_mode}_mae" if split_mode == "val" else "test_mae"
+                metric_value = val_metric if split_mode == "val" else test_metric
             elif metric_mode == "macro_f1":
                 metric_name = f"{split_mode}_macro_f1"
                 metric_value = val_macro_f1 if split_mode == "val" else test_macro_f1
@@ -1128,7 +1244,11 @@ def fit_audio_pretrained_embedding_multitask(
             xb = Xt[i0:i1].to(device)
             _logits, zhat, plc_hat = model(xb)
             if _logits is not None:
-                logits_parts.append(_logits.cpu().numpy().astype(np.float32, copy=False))
+                if mode == "multiregression" and y_reg_mean_t is not None and y_reg_std_t is not None:
+                    pred_raw = (_logits * y_reg_std_t + y_reg_mean_t).cpu().numpy().astype(np.float32, copy=False)
+                    logits_parts.append(pred_raw)
+                else:
+                    logits_parts.append(_logits.cpu().numpy().astype(np.float32, copy=False))
             z_pred_parts.append(zhat.cpu().numpy().astype(np.float32, copy=False))
             if plc_hat is not None:
                 plc_pred_parts.append(plc_hat.cpu().numpy().astype(np.float32, copy=False))
@@ -1183,9 +1303,17 @@ def fit_audio_pretrained_embedding_multitask(
             pann_proj_df[f"ml__correct__{safe_col}"] = (1.0 - error_bits[:, j]).astype(np.int64)
             pann_proj_df[f"ml__bce__{safe_col}"] = bce_per_target[:, j].astype(np.float32)
 
-    pann_proj_df.to_parquet(pann_proj_path, index=False)
     if mode == "multilabel":
         pred_detail_path = pann_proj_path
+    elif mode == "multiregression" and logits_all is not None:
+        reg_cols = list(y_meta.get("target_cols") or [])
+        y_true_reg = np.asarray(Y, dtype=np.float32)
+        y_pred_reg = np.asarray(logits_all, dtype=np.float32)
+        for j, col in enumerate(reg_cols):
+            pann_proj_df[f"reg__true__{col}"] = y_true_reg[:, j].astype(np.float32)
+            pann_proj_df[f"reg__pred__{col}"] = y_pred_reg[:, j].astype(np.float32)
+            pann_proj_df[f"reg__err__{col}"] = (y_pred_reg[:, j] - y_true_reg[:, j]).astype(np.float32)
+    pann_proj_df.to_parquet(pann_proj_path, index=False)
 
     plc_proj_path: Optional[Path] = None
     plc_plot_3d_path: Optional[Path] = None
@@ -1217,6 +1345,10 @@ def fit_audio_pretrained_embedding_multitask(
                     plc_proj_df[col] = pann_proj_df[col]
             for col in pann_proj_df.columns:
                 if col.startswith("ml__true__") or col.startswith("ml__pred__") or col.startswith("ml__score__") or col.startswith("ml__correct__") or col.startswith("ml__bce__"):
+                    plc_proj_df[col] = pann_proj_df[col]
+        elif mode == "multiregression":
+            for col in pann_proj_df.columns:
+                if col.startswith("reg__"):
                     plc_proj_df[col] = pann_proj_df[col]
         plc_proj_df.to_parquet(plc_proj_path, index=False)
 
@@ -1843,6 +1975,12 @@ def fit_audio_pretrained_embedding_multitask(
                 "recall_macro": float(recall_score(yt, yp, average="macro", zero_division=0)),
                 "n_rows": int(len(yt)),
             }
+        if mode == "multiregression":
+            return _metrics_multiregression(
+                y_true=np.asarray(yt, dtype=np.float64),
+                y_pred=np.asarray(yp, dtype=np.float64),
+                target_cols=list(y_meta.get("target_cols") or []),
+            )
         yt_bin = np.asarray(yt).astype(int)
         yp_bin = np.asarray(yp).astype(int)
         exact = float(np.mean(np.all(yt == yp, axis=1)))
@@ -1911,7 +2049,7 @@ def fit_audio_pretrained_embedding_multitask(
             else:
                 by_source_test[str(s)] = _split_metrics(yte_t[m], yte_p[m])
 
-    if is_plc_encoder:
+    if is_plc_encoder or mode == "multiregression":
         confusion_by_split = {"train": {}, "test": {}, "val": {}}
     elif mode == "multiclass":
         class_labels = list(y_meta.get("classes") or [])
@@ -1948,13 +2086,15 @@ def fit_audio_pretrained_embedding_multitask(
                     "matrix": cm.tolist(),
                     "n_rows": int(np.sum(m)),
                 }
+            elif mode == "multiregression":
+                confusion_by_source_test[str(s)] = {}
             else:
                 confusion_by_source_test[str(s)] = _build_confusion_payload(
                     yte_t[m], yte_p[m], target_cols=y_meta["target_cols"]
                 )
 
     conf_artifacts: Dict[str, Any] = {}
-    if bool(render_plots) and (not is_plc_encoder):
+    if bool(render_plots) and (not is_plc_encoder) and mode != "multiregression":
         conf_dir = out_dir / "confusion_multitask"
         test_conf = confusion_by_split.get("test") or {}
         if test_conf.get("labels"):
@@ -1989,10 +2129,12 @@ def fit_audio_pretrained_embedding_multitask(
             "input_dim": int(X_emb.shape[1]),
             "hidden": hidden,
             "z_dim": int(z_dim),
-            "n_targets": int(y_dim) if mode == "multiclass" else (int(Y.shape[1]) if mode == "multilabel" else 0),
+            "n_targets": int(y_dim) if mode == "multiclass" else (int(Y.shape[1]) if mode in ("multilabel", "multiregression") else 0),
             "target_col": (str(target_col) if mode == "multiclass" else None),
-            "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
+            "target_cols": (list(y_meta.get("target_cols") or []) if mode in ("multilabel", "multiregression") else []),
             "class_names": (list(y_meta.get("classes") or []) if mode == "multiclass" else None),
+            "regression_target_mean": ([float(x) for x in y_reg_mean_np.tolist()] if y_reg_mean_np is not None else []),
+            "regression_target_std": ([float(x) for x in y_reg_std_np.tolist()] if y_reg_std_np is not None else []),
             "pann_pca_weight": 0.0,
             "aux_plc_weight": float(aux_plc_weight),
             "plc_contrastive_weight": float(plc_con_w),
@@ -2014,7 +2156,7 @@ def fit_audio_pretrained_embedding_multitask(
                 "z_dim": int(z_dim),
                 "task_mode": str(mode),
                 "target_col": (str(target_col) if mode == "multiclass" else None),
-                "target_cols": (list(y_meta.get("target_cols") or []) if mode == "multilabel" else []),
+                "target_cols": (list(y_meta.get("target_cols") or []) if mode in ("multilabel", "multiregression") else []),
                 "main_task_weight": float(main_w),
                 "pann_pca_weight": 0.0,
                 "aux_plc_weight": float(aux_plc_weight),
@@ -2026,7 +2168,11 @@ def fit_audio_pretrained_embedding_multitask(
 
     plc_alignment = (_r2_payload(Z_plc, Z_plc_pred) if (Z_plc is not None and Z_plc_pred is not None) else None)
     metrics = {
-        "task": ("multitask_multiclass" if mode == "multiclass" else ("multitask_2hot" if mode == "multilabel" else "plc_pca_encoder")),
+        "task": (
+            "multitask_multiclass"
+            if mode == "multiclass"
+            else ("multitask_2hot" if mode == "multilabel" else ("multitask_multiregression" if mode == "multiregression" else "plc_pca_encoder"))
+        ),
         "target_meta": y_meta,
         "backend": "panns_embeddings",
         "split_source": split_source,

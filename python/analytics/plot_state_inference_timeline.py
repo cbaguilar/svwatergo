@@ -3,21 +3,22 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
 
 
-def _load(df_path: str, *, time_col: str, state_col: str) -> pd.DataFrame:
+def _load(df_path: str, *, time_col: str, state_col: Optional[str]) -> pd.DataFrame:
     df = pd.read_parquet(df_path).copy()
     if time_col not in df.columns:
         raise ValueError(f"Missing time column: {time_col}")
-    if state_col not in df.columns:
+    if state_col is not None and state_col not in df.columns:
         raise ValueError(f"Missing state column: {state_col}")
     df[time_col] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
     df = df[df[time_col].notna()].copy()
-    df[state_col] = df[state_col].astype(str)
+    if state_col is not None:
+        df[state_col] = df[state_col].astype(str)
     conf_col = "pred_confidence" if "pred_confidence" in df.columns else None
     if conf_col is not None:
         df[conf_col] = pd.to_numeric(df[conf_col], errors="coerce")
@@ -77,23 +78,24 @@ def main() -> int:
     p.add_argument("--reference-time-col", default="segment_start_ts_utc")
     p.add_argument("--reference-state-col", default="true_label")
     p.add_argument("--reference-title", default="Reference Day")
+    p.add_argument("--value-cols", default="", help="Comma-separated numeric columns to plot as time-series instead of state ribbons")
+    p.add_argument("--reference-value-cols", default="", help="Optional comma-separated numeric columns from reference parquet")
     p.add_argument("--out-png", required=True)
     args = p.parse_args()
 
-    primary = _load(args.inference_parquet, time_col=str(args.time_col), state_col=str(args.state_col))
+    value_cols = [str(c).strip() for c in str(args.value_cols).split(",") if str(c).strip()]
+    ref_value_cols = [str(c).strip() for c in str(args.reference_value_cols).split(",") if str(c).strip()]
+    state_col: Optional[str] = None if value_cols else str(args.state_col)
+    ref_state_col: Optional[str] = None if value_cols else str(args.reference_state_col)
+
+    primary = _load(args.inference_parquet, time_col=str(args.time_col), state_col=state_col)
     ref = None
     if str(args.reference_parquet).strip():
         ref = _load(
             str(args.reference_parquet),
             time_col=str(args.reference_time_col),
-            state_col=str(args.reference_state_col),
+            state_col=ref_state_col,
         )
-
-    all_states: List[str] = sorted(
-        set(primary[str(args.state_col)].astype(str).tolist())
-        | (set(ref[str(args.reference_state_col)].astype(str).tolist()) if ref is not None else set())
-    )
-    palette = _state_palette(all_states)
 
     try:
         import matplotlib.pyplot as plt  # type: ignore
@@ -101,6 +103,43 @@ def main() -> int:
         from matplotlib.lines import Line2D  # type: ignore
     except Exception as e:
         raise SystemExit("Missing matplotlib. Install: pip install matplotlib") from e
+
+    if value_cols:
+        if ref is not None and ref_value_cols and len(ref_value_cols) != len(value_cols):
+            raise ValueError("reference_value_cols must match value_cols length")
+        if ref is not None and not ref_value_cols:
+            ref_value_cols = value_cols
+        nrows = len(value_cols)
+        fig, axes = plt.subplots(nrows, 1, figsize=(14, 2.5 * max(1, nrows)), sharex=False, constrained_layout=True)
+        axes = np.atleast_1d(axes)
+        for i, col in enumerate(value_cols):
+            if col not in primary.columns:
+                raise ValueError(f"Missing value column in inference parquet: {col}")
+            ax = axes[i]
+            ax.plot(primary[str(args.time_col)], pd.to_numeric(primary[col], errors="coerce"), lw=1.2, label=f"pred {col}")
+            if ref is not None:
+                ref_col = ref_value_cols[i]
+                if ref_col not in ref.columns:
+                    raise ValueError(f"Missing reference value column: {ref_col}")
+                ax.plot(ref[str(args.reference_time_col)], pd.to_numeric(ref[ref_col], errors="coerce"), lw=1.2, alpha=0.85, label=f"ref {ref_col}")
+            ax.set_title(col)
+            ax.set_ylabel(col)
+            ax.grid(alpha=0.25)
+            ax.legend(loc="best")
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+            ax.set_xlabel("UTC Time")
+        out_path = Path(args.out_png)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=180)
+        plt.close(fig)
+        print(f"[ok] wrote {out_path}", flush=True)
+        return 0
+
+    all_states: List[str] = sorted(
+        set(primary[str(args.state_col)].astype(str).tolist())
+        | (set(ref[str(args.reference_state_col)].astype(str).tolist()) if ref is not None else set())
+    )
+    palette = _state_palette(all_states)
 
     nrows = 3 if ref is not None else 2
     fig, axes = plt.subplots(nrows, 1, figsize=(14, 2.4 * nrows), sharex=False, constrained_layout=True)
