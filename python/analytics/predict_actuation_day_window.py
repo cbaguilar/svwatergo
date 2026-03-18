@@ -297,6 +297,28 @@ def _plot_actuator_window(
             intervals.append((start_num, max(acc_width, 1e-9)))
         return intervals
 
+    def _gap_intervals(ts: pd.Series) -> List[Tuple[float, float]]:
+        tser = pd.to_datetime(ts, errors="coerce")
+        if len(tser) < 2:
+            return []
+        tnum = mdates.date2num(tser.dt.to_pydatetime())
+        diffs = np.diff(tnum)
+        pos_diffs = diffs[diffs > 0]
+        if pos_diffs.size == 0:
+            return []
+        cadence = float(np.median(pos_diffs))
+        if not np.isfinite(cadence) or cadence <= 0.0:
+            return []
+        gap_threshold = float(pd.Timedelta(seconds=20) / pd.Timedelta(days=1))
+        gaps: List[Tuple[float, float]] = []
+        for i, delta in enumerate(diffs):
+            if float(delta) > gap_threshold:
+                gap_start = float(tnum[i] + cadence)
+                gap_width = float(delta - cadence)
+                if gap_width > 1e-9:
+                    gaps.append((gap_start, gap_width))
+        return gaps
+
     fig, ax = plt.subplots(1, 1, figsize=(16, max(5.0, 1.1 * len(target_cols) * 2.0)), constrained_layout=True)
     lane_h = 0.36
     group_gap = 0.32
@@ -305,6 +327,11 @@ def _plot_actuator_window(
     ytick_lab: List[str] = []
     real_color = "#1f77b4"
     pred_color = "#d62728"
+    gap_color = "#d9d9d9"
+    gap_intervals = _gap_intervals(times)
+    total_height = float(len(target_cols) * (2.0 * lane_h + lane_gap + group_gap))
+    if gap_intervals:
+        ax.broken_barh(gap_intervals, (0.0, total_height), facecolors=gap_color, edgecolors="none", alpha=0.55, zorder=0)
 
     for i, col in enumerate(target_cols):
         true_col = col
@@ -352,6 +379,7 @@ def _plot_actuator_window(
         handles=[
             Patch(facecolor=real_color, edgecolor="none", alpha=0.88, label="real"),
             Patch(facecolor=pred_color, edgecolor="none", alpha=0.72, label="predicted"),
+            Patch(facecolor=gap_color, edgecolor="none", alpha=0.55, label="data gap"),
         ],
         loc="upper right",
     )
