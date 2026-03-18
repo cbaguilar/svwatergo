@@ -73,7 +73,9 @@ def _ordered_domains(df: pd.DataFrame, *, train_col: str, eval_col: str) -> List
 
 
 def _pivot_metric(df: pd.DataFrame, *, train_col: str, eval_col: str, metric: str, order: Sequence[str]) -> pd.DataFrame:
-    piv = df.pivot(index=train_col, columns=eval_col, values=metric)
+    work = df.copy()
+    work[metric] = pd.to_numeric(work[metric], errors="coerce")
+    piv = work.pivot(index=train_col, columns=eval_col, values=metric)
     piv = piv.reindex(index=list(order), columns=list(order))
     return piv.astype(float)
 
