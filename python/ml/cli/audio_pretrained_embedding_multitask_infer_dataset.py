@@ -30,7 +30,7 @@ def _filter_df(
     if col not in df.columns:
         raise ValueError(f"Missing filter_col in dataset: {col}")
     mask = df[col].astype(str).isin(values)
-    out = df.loc[mask].reset_index(drop=True)
+    out = df.loc[mask].copy()
     if out.empty:
         raise ValueError(f"No rows matched {col} in [{', '.join(values)}]")
     print(f"[filter] col={col} values={values} rows={len(out)}/{len(df)}", flush=True)
@@ -52,7 +52,7 @@ def _source_filter_df(
     if col not in df.columns:
         raise ValueError(f"Missing source_filter_col in dataset: {col}")
     mask = df[col].astype(str).isin(values)
-    out = df.loc[mask].reset_index(drop=True)
+    out = df.loc[mask].copy()
     if out.empty:
         raise ValueError(f"No rows matched {col} in [{', '.join(values)}]")
     print(f"[source_filter] col={col} values={values} rows={len(out)}/{len(df)}", flush=True)
@@ -169,7 +169,9 @@ def main() -> int:
     X_full = np.asarray(z[emb_key], dtype=np.float32)
     if int(X_full.shape[0]) != int(len(pd.read_parquet(str(Path(args.dataset))))):
         raise SystemExit("Embedding cache rows do not match original dataset rows.")
-    X = np.asarray(X_full[df.index.to_numpy(dtype=np.int64)], dtype=np.float32, copy=False)
+    row_idx = df.index.to_numpy(dtype=np.int64, copy=False)
+    X = np.asarray(X_full[row_idx], dtype=np.float32, copy=False)
+    df = df.reset_index(drop=True)
 
     hidden = [int(x) for x in (ckpt.get("hidden") or [])]
     z_dim = int(ckpt.get("z_dim", 64))
