@@ -595,8 +595,10 @@ def _render_color_grid_pages(
                         handles=handles,
                         title=alias_site_names(label_with_unit(c)),
                         fontsize=7,
-                        loc="center left",
-                        bbox_to_anchor=(1.08, 0.5),
+                        loc="upper center",
+                        bbox_to_anchor=(0.5, -0.14),
+                        ncol=2,
+                        frameon=True,
                     )
             else:
                 cnum = pd.to_numeric(s, errors="coerce").to_numpy(dtype=np.float64)
@@ -619,7 +621,14 @@ def _render_color_grid_pages(
                 cbar_label = label_with_unit(c)
                 if use_log:
                     cbar_label = f"log {cbar_label}"
-                fig.colorbar(sc, ax=ax, fraction=0.028, pad=0.07, label=cbar_label)
+                cbar = fig.colorbar(
+                    sc,
+                    ax=ax,
+                    orientation="horizontal",
+                    fraction=0.05,
+                    pad=0.08,
+                )
+                cbar.set_label(cbar_label)
 
             ax.set_title(alias_site_names(label_with_unit(c)))
             ax.set_xlabel("PC1")
@@ -628,6 +637,7 @@ def _render_color_grid_pages(
             ax.zaxis.labelpad = 8
 
         fig.suptitle(alias_site_names(f"{title_prefix} (page {p+1}/{n_pages})"))
+        fig.tight_layout(rect=[0, 0.03, 1, 0.95])
         out = out_dir / f"{out_prefix}_pc123_color_grid_{p+1:02d}.png"
         fig.savefig(out, dpi=180)
         plt.close(fig)
