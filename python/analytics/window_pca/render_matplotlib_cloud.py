@@ -2,10 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+_PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from units import label_with_unit
 
 
 def _build_argparser() -> argparse.ArgumentParser:
@@ -176,7 +183,7 @@ def main() -> None:
                     label=str(label),
                 )
                 handles.append(plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=str(label)))
-            ax.legend(handles=handles, title=color_col, fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
+            ax.legend(handles=handles, title=label_with_unit(color_col), fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
         else:
             cnum = pd.to_numeric(c, errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
             sc = ax.scatter(
@@ -184,7 +191,7 @@ def main() -> None:
                 c=cnum, cmap="viridis", s=float(args.point_size),
                 alpha=float(args.alpha), linewidths=0,
             )
-            fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, label=color_col)
+            fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, label=label_with_unit(color_col))
     else:
         ax.scatter(
             work[x_col], work[y_col], work[z_col],

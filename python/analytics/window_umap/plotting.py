@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+_PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from units import label_with_unit
 
 
 def plot_umap_2d_webgl(
@@ -40,7 +48,7 @@ def plot_umap_2d_webgl(
             marker["color"] = pd.to_numeric(plot_df[color_col], errors="coerce").to_numpy(dtype="float64")
             marker["colorscale"] = "Viridis"
             marker["showscale"] = True
-            marker["colorbar"] = {"title": color_col or ""}
+            marker["colorbar"] = {"title": label_with_unit(color_col or "")}
         else:
             cats = plot_df[color_col].astype(str)
             palette = pc.qualitative.Plotly
@@ -59,8 +67,8 @@ def plot_umap_2d_webgl(
         )
     )
     fig.update_layout(
-        title=title or f"{x_col} vs {y_col}",
-        xaxis_title=x_col,
-        yaxis_title=y_col,
+        title=title or f"{label_with_unit(x_col)} vs {label_with_unit(y_col)}",
+        xaxis_title=label_with_unit(x_col),
+        yaxis_title=label_with_unit(y_col),
     )
     fig.show()

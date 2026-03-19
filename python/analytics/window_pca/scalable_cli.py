@@ -3,14 +3,20 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import time
 import re
+import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
+_PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from units import label_with_unit
 from .model import apply_controls_weight, extract_matrix, fit_pca
 from .selection import select_pca_columns
 
@@ -340,7 +346,7 @@ def _render_color_grid_pages(
             good = np.isfinite(d["pca1"]) & np.isfinite(d["pca2"]) & np.isfinite(d["pca3"])
             d = d.loc[good]
             if len(d) == 0:
-                ax.set_title(f"{c} (no finite points)")
+                ax.set_title(f"{label_with_unit(c)} (no finite points)")
                 continue
 
             s = d[c]
@@ -375,7 +381,7 @@ def _render_color_grid_pages(
                         alpha=0.95,
                         linewidths=0,
                     )
-                ax.set_title(f"{c} (alarm emphasis)")
+                ax.set_title(f"{label_with_unit(c)} (alarm emphasis)")
             elif _is_discrete_col(c, s):
                 codes, _ = pd.factorize(s.astype(str).fillna("nan"), sort=True)
                 ax.scatter(
@@ -400,9 +406,9 @@ def _render_color_grid_pages(
                     alpha=0.18,
                     linewidths=0,
                 )
-                fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02)
+                fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, label=label_with_unit(c))
 
-            ax.set_title(c)
+            ax.set_title(label_with_unit(c))
             ax.set_xlabel("PC1")
             ax.set_ylabel("PC2")
             ax.set_zlabel("PC3")

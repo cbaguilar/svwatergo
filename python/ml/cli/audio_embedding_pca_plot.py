@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+_PYTHON_ROOT = Path(__file__).resolve().parents[2]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from units import label_with_unit
 from ..train.audio_pca_svm import _attach_split_labels, _normalize_split_value
 
 
@@ -134,7 +140,7 @@ def main() -> int:
             linewidths=0.0,
         )
         cb = fig.colorbar(sc, ax=ax)
-        cb.set_label(ccol)
+        cb.set_label(label_with_unit(ccol))
     else:
         cats = cser.astype("string").fillna("<NA>").astype(str)
         top = cats.value_counts().head(24).index.tolist()
@@ -160,7 +166,7 @@ def main() -> int:
     if source_f:
         title_extra.append(f"source={source_f}")
     suffix = (" | " + ", ".join(title_extra)) if title_extra else ""
-    ax.set_title(f"{args.title} | color={ccol}{suffix}")
+    ax.set_title(f"{args.title} | color={label_with_unit(ccol)}{suffix}")
     ax.set_xlabel("PCA 1")
     ax.set_ylabel("PCA 2")
     ax.grid(alpha=0.2)

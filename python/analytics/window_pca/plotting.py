@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
+_PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from units import label_with_unit
 from .model import decode_alarmword_bits, parse_int_maybe
 
 
@@ -153,9 +160,9 @@ def plot_pca_2d_live(
         bg_df = plot_df
 
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.set_title(title or f"{x_col} vs {y_col}")
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
+    ax.set_title(title or f"{label_with_unit(x_col)} vs {label_with_unit(y_col)}")
+    ax.set_xlabel(label_with_unit(x_col))
+    ax.set_ylabel(label_with_unit(y_col))
     if symlog_y:
         # PCA scores can be negative, so use symmetric log scale for visibility.
         ax.set_yscale("symlog", linthresh=float(symlog_linthresh))
@@ -177,7 +184,7 @@ def plot_pca_2d_live(
             if pd.api.types.is_numeric_dtype(c):
                 bc = pd.to_numeric(c, errors="coerce").to_numpy(dtype="float64")
                 sc = ax.scatter(bx, by, c=bc, s=point_size, alpha=alpha, linewidths=0)
-                fig.colorbar(sc, ax=ax, label=color_col)
+                fig.colorbar(sc, ax=ax, label=label_with_unit(color_col))
             else:
                 codes, _uniques = pd.factorize(c.astype(str), sort=True)
                 ax.scatter(bx, by, c=codes, s=point_size, alpha=alpha, linewidths=0)

@@ -3,11 +3,18 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+
+_PYTHON_ROOT = Path(__file__).resolve().parents[2]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from units import label_with_unit
 
 
 def _select_feature_atlas_columns(
@@ -104,6 +111,7 @@ def _render_feature_atlas(
                     vmax=hi,
                 )
                 cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+                cbar.set_label(label_with_unit(feat), fontsize=8)
                 cbar.ax.tick_params(labelsize=7)
                 feat_meta["mode"] = "numeric"
                 feat_meta["q01"] = lo
@@ -126,7 +134,7 @@ def _render_feature_atlas(
             feat_meta["n_categories"] = int(len(labels))
             feat_meta["categories"] = labels[:20]
 
-        ax.set_title(feat, fontsize=9)
+        ax.set_title(label_with_unit(feat), fontsize=9)
         ax.set_xlabel(xname)
         ax.set_ylabel(yname)
         ax.grid(alpha=0.2)

@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+
+_PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from units import label_with_unit
 
 
 def _load(df_path: str, *, time_col: str, state_col: Optional[str]) -> pd.DataFrame:
@@ -155,7 +162,7 @@ def main() -> int:
                 raise ValueError(f"Missing value column in inference parquet: {col}")
             ax = axes[i]
             pred_series = pd.to_numeric(primary[col], errors="coerce")
-            title = col
+            title = label_with_unit(col)
             primary_legend = primary_label
             ref_series = None
             if ref is not None:
@@ -188,7 +195,7 @@ def main() -> int:
                     label=overlay_legend,
                 )
             ax.set_title(title)
-            ax.set_ylabel(col)
+            ax.set_ylabel(label_with_unit(col))
             ax.grid(alpha=0.25)
             ax.legend(loc="best")
             ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
