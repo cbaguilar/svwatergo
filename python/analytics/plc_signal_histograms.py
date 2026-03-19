@@ -459,6 +459,33 @@ def _kde_rows(
     return pd.DataFrame(rows)
 
 
+def _compute_kde_curve(
+    x: np.ndarray,
+    *,
+    edges: np.ndarray,
+    points_per_signal: int = 256,
+) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    from scipy.stats import gaussian_kde
+
+    xx = np.asarray(x, dtype=float)
+    xx = xx[np.isfinite(xx)]
+    if xx.size < 2:
+        return None, None
+    if not np.isfinite(np.std(xx)) or float(np.std(xx)) <= 0:
+        return None, None
+    lo = float(edges[0])
+    hi = float(edges[-1])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return None, None
+    grid = np.linspace(lo, hi, max(32, int(points_per_signal)), dtype=float)
+    try:
+        kde = gaussian_kde(xx)
+        dens = np.asarray(kde(grid), dtype=float)
+    except Exception:
+        return None, None
+    return grid, dens
+
+
 def _render_group_pages(
     df: pd.DataFrame,
     *,
@@ -513,6 +540,13 @@ def _render_group_pages(
                 linewidth=0.6,
                 density=bool(density),
             )
+            kde_x, kde_y = _compute_kde_curve(x, edges=edges)
+            if kde_x is not None and kde_y is not None:
+                ax2 = ax.twinx()
+                ax2.plot(kde_x, kde_y, color="#d62728", linewidth=1.6, alpha=0.95)
+                ax2.set_ylabel("KDE", fontsize=8, color="#d62728")
+                ax2.tick_params(axis="y", labelsize=8, colors="#d62728")
+                ax2.grid(False)
             ax.set_title(label_with_unit(col), fontsize=10, fontweight="600")
             ax.set_xlabel(label_with_unit(col), fontsize=9)
             ax.set_ylabel("Density" if density else "Count", fontsize=9)
