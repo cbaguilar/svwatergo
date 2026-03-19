@@ -51,6 +51,9 @@ WINDOW_FEATURES_DEFAULT_EXCLUDE_REGEX = DEFAULT_EXCLUDE_REGEX + (
     r"__sec_since_transition$",
     r"__transitions$",
     r"__duty$",
+    r"tank(level|depth)",
+    r"flushduret",
+    r"powermeter",
 )
 
 
