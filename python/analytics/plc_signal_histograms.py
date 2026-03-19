@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import math
+import os
+import re
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Sequence
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+
+import matplotlib
+import numpy as np
+import pandas as pd
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from python.units import label_with_unit
+
+
+DEFAULT_INCLUDE_REGEX = (
+    r"flow",
+    r"pressure",
+    r"conduct",
+    r"tds",
+    r"nitrate",
+)
+
+DEFAULT_EXCLUDE_REGEX = (
+    r"^total.*flow",
+    r"^daily.*flow",
+    r"state",
+    r"alarm",
+    r"run$",
+    r"mode",
+    r"command",
+    r"setpoint",
+)
+
+
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description=(
+            "Render histogram atlases for PLC flow, pressure, conductivity, and nitrate signals over a time range. "
+            "Discovers daily raw PLC parquet files by site/date and writes per-group PNGs plus CSV/JSON summaries."
+        )
+    )
+    p.add_argument("--local-root", required=True, help="Root directory containing raw PLC parquet days")
+    p.add_argument("--site", required=True, help="Site name, e.g. bluerock/pryorfarm/santateresa")
+    p.add_argument("--date-from", required=True, help="Start date YYYY-MM-DD (inclusive)")
+    p.add_argument("--date-to", required=True, help="End date YYYY-MM-DD (inclusive)")
+    p.add_argument("--timestamp-col", default="plctime", help="Timestamp column")
+    p.add_argument("--start", default=None, help="Optional UTC timestamp start filter (inclusive)")
+    p.add_argument("--end", default=None, help="Optional UTC timestamp end filter (exclusive)")
+    p.add_argument("--bins", type=int, default=80, help="Histogram bin count")
+    p.add_argument(
+        "--include-regex",
+        action="append",
+        default=[],
+        help="Column include regex. Repeatable. Defaults target flow/pressure/conductivity/nitrate.",
+    )
+    p.add_argument(
+        "--exclude-regex",
+        action="append",
+        default=[],
+        help="Column exclude regex. Repeatable. Defaults exclude totals/dailies/states/runs.",
+    )
+    p.add_argument(
+        "--signal-col",
+        action="append",
+        default=[],
+        help="Explicit signal columns. Repeatable. If set, skips regex auto-discovery.",
+    )
+    p.add_argument("--max-cols", type=int, default=24, help="Max signals to render")
+    p.add_argument("--cols-per-page", type=int, default=6, help="Subplots per atlas page")
+    p.add_argument("--fig-width", type=float, default=16.0, help="Atlas figure width in inches")
+    p.add_argument("--fig-row-height", type=float, default=3.6, help="Per-row height in inches")
+    p.add_argument("--density", action="store_true", help="Plot density instead of counts")
+    p.add_argument("--out-dir", default="./hist_out", help="Output directory")
+    p.add_argument("--out-prefix", default=None, help="Output prefix")
+    p.add_argument("--verbose", action="store_true")
+    return p
+
+
+def _parse_date(s: str) -> dt.date:
+    return dt.date.fromisoformat(str(s))
+
+
+def _daterange(d0: dt.date, d1: dt.date) -> List[dt.date]:
+    if d1 < d0:
+        raise SystemExit("--date-to must be >= --date-from")
+    n = (d1 - d0).days
+    return [d0 + dt.timedelta(days=i) for i in range(n + 1)]
+
+
+def _sanitize(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_")
+
+
+def _candidate_day_paths(root: Path, site: str, day: str) -> List[Path]:
+    return [
+        root / site / f"date={day}" / "data.parquet",
+        root / f"site={site}" / f"date={day}" / "data.parquet",
+        root / "plc" / site / f"date={day}" / "data.parquet",
+        root / "plc" / f"site={site}" / f"date={day}" / "data.parquet",
+    ]
+
+
+def _discover_files(local_root: str, site: str, date_from: str, date_to: str) -> List[Path]:
+    root = Path(local_root)
+    out: List[Path] = []
+    for day in _daterange(_parse_date(date_from), _parse_date(date_to)):
+        day_str = day.isoformat()
+        for candidate in _candidate_day_paths(root, site, day_str):
+            if candidate.exists():
+                out.append(candidate)
+                break
+    return out
+
+
+def _matches_any(text: str, patterns: Sequence[str]) -> bool:
+    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+
+
+def _select_signal_cols(
+    schema_cols: Sequence[str],
+    explicit: Sequence[str],
+    include_regex: Sequence[str],
+    exclude_regex: Sequence[str],
+    max_cols: int,
+) -> List[str]:
+    if explicit:
+        chosen = []
+        schema_map = {c.lower(): c for c in schema_cols}
+        for col in explicit:
+            found = schema_map.get(col.lower())
+            if found:
+                chosen.append(found)
+        return chosen[: max(1, int(max_cols))]
+
+    includes = list(include_regex) or list(DEFAULT_INCLUDE_REGEX)
+    excludes = list(exclude_regex) or list(DEFAULT_EXCLUDE_REGEX)
+    chosen = []
+    for col in schema_cols:
+        cl = col.lower()
+        if not _matches_any(cl, includes):
+            continue
+        if _matches_any(cl, excludes):
+            continue
+        chosen.append(col)
+    chosen = sorted(dict.fromkeys(chosen))
+    return chosen[: max(1, int(max_cols))]
+
+
+def _group_for_column(col: str) -> str:
+    cl = col.lower()
+    if "pressure" in cl:
+        return "pressure"
+    if "flow" in cl:
+        return "flow"
+    if "conduct" in cl or "tds" in cl or "nitrate" in cl:
+        return "water_quality"
+    return "other"
+
+
+def _load_data(
+    files: Sequence[Path],
+    timestamp_col: str,
+    signal_cols: Sequence[str],
+    start: Optional[str],
+    end: Optional[str],
+) -> pd.DataFrame:
+    start_ts = pd.Timestamp(start, tz="UTC") if start else None
+    end_ts = pd.Timestamp(end, tz="UTC") if end else None
+    keep_cols = [timestamp_col] + list(signal_cols)
+
+    rows: List[pd.DataFrame] = []
+    for fp in files:
+        df = pd.read_parquet(fp, columns=keep_cols)
+        if df.empty:
+            continue
+        out = pd.DataFrame()
+        out["__ts"] = pd.to_datetime(df[timestamp_col], utc=True, errors="coerce")
+        for col in signal_cols:
+            out[col] = pd.to_numeric(df[col], errors="coerce")
+        out = out[out["__ts"].notna()]
+        if start_ts is not None:
+            out = out[out["__ts"] >= start_ts]
+        if end_ts is not None:
+            out = out[out["__ts"] < end_ts]
+        if not out.empty:
+            rows.append(out)
+
+    if not rows:
+        raise SystemExit("No rows found after filtering")
+    return pd.concat(rows, axis=0, ignore_index=True)
+
+
+def _summary_rows(df: pd.DataFrame, signal_cols: Sequence[str], bins: int) -> pd.DataFrame:
+    rows: List[Dict[str, object]] = []
+    for col in signal_cols:
+        x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
+        if x.size == 0:
+            continue
+        q05, q50, q95 = np.quantile(x, [0.05, 0.5, 0.95])
+        counts, edges = np.histogram(x, bins=max(2, int(bins)))
+        peak_idx = int(np.argmax(counts))
+        rows.append(
+            {
+                "signal_col": col,
+                "group": _group_for_column(col),
+                "n": int(x.size),
+                "mean": float(np.mean(x)),
+                "std": float(np.std(x)),
+                "min": float(np.min(x)),
+                "p05": float(q05),
+                "median": float(q50),
+                "p95": float(q95),
+                "max": float(np.max(x)),
+                "peak_bin_left": float(edges[peak_idx]),
+                "peak_bin_right": float(edges[peak_idx + 1]),
+                "peak_count": int(counts[peak_idx]),
+            }
+        )
+    return pd.DataFrame(rows).sort_values(["group", "signal_col"]).reset_index(drop=True)
+
+
+def _render_group_pages(
+    df: pd.DataFrame,
+    *,
+    signal_cols: Sequence[str],
+    out_dir: Path,
+    prefix: str,
+    group_name: str,
+    bins: int,
+    cols_per_page: int,
+    fig_width: float,
+    fig_row_height: float,
+    density: bool,
+    title_prefix: str,
+) -> List[str]:
+    if not signal_cols:
+        return []
+
+    written: List[str] = []
+    per_page = max(1, int(cols_per_page))
+    pages = math.ceil(len(signal_cols) / per_page)
+
+    for page_idx in range(pages):
+        chunk = list(signal_cols[page_idx * per_page : (page_idx + 1) * per_page])
+        n = len(chunk)
+        ncols = 2 if n > 1 else 1
+        nrows = math.ceil(n / ncols)
+        fig, axes = plt.subplots(
+            nrows=nrows,
+            ncols=ncols,
+            figsize=(fig_width, fig_row_height * nrows),
+            dpi=140,
+        )
+        axes_list = np.atleast_1d(axes).reshape(-1)
+        for ax, col in zip(axes_list, chunk):
+            x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
+            if x.size == 0:
+                ax.set_title(f"{label_with_unit(col)} (no data)")
+                ax.axis("off")
+                continue
+            ax.hist(
+                x,
+                bins=max(2, int(bins)),
+                color="#4c78a8",
+                edgecolor="#ffffff",
+                linewidth=0.6,
+                density=bool(density),
+            )
+            ax.set_title(label_with_unit(col), fontsize=10, fontweight="600")
+            ax.set_xlabel(label_with_unit(col), fontsize=9)
+            ax.set_ylabel("Density" if density else "Count", fontsize=9)
+            ax.grid(True, alpha=0.22)
+        for ax in axes_list[len(chunk) :]:
+            ax.axis("off")
+        fig.suptitle(
+            f"{title_prefix} | {group_name.title()} Histograms | page {page_idx + 1}/{pages}",
+            fontsize=13,
+            fontweight="600",
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+        out_png = out_dir / f"{prefix}_{group_name}_hist_page_{page_idx + 1:02d}.png"
+        fig.savefig(out_png, bbox_inches="tight")
+        plt.close(fig)
+        written.append(str(out_png))
+    return written
+
+
+def main() -> None:
+    args = build_argparser().parse_args()
+
+    files = _discover_files(args.local_root, args.site, args.date_from, args.date_to)
+    if not files:
+        raise SystemExit("No parquet files found for site/date range")
+
+    schema_cols = list(pd.read_parquet(files[0], engine="pyarrow").columns)
+    if args.timestamp_col not in schema_cols:
+        raise SystemExit(f"Timestamp column not found in schema: {args.timestamp_col}")
+
+    signal_cols = _select_signal_cols(
+        schema_cols=schema_cols,
+        explicit=args.signal_col,
+        include_regex=args.include_regex,
+        exclude_regex=args.exclude_regex,
+        max_cols=int(args.max_cols),
+    )
+    if not signal_cols:
+        raise SystemExit("No flow/pressure signal columns selected")
+
+    if args.verbose:
+        print(f"[INFO] files={len(files)} signals={len(signal_cols)} selected={signal_cols}")
+
+    df = _load_data(
+        files=files,
+        timestamp_col=args.timestamp_col,
+        signal_cols=signal_cols,
+        start=args.start,
+        end=args.end,
+    )
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prefix = _sanitize(args.out_prefix or f"{args.site}_{args.date_from}_to_{args.date_to}")
+    summary_df = _summary_rows(df, signal_cols=signal_cols, bins=int(args.bins))
+    out_csv = out_dir / f"{prefix}_signal_hist_summary.csv"
+    summary_df.to_csv(out_csv, index=False)
+
+    title_prefix = f"{args.site} | {args.date_from} to {args.date_to}"
+    artifacts: Dict[str, List[str] | str] = {
+        "summary_csv": str(out_csv),
+    }
+
+    for group_name in ("flow", "pressure", "water_quality", "other"):
+        group_cols = [c for c in signal_cols if _group_for_column(c) == group_name]
+        if not group_cols:
+            continue
+        written = _render_group_pages(
+            df,
+            signal_cols=group_cols,
+            out_dir=out_dir,
+            prefix=prefix,
+            group_name=group_name,
+            bins=int(args.bins),
+            cols_per_page=int(args.cols_per_page),
+            fig_width=float(args.fig_width),
+            fig_row_height=float(args.fig_row_height),
+            density=bool(args.density),
+            title_prefix=title_prefix,
+        )
+        artifacts[f"{group_name}_pages"] = written
+
+    out_meta = out_dir / f"{prefix}_signal_hist_meta.json"
+    meta = {
+        "site": args.site,
+        "date_from": args.date_from,
+        "date_to": args.date_to,
+        "start": args.start,
+        "end": args.end,
+        "local_root": args.local_root,
+        "timestamp_col": args.timestamp_col,
+        "bins": int(args.bins),
+        "density": bool(args.density),
+        "files": [str(p) for p in files],
+        "rows_loaded": int(df.shape[0]),
+        "signal_cols": signal_cols,
+        "artifacts": artifacts,
+    }
+    out_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    print(f"[OK] wrote {out_csv}")
+    print(f"[OK] wrote {out_meta}")
+    for key, value in artifacts.items():
+        if isinstance(value, list):
+            print(f"[OK] wrote {len(value)} {key}")
+
+
+if __name__ == "__main__":
+    main()
