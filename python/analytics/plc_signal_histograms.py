@@ -520,7 +520,15 @@ def main() -> None:
     for split_name, split_df in split_frames:
         if split_df.empty:
             continue
-        summary_frames.append(_summary_rows(split_df, signal_cols=signal_cols, bins=int(args.bins), split_label=split_name))
+        summary_frames.append(
+            _summary_rows(
+                split_df,
+                signal_cols=signal_cols,
+                bins=int(args.bins),
+                args=args,
+                split_label=split_name,
+            )
+        )
         summary_frames[-1]["bin_width"] = summary_frames[-1]["group"].map(
             lambda g: _bin_width_for_group(str(g), args)
         )
