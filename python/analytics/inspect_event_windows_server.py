@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import argparse
+import cgi
 import glob
+import hashlib
 import io
 import json
 import mimetypes
+import subprocess
 import sys
+import tempfile
+import time
+import uuid
 import wave
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -42,6 +47,18 @@ DEFAULT_SAMPLES_GLOB = (
     "dataset=audio_event_dataset/site=*/window_s=10/samples.parquet"
 )
 DEFAULT_MODELS_DIR = DEFAULT_DATA_ROOT
+DEFAULT_UPLOAD_ROOT = Path(tempfile.gettempdir()) / "segment_inspector_uploads"
+DEFAULT_UPLOAD_MODEL = (
+    "/mnt/d/datasets/svwatergo/domain_matrix/source/checkpoints/"
+    "train_bluerock__rpi_audio_auxsweep_1p0_ep15/audio_pretrained_embedding_multitask_best.pt"
+)
+DEFAULT_UPLOAD_MODEL_CANDIDATES = [
+    DEFAULT_UPLOAD_MODEL,
+    (
+        "/mnt/d/datasets/svwatergo/domain_matrix/source/checkpoints/"
+        "train_bluerock__rpi_audio_auxsweep_1.0/audio_pretrained_embedding_multitask_best.pt"
+    ),
+]
 PARQUET_PRESETS = [
     (
         "Bluerock Camera 5 PCA",
@@ -105,6 +122,8 @@ UI_HTML = """<!doctype html>
   <div style="margin:6px 0;">
     <a href="/parquet" target="_blank" rel="noopener">Open Parquet Query Page</a>
     |
+    <a href="/upload" target="_blank" rel="noopener">Open Upload Inference Page</a>
+    |
     <a href="#" onclick="loadDir(''); return false;">Browse Raw Dataset</a>
     |
     <a href="/raw/" target="_blank" rel="noopener">Open Static /raw/ Browser</a>
@@ -155,6 +174,7 @@ UI_HTML = """<!doctype html>
         <label>model kind</label>
         <select id="modelKind">
           <option value="auto">auto</option>
+          <option value="multitask_panns">multitask_panns</option>
           <option value="pca_svm">pca_svm</option>
           <option value="tiny_cnn">tiny_cnn</option>
           <option value="frozen_embed_panns">frozen_embed_panns</option>
@@ -265,9 +285,17 @@ async function loadModels() {
     modelEl.value = v;
     const vl = v.toLowerCase();
     if (vl.endsWith('.pt') || vl.endsWith('.pth')) {
-      document.getElementById('modelKind').value = 'tiny_cnn';
+      if (vl.includes('audio_pretrained_embedding_multitask') || vl.includes('auxsweep') || vl.includes('multitask')) {
+        document.getElementById('modelKind').value = 'multitask_panns';
+      } else {
+        document.getElementById('modelKind').value = 'tiny_cnn';
+      }
     } else if (vl.includes('frozen_mlp_head') || vl.endsWith('.joblib')) {
-      document.getElementById('modelKind').value = 'frozen_embed_panns';
+      if (vl.includes('frozen_mlp_head')) {
+        document.getElementById('modelKind').value = 'frozen_embed_panns';
+      } else {
+        document.getElementById('modelKind').value = 'pca_svm';
+      }
     } else {
       document.getElementById('modelKind').value = 'pca_svm';
     }
@@ -468,6 +496,194 @@ async function loadDir(path) {
 loadSummary().catch(e => alert(e.message));
 loadWindows().catch(e => alert(e.message));
 loadDir('').catch(e => console.log(e.message));
+</script>
+</body>
+</html>
+"""
+
+UPLOAD_HTML = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Segment Upload Inspector</title>
+  <style>
+    body { font-family: sans-serif; margin: 12px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    .panel { border: 1px solid #ddd; padding: 10px; margin-top: 12px; }
+    label { font-size: 12px; color: #333; display:block; }
+    input, select, button { padding: 6px; font-size: 13px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+    th, td { border: 1px solid #ddd; padding: 6px; font-size: 12px; text-align: left; vertical-align: top; }
+    th { background: #f3f3f3; position: sticky; top: 0; }
+    pre { white-space: pre-wrap; font-size: 12px; max-height: 360px; overflow: auto; }
+    .mono { font-family: monospace; }
+    img { max-width: 100%; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <h2>Segment Upload Inspector</h2>
+  <div style="margin:6px 0;">
+    <a href="/" rel="noopener">Open Event Window Inspector</a>
+    |
+    <a href="/parquet" rel="noopener">Open Parquet Query Page</a>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <div style="min-width:36%">
+        <label>audio file (`.wav` or `.webm`)</label>
+        <input id="audioFile" type="file" accept=".wav,.wave,.webm,audio/*,video/webm" />
+      </div>
+      <div style="min-width:40%">
+        <label>model path</label>
+        <input id="modelPath" style="width:100%" />
+      </div>
+      <div style="min-width:22%">
+        <label>checkpoint</label>
+        <select id="modelSelect" style="width:100%"></select>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>model kind</label>
+        <select id="modelKind">
+          <option value="auto">auto</option>
+          <option value="multitask_panns">multitask_panns</option>
+          <option value="frozen_embed_panns">frozen_embed_panns</option>
+          <option value="tiny_cnn">tiny_cnn</option>
+          <option value="pca_svm">pca_svm</option>
+        </select>
+      </div>
+      <div>
+        <label>window seconds</label>
+        <input id="windowSeconds" type="number" step="0.5" min="0.5" value="10" />
+      </div>
+      <div><label>&nbsp;</label><button onclick="loadModels()">Refresh Models</button></div>
+      <div><label>&nbsp;</label><button onclick="runUploadInfer()">Upload + Infer</button></div>
+    </div>
+    <pre id="status" class="mono"></pre>
+  </div>
+
+  <div class="panel">
+    <div><b>Normalized Audio</b>: <span id="audioInfo" class="mono"></span></div>
+    <audio id="audioPlayer" controls style="width:100%; margin-top:8px;"></audio>
+  </div>
+
+  <div class="panel">
+    <div><b>Waveform + Spectrogram</b></div>
+    <img id="plotImg" />
+  </div>
+
+  <div class="panel">
+    <div><b>Window Predictions</b></div>
+    <table id="predTbl">
+      <thead><tr>
+        <th>window</th><th>start_s</th><th>end_s</th><th>label</th><th>confidence</th><th>states</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div><b>Raw Output</b></div>
+    <pre id="rawOut"></pre>
+  </div>
+
+<script>
+async function jget(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(await r.text());
+  return await r.json();
+}
+function esc(x) { return String(x ?? ''); }
+function chooseKindFromPath(v) {
+  const s = String(v || '').toLowerCase();
+  if (!s) return 'auto';
+  if (s.includes('audio_pretrained_embedding_multitask') || s.includes('auxsweep') || s.includes('multitask')) return 'multitask_panns';
+  if (s.includes('frozen_mlp_head')) return 'frozen_embed_panns';
+  if (s.endsWith('.pt') || s.endsWith('.pth')) return 'tiny_cnn';
+  return 'pca_svm';
+}
+async function loadDefaults() {
+  const d = await jget('/api/summary');
+  const modelEl = document.getElementById('modelPath');
+  const kindEl = document.getElementById('modelKind');
+  const pref = ((d.default_models || {}).preferred_upload_model || '').trim();
+  if (!modelEl.value.trim() && pref) {
+    modelEl.value = pref;
+    kindEl.value = chooseKindFromPath(pref);
+  }
+  await loadModels();
+}
+async function loadModels() {
+  const d = await jget('/api/models');
+  const sel = document.getElementById('modelSelect');
+  const modelEl = document.getElementById('modelPath');
+  const current = (modelEl.value || '').trim();
+  sel.innerHTML = '';
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = '-- select checkpoint --';
+  sel.appendChild(empty);
+  for (const p of (d.models || [])) {
+    const o = document.createElement('option');
+    o.value = String(p);
+    o.textContent = String(p).replace((d.root || ''), '').replace(/^\\//, '');
+    if (current && current === o.value) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => {
+    const v = (sel.value || '').trim();
+    if (!v) return;
+    modelEl.value = v;
+    document.getElementById('modelKind').value = chooseKindFromPath(v);
+  };
+}
+function renderPredictions(rows) {
+  const tb = document.querySelector('#predTbl tbody');
+  tb.innerHTML = '';
+  for (const row of (rows || [])) {
+    const stateText = Array.isArray(row.states) ? row.states.map((s) =>
+      `${esc(s.name)}=${esc(s.predicted_state ?? s.predicted ?? '')} (p=${Number(s.probability_on ?? s.probability ?? 0).toFixed(3)}, c=${Number(s.confidence ?? 0).toFixed(3)})`
+    ).join(' | ') : '';
+    const conf = row.pred_confidence_mean ?? row.pred_confidence ?? row.confidence ?? '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(row.window_index)}</td>
+      <td>${esc(row.start_sec)}</td>
+      <td>${esc(row.end_sec)}</td>
+      <td class="mono">${esc(row.pred_label || row.prediction_label || '')}</td>
+      <td>${conf === '' ? '' : Number(conf).toFixed(3)}</td>
+      <td class="mono">${esc(stateText)}</td>`;
+    tb.appendChild(tr);
+  }
+}
+async function runUploadInfer() {
+  const fileEl = document.getElementById('audioFile');
+  const model = document.getElementById('modelPath').value.trim();
+  const kind = document.getElementById('modelKind').value;
+  const windowSeconds = document.getElementById('windowSeconds').value.trim();
+  const file = fileEl.files && fileEl.files[0];
+  if (!file) throw new Error('select an audio file first');
+  if (!model) throw new Error('model path is required');
+  document.getElementById('status').textContent = 'uploading + running inference...';
+  const fd = new FormData();
+  fd.append('audio', file);
+  fd.append('model', model);
+  fd.append('model_kind', kind || 'auto');
+  fd.append('window_seconds', windowSeconds || '10');
+  const r = await fetch('/api/upload_infer', { method: 'POST', body: fd });
+  if (!r.ok) throw new Error(await r.text());
+  const d = await r.json();
+  document.getElementById('status').textContent =
+    `normalized=${esc((d.normalized_audio || {}).path || '')} windows=${esc(d.n_windows || 0)} effective_window_s=${esc(d.effective_window_seconds || '')}`;
+  document.getElementById('audioInfo').textContent = esc((d.normalized_audio || {}).path || '');
+  document.getElementById('audioPlayer').src = esc(d.normalized_audio_url || '');
+  document.getElementById('plotImg').src = esc(d.plot_png_url || '');
+  renderPredictions(d.windows || []);
+  document.getElementById('rawOut').textContent = JSON.stringify(d, null, 2);
+}
+loadDefaults().catch(e => { document.getElementById('status').textContent = e.message; });
 </script>
 </body>
 </html>
@@ -702,11 +918,18 @@ def _build_root_aliases(roots: List[Path]) -> Dict[str, Path]:
 
 
 class AppState:
-    def __init__(self, samples_paths: List[Path], allowed_roots: List[Path], models_dir: Path) -> None:
+    def __init__(self, samples_paths: List[Path], allowed_roots: List[Path], models_dir: Path, upload_root: Path) -> None:
         self.samples_paths = [p.resolve() for p in samples_paths]
-        self.allowed_roots = allowed_roots
-        self.allowed_root_aliases = _build_root_aliases(self.allowed_roots)
         self.models_dir = models_dir
+        self.upload_root = upload_root.resolve()
+        self.upload_root.mkdir(parents=True, exist_ok=True)
+        roots = [p.resolve() for p in allowed_roots]
+        if self.models_dir.exists() and all(self.models_dir.resolve() != r for r in roots):
+            roots.append(self.models_dir.resolve())
+        if all(self.upload_root != r for r in roots):
+            roots.append(self.upload_root)
+        self.allowed_roots = roots
+        self.allowed_root_aliases = _build_root_aliases(self.allowed_roots)
         if not self.samples_paths:
             raise ValueError("No samples parquet files provided.")
         dfs: List[pd.DataFrame] = []
@@ -789,6 +1012,7 @@ class AppState:
         derived_root = self.allowed_roots[0]
         svm_model = derived_root / "checkpoints" / "bluerock_10s_svm_ropumprun" / "audio_pca_svm_model.joblib"
         tiny_model = derived_root / "checkpoints" / "bluerock_10s_tiny_cnn_ropumprun" / "audio_tiny_cnn_model.pt"
+        multitask_model = self._resolve_default_upload_model()
         return {
             "samples_parquet": str(self.samples_paths[0]),
             "samples_parquets": [str(p) for p in self.samples_paths],
@@ -804,8 +1028,12 @@ class AppState:
                 "svm_exists": bool(svm_model.exists()),
                 "tiny_cnn_path": str(tiny_model),
                 "tiny_cnn_exists": bool(tiny_model.exists()),
+                "multitask_path": str(multitask_model),
+                "multitask_exists": bool(multitask_model.exists()),
+                "preferred_upload_model": str(multitask_model),
             },
             "models_dir": str(self.models_dir),
+            "upload_root": str(self.upload_root),
         }
 
     def list_models(self, *, limit: int = 1000) -> Dict[str, Any]:
@@ -815,7 +1043,20 @@ class AppState:
         paths = [p for p in root.rglob("*.pt") if p.is_file()]
         paths += [p for p in root.rglob("*.pth") if p.is_file()]
         paths += [p for p in root.rglob("*.joblib") if p.is_file()]
-        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        preferred = self._resolve_default_upload_model().resolve()
+
+        def _sort_key(p: Path) -> Any:
+            try:
+                is_pref = int(p.resolve() == preferred)
+            except Exception:
+                is_pref = 0
+            try:
+                mtime = float(p.stat().st_mtime)
+            except Exception:
+                mtime = 0.0
+            return (-is_pref, -mtime, str(p))
+
+        paths.sort(key=_sort_key)
         models = [str(p) for p in paths[: max(1, min(int(limit), 5000))]]
         return {"root": str(root), "models": models}
 
@@ -942,19 +1183,15 @@ class AppState:
         if not model_p.exists():
             raise FileNotFoundError(str(model_p))
 
-        kind = str(model_kind or "auto").strip().lower()
-        if kind not in {"auto", "pca_svm", "tiny_cnn", "frozen_embed_panns"}:
-            raise ValueError("model_kind must be one of auto, pca_svm, tiny_cnn, frozen_embed_panns")
-        if kind == "auto":
-            name_l = model_p.name.lower()
-            if model_p.suffix.lower() in (".pt", ".pth"):
-                kind = "tiny_cnn"
-            elif "frozen_mlp_head" in name_l:
-                kind = "frozen_embed_panns"
-            else:
-                kind = "pca_svm"
+        kind = self._resolve_model_kind(model_p=model_p, requested_kind=model_kind)
 
-        if kind == "tiny_cnn":
+        if kind == "multitask_panns":
+            pred = self._infer_multitask_audio_windows(
+                model_path=model_p,
+                wav_path=wav_p,
+                window_seconds=10.0,
+            )
+        elif kind == "tiny_cnn":
             from python.ml.train.audio_tiny_cnn import predict_audio_tiny_cnn  # type: ignore
 
             pred = predict_audio_tiny_cnn(model_path=model_p, wav_path=wav_p)
@@ -991,6 +1228,68 @@ class AppState:
             "model_kind": kind,
             "audio_stats": stats,
             "prediction": pred,
+        }
+
+    def infer_uploaded_audio(
+        self,
+        *,
+        upload_name: str,
+        upload_bytes: bytes,
+        model: str,
+        model_kind: str = "auto",
+        window_seconds: float = 10.0,
+    ) -> Dict[str, Any]:
+        model_p = self._check_allowed(model)
+        if not model_p.exists():
+            raise FileNotFoundError(str(model_p))
+        kind = self._resolve_model_kind(model_p=model_p, requested_kind=model_kind)
+        job_dir = self._make_upload_job_dir()
+        src_name = _sanitize_upload_name(upload_name or "upload.bin")
+        src_path = job_dir / src_name
+        src_path.write_bytes(upload_bytes)
+        normalized_wav = job_dir / f"{src_path.stem}_normalized.wav"
+        _convert_to_wav_ffmpeg(src=src_path, dst=normalized_wav, sample_rate=32000, channels=1, pcm_codec="pcm_s16le")
+        plot_path = job_dir / f"{normalized_wav.stem}_wave_spec.png"
+        y, sr = _load_wav_for_spec(normalized_wav)
+        plot_path.write_bytes(_plot_waveform_and_spectrogram_png(y, sample_rate=sr, title=src_name))
+
+        effective_window_seconds = float(window_seconds)
+        if kind in {"pca_svm", "tiny_cnn", "frozen_embed_panns"}:
+            effective_window_seconds = self._model_target_seconds(model_p=model_p, kind=kind, fallback=float(window_seconds))
+
+        if kind == "multitask_panns":
+            pred = self._infer_multitask_audio_windows(
+                model_path=model_p,
+                wav_path=normalized_wav,
+                window_seconds=effective_window_seconds,
+            )
+        else:
+            pred = self._infer_classic_audio_windows(
+                model_path=model_p,
+                wav_path=normalized_wav,
+                model_kind=kind,
+                window_seconds=effective_window_seconds,
+                scratch_dir=job_dir / "segments",
+            )
+
+        return {
+            "input": {
+                "filename": src_name,
+                "size_bytes": int(len(upload_bytes)),
+                "content_hash": hashlib.sha1(upload_bytes).hexdigest(),
+                "path": str(src_path),
+            },
+            "normalized_audio": pred.pop("normalized_audio", self._audio_file_stats(normalized_wav)),
+            "normalized_audio_url": f"/audio?path={quote(str(normalized_wav))}",
+            "plot_png": {
+                "path": str(plot_path),
+                "size_bytes": int(plot_path.stat().st_size),
+            },
+            "plot_png_url": f"/image?path={quote(str(plot_path))}",
+            "model": str(model_p),
+            "model_kind": kind,
+            "effective_window_seconds": float(effective_window_seconds),
+            **pred,
         }
 
     def render_spectrogram_png(
@@ -1033,6 +1332,316 @@ class AppState:
             except Exception:
                 continue
         raise PermissionError(f"path outside allowed roots: {p}")
+
+    def _make_upload_job_dir(self) -> Path:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        out = self.upload_root / f"{stamp}_{uuid.uuid4().hex[:10]}"
+        out.mkdir(parents=True, exist_ok=False)
+        return out
+
+    def _resolve_default_upload_model(self) -> Path:
+        for cand in DEFAULT_UPLOAD_MODEL_CANDIDATES:
+            p = Path(cand).expanduser().resolve()
+            if p.exists():
+                return p
+        if self.models_dir.exists():
+            for patt in ("audio_pretrained_embedding_multitask_best.pt", "*.pt", "*.pth", "*.joblib"):
+                for p in self.models_dir.rglob(patt):
+                    if not p.is_file():
+                        continue
+                    name_l = p.name.lower()
+                    path_l = str(p).lower()
+                    if "bluerock" in path_l and ("rpi_audio" in path_l or "auxsweep" in path_l or "multitask" in name_l):
+                        return p.resolve()
+            for patt in ("audio_pretrained_embedding_multitask_best.pt", "*.pt", "*.pth", "*.joblib"):
+                for p in self.models_dir.rglob(patt):
+                    if p.is_file():
+                        return p.resolve()
+        return Path(DEFAULT_UPLOAD_MODEL).expanduser().resolve()
+
+    def _resolve_model_kind(self, *, model_p: Path, requested_kind: str) -> str:
+        kind = str(requested_kind or "auto").strip().lower()
+        allowed = {"auto", "pca_svm", "tiny_cnn", "frozen_embed_panns", "multitask_panns"}
+        if kind not in allowed:
+            raise ValueError("model_kind must be one of auto, pca_svm, tiny_cnn, frozen_embed_panns, multitask_panns")
+        if kind != "auto":
+            return kind
+        name_l = model_p.name.lower()
+        path_l = str(model_p).lower()
+        if "audio_pretrained_embedding_multitask" in name_l or "auxsweep" in path_l or "multitask" in path_l:
+            return "multitask_panns"
+        if "frozen_mlp_head" in name_l:
+            return "frozen_embed_panns"
+        if model_p.suffix.lower() in (".pt", ".pth"):
+            return "tiny_cnn"
+        return "pca_svm"
+
+    def _model_target_seconds(self, *, model_p: Path, kind: str, fallback: float) -> float:
+        try:
+            if kind == "pca_svm":
+                from python.ml.train.audio_pca_svm import load_audio_pca_svm_bundle  # type: ignore
+
+                bundle = load_audio_pca_svm_bundle(model_p)
+                return float((bundle.get("mel_config") or {}).get("target_seconds", fallback))
+            if kind == "tiny_cnn":
+                from python.ml.train.audio_tiny_cnn import load_audio_tiny_cnn_bundle  # type: ignore
+
+                bundle = load_audio_tiny_cnn_bundle(model_p)
+                return float((bundle.get("mel_config") or {}).get("target_seconds", fallback))
+            if kind == "frozen_embed_panns":
+                from python.ml.train.audio_pretrained_embeddings import load_frozen_pretrained_embedding_head  # type: ignore
+
+                bundle = load_frozen_pretrained_embedding_head(model_p)
+                return float(bundle.get("target_seconds", fallback))
+        except Exception:
+            return float(fallback)
+        return float(fallback)
+
+    def _audio_file_stats(self, path: Path) -> Dict[str, Any]:
+        stats: Dict[str, Any] = {"path": str(path), "size_bytes": int(path.stat().st_size)}
+        try:
+            with wave.open(str(path), "rb") as wf:
+                sample_rate = int(wf.getframerate())
+                n_channels = int(wf.getnchannels())
+                n_frames = int(wf.getnframes())
+                sample_width = int(wf.getsampwidth())
+            stats.update(
+                {
+                    "sample_rate": sample_rate,
+                    "n_channels": n_channels,
+                    "n_frames": n_frames,
+                    "sample_width_bytes": sample_width,
+                    "duration_sec": (float(n_frames) / float(sample_rate) if sample_rate > 0 else None),
+                }
+            )
+        except Exception:
+            pass
+        return stats
+
+    def _infer_classic_audio_windows(
+        self,
+        *,
+        model_path: Path,
+        wav_path: Path,
+        model_kind: str,
+        window_seconds: float,
+        scratch_dir: Path,
+    ) -> Dict[str, Any]:
+        y, sr = _load_wav_for_spec(wav_path)
+        if y.size == 0:
+            raise ValueError("empty normalized wav")
+        window_n = max(1, int(round(float(window_seconds) * float(sr))))
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        windows: List[Dict[str, Any]] = []
+        total_samples = int(y.shape[0])
+        n_windows = int(np.ceil(float(total_samples) / float(window_n)))
+        for idx in range(n_windows):
+            i0 = idx * window_n
+            i1 = min(total_samples, i0 + window_n)
+            chunk = np.asarray(y[i0:i1], dtype=np.float32)
+            padded = np.zeros((window_n,), dtype=np.float32)
+            padded[: len(chunk)] = chunk
+            seg_path = scratch_dir / f"window_{idx:04d}.wav"
+            _write_wav_pcm16(seg_path, padded, sample_rate=int(sr))
+            if model_kind == "tiny_cnn":
+                from python.ml.train.audio_tiny_cnn import predict_audio_tiny_cnn  # type: ignore
+
+                pred = predict_audio_tiny_cnn(model_path=model_path, wav_path=seg_path)
+            elif model_kind == "frozen_embed_panns":
+                from python.ml.train.audio_pretrained_embeddings import predict_audio_pretrained_frozen_head  # type: ignore
+
+                pred = predict_audio_pretrained_frozen_head(model_path=model_path, wav_path=seg_path)
+            else:
+                from python.ml.train.audio_pca_svm import predict_audio_pca_svm  # type: ignore
+
+                pred = predict_audio_pca_svm(model_path=model_path, wav_path=seg_path)
+            windows.append(
+                {
+                    "window_index": int(idx),
+                    "start_sec": round(float(i0) / float(sr), 3),
+                    "end_sec": round(float(i1) / float(sr), 3),
+                    "duration_sec": round(float(i1 - i0) / float(sr), 3),
+                    "padded_duration_sec": round(float(window_n) / float(sr), 3),
+                    **_summarize_classic_prediction(pred),
+                }
+            )
+        return {
+            "normalized_audio": self._audio_file_stats(wav_path),
+            "n_windows": int(len(windows)),
+            "windows": windows,
+        }
+
+    def _infer_multitask_audio_windows(
+        self,
+        *,
+        model_path: Path,
+        wav_path: Path,
+        window_seconds: float,
+    ) -> Dict[str, Any]:
+        try:
+            import torch  # type: ignore
+            from scipy import signal  # type: ignore
+        except Exception as e:
+            raise RuntimeError("Missing torch/scipy for multitask inference") from e
+
+        from python.ml.storage.audio import read_audio_path_ffmpeg  # type: ignore
+        from python.ml.train.audio_pretrained_embedding_multitask import AudioPretrainedEmbeddingMultitaskModelFactory  # type: ignore
+        from python.ml.train.audio_pretrained_embeddings import _PannsBackend  # type: ignore
+
+        ckpt = torch.load(str(model_path), map_location="cpu")
+        if not isinstance(ckpt, dict) or "state_dict" not in ckpt:
+            raise ValueError(f"Invalid multitask checkpoint: {model_path}")
+        task_mode = str(ckpt.get("task_mode", "multiclass")).strip().lower()
+        if task_mode not in {"multiclass", "multilabel", "multiregression"}:
+            raise ValueError(f"Unsupported multitask task_mode: {task_mode}")
+
+        y, sr, _subtype = read_audio_path_ffmpeg(wav_path, sample_rate=32000, mono=True)
+        y = np.asarray(y, dtype=np.float32)
+        if y.ndim > 1:
+            y = y.mean(axis=1)
+        if y.size == 0:
+            raise ValueError("empty normalized wav")
+        target_sr = 32000
+        if int(sr) != int(target_sr):
+            y = signal.resample_poly(y, int(target_sr), int(sr)).astype(np.float32, copy=False)
+            sr = int(target_sr)
+
+        window_n = max(1, int(round(float(window_seconds) * float(sr))))
+        total_samples = int(y.shape[0])
+        n_windows = int(np.ceil(float(total_samples) / float(window_n)))
+        chunks = np.zeros((n_windows, window_n), dtype=np.float32)
+        chunk_meta: List[Dict[str, Any]] = []
+        for idx in range(n_windows):
+            i0 = idx * window_n
+            i1 = min(total_samples, i0 + window_n)
+            clip = np.asarray(y[i0:i1], dtype=np.float32)
+            chunks[idx, : len(clip)] = clip
+            chunk_meta.append(
+                {
+                    "window_index": int(idx),
+                    "start_sec": round(float(i0) / float(sr), 3),
+                    "end_sec": round(float(i1) / float(sr), 3),
+                    "duration_sec": round(float(i1 - i0) / float(sr), 3),
+                    "padded_duration_sec": round(float(window_n) / float(sr), 3),
+                }
+            )
+
+        backend = _PannsBackend(device=("cuda" if torch.cuda.is_available() else "cpu"))
+        emb = backend.extract_embedding_np(chunks)
+        hidden = [int(v) for v in (ckpt.get("hidden") or [])]
+        z_dim = int(ckpt.get("z_dim", 64))
+        input_dim = int(ckpt.get("input_dim", int(emb.shape[1])))
+        y_dim = int(ckpt.get("n_targets", 0))
+        model = AudioPretrainedEmbeddingMultitaskModelFactory.build(
+            in_dim=input_dim,
+            hidden=hidden,
+            z_dim=z_dim,
+            y_dim=y_dim,
+            plc_dim=0,
+            drop=0.0,
+        )
+        model.load_state_dict(ckpt["state_dict"], strict=False)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+        model.eval()
+        x = torch.from_numpy(np.asarray(emb, dtype=np.float32)).to(device)
+        with torch.no_grad():
+            logits, z_latent, _ = model(x)
+
+        rows: List[Dict[str, Any]] = []
+        class_names = [str(v) for v in (ckpt.get("class_names") or [])]
+        target_cols = [str(v) for v in (ckpt.get("target_cols") or []) if str(v).strip()]
+        thresholds = np.asarray(
+            list(ckpt.get("inference_thresholds") or [float(ckpt.get("inference_threshold_default", 0.5))] * max(1, len(target_cols))),
+            dtype=np.float64,
+        )
+        if target_cols and thresholds.shape[0] != len(target_cols):
+            thresholds = np.asarray([float(ckpt.get("inference_threshold_default", 0.5))] * len(target_cols), dtype=np.float64)
+        z_np = z_latent.detach().cpu().numpy().astype(np.float32, copy=False)
+
+        if task_mode == "multiclass":
+            probs = torch.softmax(logits, dim=1).detach().cpu().numpy().astype(np.float32, copy=False)
+            pred_idx = np.argmax(probs, axis=1).astype(np.int64, copy=False)
+            for idx in range(n_windows):
+                label = class_names[int(pred_idx[idx])] if class_names and int(pred_idx[idx]) < len(class_names) else str(int(pred_idx[idx]))
+                rows.append(
+                    {
+                        **chunk_meta[idx],
+                        "pred_index": int(pred_idx[idx]),
+                        "pred_label": str(label),
+                        "pred_confidence": float(np.max(probs[idx])),
+                        "probabilities": {
+                            class_names[j] if j < len(class_names) else f"class_{j}": float(probs[idx, j])
+                            for j in range(probs.shape[1])
+                        },
+                        "latent_norm": float(np.linalg.norm(z_np[idx])),
+                    }
+                )
+        elif task_mode == "multilabel":
+            probs = torch.sigmoid(logits).detach().cpu().numpy().astype(np.float32, copy=False)
+            preds = (probs >= thresholds.reshape(1, -1)).astype(np.int64, copy=False)
+            for idx in range(n_windows):
+                states: List[Dict[str, Any]] = []
+                confs: List[float] = []
+                bits: List[str] = []
+                labels: List[str] = []
+                for j, name in enumerate(target_cols):
+                    p_on = float(probs[idx, j])
+                    conf = float(max(p_on, 1.0 - p_on))
+                    pred_on = int(preds[idx, j]) == 1
+                    confs.append(conf)
+                    bits.append(str(int(pred_on)))
+                    labels.append(f"{name}={'on' if pred_on else 'off'}")
+                    states.append(
+                        {
+                            "name": str(name),
+                            "probability_on": p_on,
+                            "threshold": float(thresholds[j]),
+                            "predicted": int(pred_on),
+                            "predicted_state": ("on" if pred_on else "off"),
+                            "confidence": conf,
+                        }
+                    )
+                rows.append(
+                    {
+                        **chunk_meta[idx],
+                        "pred_bits": "|".join(bits),
+                        "pred_label": "|".join(labels),
+                        "pred_confidence_mean": float(np.mean(confs)) if confs else None,
+                        "pred_confidence_min": float(np.min(confs)) if confs else None,
+                        "pred_confidence_combo": float(np.prod(np.asarray(confs, dtype=np.float64))) if confs else None,
+                        "states": states,
+                        "latent_norm": float(np.linalg.norm(z_np[idx])),
+                    }
+                )
+        else:
+            pred = logits.detach().cpu().numpy().astype(np.float32, copy=False)
+            reg_mean = np.asarray(ckpt.get("regression_target_mean") or [], dtype=np.float32)
+            reg_std = np.asarray(ckpt.get("regression_target_std") or [], dtype=np.float32)
+            if reg_mean.size and reg_std.size and reg_mean.shape[0] == pred.shape[1] and reg_std.shape[0] == pred.shape[1]:
+                pred = (pred * reg_std.reshape(1, -1)) + reg_mean.reshape(1, -1)
+            for idx in range(n_windows):
+                out_vals = {
+                    str(target_cols[j] if j < len(target_cols) else f"target_{j}"): float(pred[idx, j])
+                    for j in range(pred.shape[1])
+                }
+                rows.append(
+                    {
+                        **chunk_meta[idx],
+                        "pred_label": json.dumps(out_vals, sort_keys=True),
+                        "regression": out_vals,
+                        "latent_norm": float(np.linalg.norm(z_np[idx])),
+                    }
+                )
+
+        return {
+            "normalized_audio": self._audio_file_stats(wav_path),
+            "task_mode": task_mode,
+            "embedding_dim": int(emb.shape[1]),
+            "latent_dim": int(z_np.shape[1]) if z_np.ndim == 2 else 0,
+            "n_windows": int(len(rows)),
+            "windows": rows,
+        }
 
     def list_dir(self, path: str) -> Dict[str, Any]:
         p = self._check_allowed(path)
@@ -1240,6 +1849,27 @@ def _plot_wav_spec_png(y: np.ndarray, *, sample_rate: int, title: str) -> bytes:
     return buf.getvalue()
 
 
+def _plot_waveform_and_spectrogram_png(y: np.ndarray, *, sample_rate: int, title: str) -> bytes:
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+    y = np.asarray(y, dtype=np.float32)
+    t = np.arange(y.shape[0], dtype=np.float64) / max(float(sample_rate), 1.0)
+    fig, axes = plt.subplots(2, 1, figsize=(10, 6), constrained_layout=True)
+    axes[0].plot(t, y, linewidth=0.8, color="#005f73")
+    axes[0].set_title(f"Waveform: {title}")
+    axes[0].set_xlabel("time (s)")
+    axes[0].set_ylabel("amplitude")
+    axes[0].grid(alpha=0.2)
+    axes[1].specgram(y, NFFT=1024, Fs=float(sample_rate), noverlap=512, cmap="magma")
+    axes[1].set_title("Spectrogram")
+    axes[1].set_xlabel("time (s)")
+    axes[1].set_ylabel("freq (Hz)")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=140)
+    plt.close(fig)
+    return buf.getvalue()
+
+
 def _load_wav_for_spec(path: Path) -> tuple[np.ndarray, int]:
     if sf is not None:
         data, sr = sf.read(str(path), always_2d=False)
@@ -1265,6 +1895,78 @@ def _load_wav_for_spec(path: Path) -> tuple[np.ndarray, int]:
     if n_channels > 1:
         y = y.reshape(-1, n_channels).mean(axis=1)
     return y, int(rate)
+
+
+def _sanitize_upload_name(name: str) -> str:
+    base = Path(str(name or "upload.bin")).name
+    safe = "".join(ch if (ch.isalnum() or ch in {".", "_", "-"}) else "_" for ch in base)
+    safe = safe.strip("._") or "upload.bin"
+    return safe[:128]
+
+
+def _convert_to_wav_ffmpeg(
+    *,
+    src: Path,
+    dst: Path,
+    sample_rate: int,
+    channels: int,
+    pcm_codec: str,
+) -> None:
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(src),
+        "-vn",
+        "-ac",
+        str(int(channels)),
+        "-ar",
+        str(int(sample_rate)),
+        "-acodec",
+        str(pcm_codec),
+        str(dst),
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        raise RuntimeError("ffmpeg not found. Install ffmpeg.")
+    if res.returncode != 0:
+        raise RuntimeError((res.stderr or "").strip() or f"ffmpeg exit={res.returncode}")
+
+
+def _write_wav_pcm16(path: Path, y: np.ndarray, *, sample_rate: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    arr = np.asarray(y, dtype=np.float32)
+    arr = np.clip(arr, -1.0, 1.0)
+    pcm = np.asarray(np.round(arr * 32767.0), dtype=np.int16)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(int(sample_rate))
+        wf.writeframes(pcm.tobytes())
+
+
+def _summarize_classic_prediction(pred: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(pred)
+    if "prediction_label" in out and "pred_label" not in out:
+        out["pred_label"] = out.get("prediction_label")
+    if "predicted_label" in out and "pred_label" not in out:
+        out["pred_label"] = out.get("predicted_label")
+    if "predicted_class" in out and "pred_label" not in out:
+        out["pred_label"] = out.get("predicted_class")
+    if "predicted_index" in out and "pred_index" not in out:
+        out["pred_index"] = out.get("predicted_index")
+    probs = out.get("probabilities")
+    if isinstance(probs, dict) and probs:
+        out["pred_confidence"] = float(max(float(v) for v in probs.values()))
+    elif "pred_confidence" not in out:
+        for key in ("confidence", "probability", "score"):
+            if key in out:
+                out["pred_confidence"] = out[key]
+                break
+    return out
 
 
 def make_handler(state: AppState):
@@ -1302,6 +2004,9 @@ def make_handler(state: AppState):
                     return
                 if path == "/parquet":
                     self._write_html(PARQUET_QUERY_HTML)
+                    return
+                if path == "/upload":
+                    self._write_html(UPLOAD_HTML)
                     return
                 if path.startswith("/raw"):
                     raw_rel = unquote(path[len("/raw") :]).lstrip("/")
@@ -1394,6 +2099,18 @@ def make_handler(state: AppState):
                         return
                     self._write_bytes(state.read_audio_bytes(p), content_type="audio/wav", code=200)
                     return
+                if path == "/image":
+                    p = _q1(q, "path", "")
+                    if not p:
+                        self._write_json({"error": "path is required"}, code=400)
+                        return
+                    img_p = state._check_allowed(p)
+                    if not img_p.exists():
+                        self._write_json({"error": f"not found: {img_p}"}, code=404)
+                        return
+                    mime, _enc = mimetypes.guess_type(str(img_p))
+                    self._write_bytes(img_p.read_bytes(), content_type=(mime or "application/octet-stream"), code=200)
+                    return
                 if path == "/spectrogram":
                     png = state.render_spectrogram_png(
                         path=_q1(q, "path", ""),
@@ -1426,6 +2143,50 @@ def make_handler(state: AppState):
         def log_message(self, fmt: str, *args: Any) -> None:
             return
 
+        def do_POST(self) -> None:  # noqa: N802
+            try:
+                parsed = urlparse(self.path)
+                if parsed.path != "/api/upload_infer":
+                    self._write_json({"error": f"not found: {parsed.path}"}, code=404)
+                    return
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={
+                        "REQUEST_METHOD": "POST",
+                        "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                    },
+                )
+                file_item = form["audio"] if "audio" in form else None
+                if file_item is None or not getattr(file_item, "file", None):
+                    self._write_json({"error": "audio file is required"}, code=400)
+                    return
+                upload_name = str(getattr(file_item, "filename", "") or "upload.bin")
+                upload_bytes = file_item.file.read()
+                if not upload_bytes:
+                    self._write_json({"error": "uploaded file is empty"}, code=400)
+                    return
+                model = str(form.getfirst("model", "") or "").strip()
+                if not model:
+                    self._write_json({"error": "model is required"}, code=400)
+                    return
+                model_kind = str(form.getfirst("model_kind", "auto") or "auto")
+                window_seconds = float(str(form.getfirst("window_seconds", "10") or "10"))
+                out = state.infer_uploaded_audio(
+                    upload_name=upload_name,
+                    upload_bytes=upload_bytes,
+                    model=model,
+                    model_kind=model_kind,
+                    window_seconds=window_seconds,
+                )
+                self._write_json(out)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, code=404)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, code=403)
+            except Exception as exc:
+                self._write_json({"error": str(exc)}, code=500)
+
     return Handler
 
 
@@ -1456,7 +2217,7 @@ def main() -> int:
     if not roots:
         roots = _default_allowed_roots(sample_paths)
     models_dir = Path(args.models_dir).expanduser().resolve()
-    state = AppState(sample_paths, roots, models_dir=models_dir)
+    state = AppState(sample_paths, roots, models_dir=models_dir, upload_root=DEFAULT_UPLOAD_ROOT)
     handler = make_handler(state)
     server = ThreadingHTTPServer((str(args.host), int(args.port)), handler)
     print(f"[ok] serving http://{args.host}:{args.port}", flush=True)
