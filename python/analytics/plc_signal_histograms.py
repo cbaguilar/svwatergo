@@ -412,78 +412,33 @@ def _summary_rows(
     return pd.DataFrame(rows).sort_values(["group", "signal_col"]).reset_index(drop=True)
 
 
-def _kde_rows(
+def _ecdf_rows(
     df: pd.DataFrame,
     *,
     signal_cols: Sequence[str],
-    bins: int,
-    args: argparse.Namespace,
     split_label: Optional[str] = None,
-    points_per_signal: int = 256,
 ) -> pd.DataFrame:
-    from scipy.stats import gaussian_kde
-
     rows: List[Dict[str, object]] = []
     for col in signal_cols:
         x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
-        if x.size < 2:
+        if x.size == 0:
             continue
-        if not np.isfinite(np.std(x)) or float(np.std(x)) <= 0:
+        xx = np.sort(x[np.isfinite(x)])
+        if xx.size == 0:
             continue
+        y = np.arange(1, xx.size + 1, dtype=float) / float(xx.size)
         group_name = _group_for_column(col)
-        edges = _hist_edges(
-            x,
-            bins=max(2, int(bins)),
-            bin_width=_bin_width_for_signal(col, group_name, args),
-        )
-        lo = float(edges[0])
-        hi = float(edges[-1])
-        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-            continue
-        grid = np.linspace(lo, hi, max(32, int(points_per_signal)), dtype=float)
-        try:
-            kde = gaussian_kde(x)
-            dens = kde(grid)
-        except Exception:
-            continue
-        for gx, gy in zip(grid.tolist(), np.asarray(dens, dtype=float).tolist()):
+        for xv, yv in zip(xx.tolist(), y.tolist()):
             rows.append(
                 {
                     "signal_col": col,
                     "group": group_name,
                     "split": split_label or "all",
-                    "x": float(gx),
-                    "density": float(gy),
+                    "x": float(xv),
+                    "ecdf": float(yv),
                 }
             )
     return pd.DataFrame(rows)
-
-
-def _compute_kde_curve(
-    x: np.ndarray,
-    *,
-    edges: np.ndarray,
-    points_per_signal: int = 256,
-) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-    from scipy.stats import gaussian_kde
-
-    xx = np.asarray(x, dtype=float)
-    xx = xx[np.isfinite(xx)]
-    if xx.size < 2:
-        return None, None
-    if not np.isfinite(np.std(xx)) or float(np.std(xx)) <= 0:
-        return None, None
-    lo = float(edges[0])
-    hi = float(edges[-1])
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        return None, None
-    grid = np.linspace(lo, hi, max(32, int(points_per_signal)), dtype=float)
-    try:
-        kde = gaussian_kde(xx)
-        dens = np.asarray(kde(grid), dtype=float)
-    except Exception:
-        return None, None
-    return grid, dens
 
 
 def _render_group_pages(
@@ -540,13 +495,6 @@ def _render_group_pages(
                 linewidth=0.6,
                 density=bool(density),
             )
-            kde_x, kde_y = _compute_kde_curve(x, edges=edges)
-            if kde_x is not None and kde_y is not None:
-                ax2 = ax.twinx()
-                ax2.plot(kde_x, kde_y, color="#d62728", linewidth=1.6, alpha=0.95)
-                ax2.set_ylabel("KDE", fontsize=8, color="#d62728")
-                ax2.tick_params(axis="y", labelsize=8, colors="#d62728")
-                ax2.grid(False)
             ax.set_title(label_with_unit(col), fontsize=10, fontweight="600")
             ax.set_xlabel(label_with_unit(col), fontsize=9)
             ax.set_ylabel("Density" if density else "Count", fontsize=9)
@@ -562,6 +510,66 @@ def _render_group_pages(
         )
         fig.tight_layout(rect=[0, 0, 1, 0.97])
         out_png = out_dir / f"{prefix}_{group_name}_hist_page_{page_idx + 1:02d}.png"
+        fig.savefig(out_png, bbox_inches="tight")
+        plt.close(fig)
+        written.append(str(out_png))
+    return written
+
+
+def _render_ecdf_pages(
+    df: pd.DataFrame,
+    *,
+    signal_cols: Sequence[str],
+    out_dir: Path,
+    prefix: str,
+    group_name: str,
+    cols_per_page: int,
+    fig_width: float,
+    fig_row_height: float,
+    title_prefix: str,
+) -> List[str]:
+    if not signal_cols:
+        return []
+
+    written: List[str] = []
+    per_page = max(1, int(cols_per_page))
+    pages = math.ceil(len(signal_cols) / per_page)
+
+    for page_idx in range(pages):
+        chunk = list(signal_cols[page_idx * per_page : (page_idx + 1) * per_page])
+        n = len(chunk)
+        ncols = 2 if n > 1 else 1
+        nrows = math.ceil(n / ncols)
+        fig, axes = plt.subplots(
+            nrows=nrows,
+            ncols=ncols,
+            figsize=(fig_width, fig_row_height * nrows),
+            dpi=140,
+        )
+        axes_list = np.atleast_1d(axes).reshape(-1)
+        for ax, col in zip(axes_list, chunk):
+            x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
+            xx = np.sort(x[np.isfinite(x)])
+            if xx.size == 0:
+                ax.set_title(f"{label_with_unit(col)} (no data)")
+                ax.axis("off")
+                continue
+            y = np.arange(1, xx.size + 1, dtype=float) / float(xx.size)
+            ax.plot(xx, y, color="#d62728", linewidth=1.6, alpha=0.95)
+            ax.set_title(label_with_unit(col), fontsize=10, fontweight="600")
+            ax.set_xlabel(label_with_unit(col), fontsize=9)
+            ax.set_ylabel("ECDF", fontsize=9)
+            ax.set_ylim(0.0, 1.0)
+            ax.grid(True, alpha=0.22)
+        for ax in axes_list[len(chunk) :]:
+            ax.axis("off")
+        fig.suptitle(
+            alias_site_names(f"{title_prefix} | {group_name.title()} ECDFs | page {page_idx + 1}/{pages}"),
+            fontsize=13,
+            fontweight="600",
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+        out_png = out_dir / f"{prefix}_{group_name}_ecdf_page_{page_idx + 1:02d}.png"
         fig.savefig(out_png, bbox_inches="tight")
         plt.close(fig)
         written.append(str(out_png))
@@ -621,14 +629,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = _sanitize(args.out_prefix or f"{args.site}_{args.date_from}_to_{args.date_to}")
     summary_frames: List[pd.DataFrame] = []
-    kde_frames: List[pd.DataFrame] = []
+    ecdf_frames: List[pd.DataFrame] = []
     out_csv = out_dir / f"{prefix}_signal_hist_summary.csv"
-    out_kde_csv = out_dir / f"{prefix}_signal_kde.csv"
+    out_ecdf_csv = out_dir / f"{prefix}_signal_ecdf.csv"
 
     title_prefix = alias_site_names(f"{args.site} | {args.date_from} to {args.date_to}")
     artifacts: Dict[str, List[str] | str] = {
         "summary_csv": str(out_csv),
-        "kde_csv": str(out_kde_csv),
+        "ecdf_csv": str(out_ecdf_csv),
     }
 
     split_frames = [("all", df)]
@@ -656,15 +664,13 @@ def main() -> None:
         summary_frames[-1]["bin_width"] = summary_frames[-1]["signal_col"].map(
             lambda c: _bin_width_for_signal(str(c), _group_for_column(str(c)), args)
         )
-        kde_df = _kde_rows(
+        ecdf_df = _ecdf_rows(
             split_df,
             signal_cols=signal_cols,
-            bins=int(args.bins),
-            args=args,
             split_label=split_name,
         )
-        if not kde_df.empty:
-            kde_frames.append(kde_df)
+        if not ecdf_df.empty:
+            ecdf_frames.append(ecdf_df)
         split_prefix = prefix if split_name == "all" else f"{prefix}_{split_name}"
         split_title_prefix = title_prefix
         if split_state_col and split_name != "all":
@@ -691,13 +697,28 @@ def main() -> None:
             split_key = _sanitize(split_name)
             artifact_key = f"{group_name}_pages" if split_name == "all" else f"{split_key}_{group_name}_pages"
             artifacts[artifact_key] = written
+            ecdf_written = _render_ecdf_pages(
+                split_df,
+                signal_cols=group_cols,
+                out_dir=out_dir,
+                prefix=split_prefix,
+                group_name=group_name,
+                cols_per_page=int(args.cols_per_page),
+                fig_width=float(args.fig_width),
+                fig_row_height=float(args.fig_row_height),
+                title_prefix=split_title_prefix,
+            )
+            ecdf_artifact_key = (
+                f"{group_name}_ecdf_pages" if split_name == "all" else f"{split_key}_{group_name}_ecdf_pages"
+            )
+            artifacts[ecdf_artifact_key] = ecdf_written
 
     if not summary_frames:
         raise SystemExit("No summary/stat rows produced after filtering")
     summary_df = pd.concat(summary_frames, axis=0, ignore_index=True)
     summary_df.to_csv(out_csv, index=False)
-    if kde_frames:
-        pd.concat(kde_frames, axis=0, ignore_index=True).to_csv(out_kde_csv, index=False)
+    if ecdf_frames:
+        pd.concat(ecdf_frames, axis=0, ignore_index=True).to_csv(out_ecdf_csv, index=False)
 
     out_meta = out_dir / f"{prefix}_signal_hist_meta.json"
     meta = {
@@ -730,8 +751,8 @@ def main() -> None:
     out_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     print(f"[OK] wrote {out_csv}")
-    if kde_frames:
-        print(f"[OK] wrote {out_kde_csv}")
+    if ecdf_frames:
+        print(f"[OK] wrote {out_ecdf_csv}")
     print(f"[OK] wrote {out_meta}")
     for key, value in artifacts.items():
         if isinstance(value, list):
