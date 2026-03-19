@@ -4,7 +4,6 @@ import argparse
 import datetime as dt
 import json
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -12,11 +11,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-_PYTHON_ROOT = Path(__file__).resolve().parents[1]
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
-
-from units import label_with_unit
+from python.units import label_with_unit
 from .model import apply_controls_weight, extract_matrix, fit_pca
 from .selection import select_pca_columns
 

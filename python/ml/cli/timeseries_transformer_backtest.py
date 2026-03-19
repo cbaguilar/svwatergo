@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 
-_PYTHON_ROOT = Path(__file__).resolve().parents[2]
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
-
-from units import label_with_unit
+from python.units import label_with_unit
 from ..train.timeseries_transformer import (
     backtest_timeseries_transformer,
 )
