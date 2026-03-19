@@ -660,6 +660,17 @@ def _pick_color_cols(
         seen.add(c)
         out.append(c)
 
+    # Guarantee a true state panel appears early when available.
+    state_pref = [
+        c
+        for c in schema_cols
+        if c in {"state__mode_tw", "state__mode", "state__last"}
+    ]
+    if state_pref:
+        s = state_pref[0]
+        out = [x for x in out if x != s]
+        out = [s] + out
+
     # Force an alarm-state panel to appear first when available.
     alarm_pref = [c for c in schema_cols if c in {"alarm__last", "alarm__mode_tw", "alarm__duty"}]
     if alarm_pref:
