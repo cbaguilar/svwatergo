@@ -181,8 +181,9 @@ def compute_daily_usage(
             if permeate_first is not None and permeate_last is not None
             else None
         )
-        had_alarm = bool(d["alarm_active"].any() or (d["alarmword_num"] != 0).any())
-        active_alarmwords = sorted({int(v) for v in d.loc[d["alarmword_num"] != 0, "alarmword_num"].tolist()})
+        alarm_rows = d[d["alarm_active"]]
+        had_alarm = bool(not alarm_rows.empty)
+        active_alarmwords = sorted({int(v) for v in alarm_rows.loc[alarm_rows["alarmword_num"] != 0, "alarmword_num"].tolist()})
         alarm_labels: list[str] = []
         for word in active_alarmwords:
             alarm_labels.extend(decode_alarmword_bits(word))
