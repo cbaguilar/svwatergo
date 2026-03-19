@@ -80,6 +80,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--fig-width", type=float, default=16.0, help="Atlas figure width in inches")
     p.add_argument("--fig-row-height", type=float, default=3.6, help="Per-row height in inches")
     p.add_argument("--density", action="store_true", help="Plot density instead of counts")
+    p.add_argument("--log-y", action="store_true", help="Use log scale on histogram y-axis")
+    p.add_argument(
+        "--split-state-col",
+        default=None,
+        help="Optional binary state column to split histograms, e.g. ropumprun",
+    )
     p.add_argument("--out-dir", default="./hist_out", help="Output directory")
     p.add_argument("--out-prefix", default=None, help="Output prefix")
     p.add_argument("--verbose", action="store_true")
@@ -171,12 +177,15 @@ def _load_data(
     files: Sequence[Path],
     timestamp_col: str,
     signal_cols: Sequence[str],
+    split_state_col: Optional[str],
     start: Optional[str],
     end: Optional[str],
 ) -> pd.DataFrame:
     start_ts = pd.Timestamp(start, tz="UTC") if start else None
     end_ts = pd.Timestamp(end, tz="UTC") if end else None
     keep_cols = [timestamp_col] + list(signal_cols)
+    if split_state_col:
+        keep_cols.append(split_state_col)
 
     rows: List[pd.DataFrame] = []
     for fp in files:
@@ -187,6 +196,8 @@ def _load_data(
         out["__ts"] = pd.to_datetime(df[timestamp_col], utc=True, errors="coerce")
         for col in signal_cols:
             out[col] = pd.to_numeric(df[col], errors="coerce")
+        if split_state_col:
+            out["__split_state"] = pd.to_numeric(df[split_state_col], errors="coerce")
         out = out[out["__ts"].notna()]
         if start_ts is not None:
             out = out[out["__ts"] >= start_ts]
@@ -200,7 +211,12 @@ def _load_data(
     return pd.concat(rows, axis=0, ignore_index=True)
 
 
-def _summary_rows(df: pd.DataFrame, signal_cols: Sequence[str], bins: int) -> pd.DataFrame:
+def _summary_rows(
+    df: pd.DataFrame,
+    signal_cols: Sequence[str],
+    bins: int,
+    split_label: Optional[str] = None,
+) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
     for col in signal_cols:
         x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
@@ -213,6 +229,7 @@ def _summary_rows(df: pd.DataFrame, signal_cols: Sequence[str], bins: int) -> pd
             {
                 "signal_col": col,
                 "group": _group_for_column(col),
+                "split": split_label or "all",
                 "n": int(x.size),
                 "mean": float(np.mean(x)),
                 "std": float(np.std(x)),
@@ -241,6 +258,7 @@ def _render_group_pages(
     fig_width: float,
     fig_row_height: float,
     density: bool,
+    log_y: bool,
     title_prefix: str,
 ) -> List[str]:
     if not signal_cols:
@@ -279,6 +297,8 @@ def _render_group_pages(
             ax.set_title(label_with_unit(col), fontsize=10, fontweight="600")
             ax.set_xlabel(label_with_unit(col), fontsize=9)
             ax.set_ylabel("Density" if density else "Count", fontsize=9)
+            if log_y:
+                ax.set_yscale("log")
             ax.grid(True, alpha=0.22)
         for ax in axes_list[len(chunk) :]:
             ax.axis("off")
@@ -305,6 +325,8 @@ def main() -> None:
     schema_cols = list(pd.read_parquet(files[0], engine="pyarrow").columns)
     if args.timestamp_col not in schema_cols:
         raise SystemExit(f"Timestamp column not found in schema: {args.timestamp_col}")
+    if args.split_state_col and args.split_state_col not in schema_cols:
+        raise SystemExit(f"Split state column not found in schema: {args.split_state_col}")
 
     signal_cols = _select_signal_cols(
         schema_cols=schema_cols,
@@ -323,6 +345,7 @@ def main() -> None:
         files=files,
         timestamp_col=args.timestamp_col,
         signal_cols=signal_cols,
+        split_state_col=args.split_state_col,
         start=args.start,
         end=args.end,
     )
@@ -330,33 +353,54 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = _sanitize(args.out_prefix or f"{args.site}_{args.date_from}_to_{args.date_to}")
-    summary_df = _summary_rows(df, signal_cols=signal_cols, bins=int(args.bins))
+    summary_frames: List[pd.DataFrame] = []
     out_csv = out_dir / f"{prefix}_signal_hist_summary.csv"
-    summary_df.to_csv(out_csv, index=False)
 
     title_prefix = f"{args.site} | {args.date_from} to {args.date_to}"
     artifacts: Dict[str, List[str] | str] = {
         "summary_csv": str(out_csv),
     }
 
-    for group_name in ("flow", "pressure", "water_quality", "other"):
-        group_cols = [c for c in signal_cols if _group_for_column(c) == group_name]
-        if not group_cols:
+    split_frames = [("all", df)]
+    if args.split_state_col:
+        split_frames = [
+            ("off", df[df["__split_state"] == 0].copy()),
+            ("on", df[df["__split_state"] == 1].copy()),
+        ]
+
+    for split_name, split_df in split_frames:
+        if split_df.empty:
             continue
-        written = _render_group_pages(
-            df,
-            signal_cols=group_cols,
-            out_dir=out_dir,
-            prefix=prefix,
-            group_name=group_name,
-            bins=int(args.bins),
-            cols_per_page=int(args.cols_per_page),
-            fig_width=float(args.fig_width),
-            fig_row_height=float(args.fig_row_height),
-            density=bool(args.density),
-            title_prefix=title_prefix,
-        )
-        artifacts[f"{group_name}_pages"] = written
+        summary_frames.append(_summary_rows(split_df, signal_cols=signal_cols, bins=int(args.bins), split_label=split_name))
+        split_prefix = prefix if split_name == "all" else f"{prefix}_{split_name}"
+        split_title_prefix = title_prefix
+        if args.split_state_col:
+            split_title_prefix = f"{title_prefix} | {args.split_state_col}={split_name}"
+        for group_name in ("flow", "pressure", "water_quality", "other"):
+            group_cols = [c for c in signal_cols if _group_for_column(c) == group_name]
+            if not group_cols:
+                continue
+            written = _render_group_pages(
+                split_df,
+                signal_cols=group_cols,
+                out_dir=out_dir,
+                prefix=split_prefix,
+                group_name=group_name,
+                bins=int(args.bins),
+                cols_per_page=int(args.cols_per_page),
+                fig_width=float(args.fig_width),
+                fig_row_height=float(args.fig_row_height),
+                density=bool(args.density),
+                log_y=bool(args.log_y),
+                title_prefix=split_title_prefix,
+            )
+            artifact_key = f"{group_name}_pages" if split_name == "all" else f"{split_name}_{group_name}_pages"
+            artifacts[artifact_key] = written
+
+    if not summary_frames:
+        raise SystemExit("No summary/stat rows produced after filtering")
+    summary_df = pd.concat(summary_frames, axis=0, ignore_index=True)
+    summary_df.to_csv(out_csv, index=False)
 
     out_meta = out_dir / f"{prefix}_signal_hist_meta.json"
     meta = {
@@ -369,6 +413,8 @@ def main() -> None:
         "timestamp_col": args.timestamp_col,
         "bins": int(args.bins),
         "density": bool(args.density),
+        "log_y": bool(args.log_y),
+        "split_state_col": args.split_state_col,
         "files": [str(p) for p in files],
         "rows_loaded": int(df.shape[0]),
         "signal_cols": signal_cols,

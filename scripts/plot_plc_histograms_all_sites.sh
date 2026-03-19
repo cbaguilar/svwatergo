@@ -16,6 +16,8 @@ BINS="${BINS:-80}"
 MAX_COLS="${MAX_COLS:-24}"
 COLS_PER_PAGE="${COLS_PER_PAGE:-6}"
 DENSITY="${DENSITY:-no}"
+LOG_Y="${LOG_Y:-yes}"
+SPLIT_STATE_COL="${SPLIT_STATE_COL:-ropumprun}"
 SITES_CSV="${SITES_CSV:-bluerock,pryorfarm,santateresa}"
 
 cd "$REPO"
@@ -47,6 +49,12 @@ for SITE_RAW in "${SITES[@]}"; do
   fi
   if [[ "$DENSITY" == "yes" ]]; then
     args+=(--density)
+  fi
+  if [[ "$LOG_Y" == "yes" ]]; then
+    args+=(--log-y)
+  fi
+  if [[ -n "$SPLIT_STATE_COL" ]]; then
+    args+=(--split-state-col "$SPLIT_STATE_COL")
   fi
 
   echo "[RUN] site=$SITE date_from=$DATE_FROM date_to=$DATE_TO out_dir=$OUT_DIR/$SITE"
