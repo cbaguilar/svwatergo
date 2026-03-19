@@ -9,6 +9,7 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/audio"
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/grabsamples"
 	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/reports"
@@ -18,7 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, audioStore *audio.Store, usersStore *users.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool, dbClient *database.SQLXClient) *gin.Engine {
+func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, grabSamplesStore *grabsamples.Store, audioStore *audio.Store, usersStore *users.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool, dbClient *database.SQLXClient) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -72,6 +73,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 	liveState := NewLiveStateAPI(reg, meta, dbClient)
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
+	grabSamplesAPI := NewGrabSamplesAPI(grabSamplesStore)
 	alertFormsAPI := NewAlertFormsAPI(meta)
 	audioAPI := NewAudioAPI(audioStore)
 	usersAPI := NewUsersAPI(usersStore)
@@ -152,11 +154,14 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		sites.GET("/forecast/next-state", site.GetNextStateForecast)
 		sites.POST("/events/query", eventsAPI.QueryInterestingTimestamps)
 		sites.POST("/alert-forms/pdf", alertFormsAPI.GeneratePDF)
+		sites.GET("/grab-samples", grabSamplesAPI.ListGrabSamples)
 
 		operatorReports := sites.Group("/operator-reports")
 		operatorReportsAdmin := sites.Group("/operator-reports")
+		grabSamplesAdmin := sites.Group("/grab-samples")
 		if authn != nil {
 			operatorReportsAdmin.Use(authn.GinRequireAdmin())
+			grabSamplesAdmin.Use(authn.GinRequireAdmin())
 		}
 		if readOnly {
 			disabled := func(c *gin.Context) {
@@ -165,10 +170,16 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 			operatorReportsAdmin.POST("", disabled)
 			operatorReportsAdmin.PUT("/:id", disabled)
 			operatorReportsAdmin.DELETE("/:id", disabled)
+			grabSamplesAdmin.POST("", disabled)
+			grabSamplesAdmin.PUT("/:id", disabled)
+			grabSamplesAdmin.DELETE("/:id", disabled)
 		} else {
 			operatorReportsAdmin.POST("", reportsAPI.CreateOperatorReport)
 			operatorReportsAdmin.PUT("/:id", reportsAPI.UpdateOperatorReport)
 			operatorReportsAdmin.DELETE("/:id", reportsAPI.DeleteOperatorReport)
+			grabSamplesAdmin.POST("", grabSamplesAPI.CreateGrabSample)
+			grabSamplesAdmin.PUT("/:id", grabSamplesAPI.UpdateGrabSample)
+			grabSamplesAdmin.DELETE("/:id", grabSamplesAPI.DeleteGrabSample)
 		}
 		operatorReports.GET("", reportsAPI.ListOperatorReports)
 		operatorReports.GET("/:id", reportsAPI.GetOperatorReport)

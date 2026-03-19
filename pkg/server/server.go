@@ -15,6 +15,7 @@ import (
 	"github.com/cbaguilar/svwatergo/internal/audio"
 	"github.com/cbaguilar/svwatergo/internal/auth"
 	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/cbaguilar/svwatergo/internal/grabsamples"
 	"github.com/cbaguilar/svwatergo/internal/mail"
 	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/cbaguilar/svwatergo/internal/reports"
@@ -80,6 +81,10 @@ func (s *Server) Start() error {
 	if err := reportsStore.EnsureSchema(context.Background()); err != nil {
 		log.Fatalf("Failed to ensure reports schema: %v", err)
 	}
+	grabSamplesStore := grabsamples.NewStore(dbClient)
+	if err := grabSamplesStore.EnsureSchema(context.Background()); err != nil {
+		log.Fatalf("Failed to ensure grab samples schema: %v", err)
+	}
 	audioStore := audio.NewStore(dbClient)
 	if err := audioStore.EnsureSchema(context.Background()); err != nil {
 		log.Fatalf("Failed to ensure audio schema: %v", err)
@@ -124,7 +129,7 @@ func (s *Server) Start() error {
 		log.Printf("INGEST_DISABLED enabled: upload ingestion endpoints are disabled")
 	}
 
-	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, audioStore, usersStore, mailSender, adminEmails, ingestDisabled, readOnly, dbClient)
+	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, grabSamplesStore, audioStore, usersStore, mailSender, adminEmails, ingestDisabled, readOnly, dbClient)
 	log.Printf("Server starting on port %s", s.config.Port)
 	return router.Run(":" + s.config.Port)
 }
