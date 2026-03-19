@@ -415,35 +415,6 @@ def _summary_rows(
     return pd.DataFrame(rows).sort_values(["group", "signal_col"]).reset_index(drop=True)
 
 
-def _ecdf_rows(
-    df: pd.DataFrame,
-    *,
-    signal_cols: Sequence[str],
-    split_label: Optional[str] = None,
-) -> pd.DataFrame:
-    rows: List[Dict[str, object]] = []
-    for col in signal_cols:
-        x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
-        if x.size == 0:
-            continue
-        xx = np.sort(x[np.isfinite(x)])
-        if xx.size == 0:
-            continue
-        y = np.arange(1, xx.size + 1, dtype=float) / float(xx.size)
-        group_name = _group_for_column(col)
-        for xv, yv in zip(xx.tolist(), y.tolist()):
-            rows.append(
-                {
-                    "signal_col": col,
-                    "group": group_name,
-                    "split": split_label or "all",
-                    "x": float(xv),
-                    "ecdf": float(yv),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
 def _render_group_pages(
     df: pd.DataFrame,
     *,
@@ -519,66 +490,6 @@ def _render_group_pages(
     return written
 
 
-def _render_ecdf_pages(
-    df: pd.DataFrame,
-    *,
-    signal_cols: Sequence[str],
-    out_dir: Path,
-    prefix: str,
-    group_name: str,
-    cols_per_page: int,
-    fig_width: float,
-    fig_row_height: float,
-    title_prefix: str,
-) -> List[str]:
-    if not signal_cols:
-        return []
-
-    written: List[str] = []
-    per_page = max(1, int(cols_per_page))
-    pages = math.ceil(len(signal_cols) / per_page)
-
-    for page_idx in range(pages):
-        chunk = list(signal_cols[page_idx * per_page : (page_idx + 1) * per_page])
-        n = len(chunk)
-        ncols = 2 if n > 1 else 1
-        nrows = math.ceil(n / ncols)
-        fig, axes = plt.subplots(
-            nrows=nrows,
-            ncols=ncols,
-            figsize=(fig_width, fig_row_height * nrows),
-            dpi=140,
-        )
-        axes_list = np.atleast_1d(axes).reshape(-1)
-        for ax, col in zip(axes_list, chunk):
-            x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
-            xx = np.sort(x[np.isfinite(x)])
-            if xx.size == 0:
-                ax.set_title(f"{label_with_unit(col)} (no data)")
-                ax.axis("off")
-                continue
-            y = np.arange(1, xx.size + 1, dtype=float) / float(xx.size)
-            ax.plot(xx, y, color="#d62728", linewidth=1.6, alpha=0.95)
-            ax.set_title(label_with_unit(col), fontsize=10, fontweight="600")
-            ax.set_xlabel(label_with_unit(col), fontsize=9)
-            ax.set_ylabel("ECDF", fontsize=9)
-            ax.set_ylim(0.0, 1.0)
-            ax.grid(True, alpha=0.22)
-        for ax in axes_list[len(chunk) :]:
-            ax.axis("off")
-        fig.suptitle(
-            alias_site_names(f"{title_prefix} | {group_name.title()} ECDFs | page {page_idx + 1}/{pages}"),
-            fontsize=13,
-            fontweight="600",
-        )
-        fig.tight_layout(rect=[0, 0, 1, 0.97])
-        out_png = out_dir / f"{prefix}_{group_name}_ecdf_page_{page_idx + 1:02d}.png"
-        fig.savefig(out_png, bbox_inches="tight")
-        plt.close(fig)
-        written.append(str(out_png))
-    return written
-
-
 def main() -> None:
     args = build_argparser().parse_args()
     if not args.timestamp_col:
@@ -632,14 +543,11 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = _sanitize(args.out_prefix or f"{args.site}_{args.date_from}_to_{args.date_to}")
     summary_frames: List[pd.DataFrame] = []
-    ecdf_frames: List[pd.DataFrame] = []
     out_csv = out_dir / f"{prefix}_signal_hist_summary.csv"
-    out_ecdf_csv = out_dir / f"{prefix}_signal_ecdf.csv"
 
     title_prefix = alias_site_names(f"{args.site} | {args.date_from} to {args.date_to}")
     artifacts: Dict[str, List[str] | str] = {
         "summary_csv": str(out_csv),
-        "ecdf_csv": str(out_ecdf_csv),
     }
 
     split_frames = [("all", df)]
@@ -667,13 +575,6 @@ def main() -> None:
         summary_frames[-1]["bin_width"] = summary_frames[-1]["signal_col"].map(
             lambda c: _bin_width_for_signal(str(c), _group_for_column(str(c)), args)
         )
-        ecdf_df = _ecdf_rows(
-            split_df,
-            signal_cols=signal_cols,
-            split_label=split_name,
-        )
-        if not ecdf_df.empty:
-            ecdf_frames.append(ecdf_df)
         split_prefix = prefix if split_name == "all" else f"{prefix}_{split_name}"
         split_title_prefix = title_prefix
         if split_state_col and split_name != "all":
@@ -700,28 +601,11 @@ def main() -> None:
             split_key = _sanitize(split_name)
             artifact_key = f"{group_name}_pages" if split_name == "all" else f"{split_key}_{group_name}_pages"
             artifacts[artifact_key] = written
-            ecdf_written = _render_ecdf_pages(
-                split_df,
-                signal_cols=group_cols,
-                out_dir=out_dir,
-                prefix=split_prefix,
-                group_name=group_name,
-                cols_per_page=int(args.cols_per_page),
-                fig_width=float(args.fig_width),
-                fig_row_height=float(args.fig_row_height),
-                title_prefix=split_title_prefix,
-            )
-            ecdf_artifact_key = (
-                f"{group_name}_ecdf_pages" if split_name == "all" else f"{split_key}_{group_name}_ecdf_pages"
-            )
-            artifacts[ecdf_artifact_key] = ecdf_written
 
     if not summary_frames:
         raise SystemExit("No summary/stat rows produced after filtering")
     summary_df = pd.concat(summary_frames, axis=0, ignore_index=True)
     summary_df.to_csv(out_csv, index=False)
-    if ecdf_frames:
-        pd.concat(ecdf_frames, axis=0, ignore_index=True).to_csv(out_ecdf_csv, index=False)
 
     out_meta = out_dir / f"{prefix}_signal_hist_meta.json"
     meta = {
@@ -754,8 +638,6 @@ def main() -> None:
     out_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     print(f"[OK] wrote {out_csv}")
-    if ecdf_frames:
-        print(f"[OK] wrote {out_ecdf_csv}")
     print(f"[OK] wrote {out_meta}")
     for key, value in artifacts.items():
         if isinstance(value, list):
