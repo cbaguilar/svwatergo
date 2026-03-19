@@ -41,6 +41,17 @@ DEFAULT_EXCLUDE_REGEX = (
     r"setpoint",
 )
 
+WINDOW_FEATURES_DEFAULT_INCLUDE_REGEX = (
+    r"__(last|mean_tw)$",
+)
+
+WINDOW_FEATURES_DEFAULT_EXCLUDE_REGEX = DEFAULT_EXCLUDE_REGEX + (
+    r"__d1$",
+    r"__sec_since_transition$",
+    r"__transitions$",
+    r"__duty$",
+)
+
 
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -220,6 +231,8 @@ def _select_signal_cols(
     include_regex: Sequence[str],
     exclude_regex: Sequence[str],
     max_cols: int,
+    *,
+    dataset_kind: str,
 ) -> List[str]:
     if explicit:
         chosen = []
@@ -230,8 +243,9 @@ def _select_signal_cols(
                 chosen.append(found)
         return chosen[: max(1, int(max_cols))]
 
-    includes = list(include_regex) or list(DEFAULT_INCLUDE_REGEX)
-    excludes = list(exclude_regex) or list(DEFAULT_EXCLUDE_REGEX)
+    default_inc, default_exc = _default_signal_regex(dataset_kind)
+    includes = list(include_regex) or list(default_inc)
+    excludes = list(exclude_regex) or list(default_exc)
     chosen = []
     for col in schema_cols:
         cl = col.lower()
@@ -242,6 +256,12 @@ def _select_signal_cols(
         chosen.append(col)
     chosen = sorted(dict.fromkeys(chosen))
     return chosen[: max(1, int(max_cols))]
+
+
+def _default_signal_regex(dataset_kind: str) -> tuple[Sequence[str], Sequence[str]]:
+    if dataset_kind == "window_features":
+        return WINDOW_FEATURES_DEFAULT_INCLUDE_REGEX, WINDOW_FEATURES_DEFAULT_EXCLUDE_REGEX
+    return DEFAULT_INCLUDE_REGEX, DEFAULT_EXCLUDE_REGEX
 
 
 def _group_for_column(col: str) -> str:
@@ -482,6 +502,7 @@ def main() -> None:
         include_regex=args.include_regex,
         exclude_regex=args.exclude_regex,
         max_cols=int(args.max_cols),
+        dataset_kind=str(args.dataset_kind),
     )
     if not signal_cols:
         raise SystemExit("No flow/pressure signal columns selected")
