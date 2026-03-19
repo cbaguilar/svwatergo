@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
 from ..train.audio_pca_svm import _attach_split_labels, _normalize_split_value
 
@@ -150,7 +151,7 @@ def main() -> int:
                 s=float(args.point_size),
                 alpha=float(args.alpha),
                 color=cmap(i),
-                label=str(u),
+                label=alias_site_names(str(u)),
                 linewidths=0.0,
             )
         ax.legend(loc="best", fontsize=8, framealpha=0.9, ncol=2)
@@ -161,7 +162,7 @@ def main() -> int:
     if source_f:
         title_extra.append(f"source={source_f}")
     suffix = (" | " + ", ".join(title_extra)) if title_extra else ""
-    ax.set_title(f"{args.title} | color={label_with_unit(ccol)}{suffix}")
+    ax.set_title(alias_site_names(f"{args.title} | color={label_with_unit(ccol)}{suffix}"))
     ax.set_xlabel("PCA 1")
     ax.set_ylabel("PCA 2")
     ax.grid(alpha=0.2)

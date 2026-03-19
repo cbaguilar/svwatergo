@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
 
 
@@ -122,14 +123,14 @@ def _render_feature_atlas(
             for lab in labels:
                 m = cats == lab
                 if m.any():
-                    ax.scatter(plot_df.loc[m, xcol], plot_df.loc[m, ycol], s=8, alpha=0.5, c=[color_map[lab]], label=lab)
+                    ax.scatter(plot_df.loc[m, xcol], plot_df.loc[m, ycol], s=8, alpha=0.5, c=[color_map[lab]], label=alias_site_names(lab))
             if len(labels) <= 8:
                 ax.legend(fontsize=7, loc="best")
             feat_meta["mode"] = "categorical"
             feat_meta["n_categories"] = int(len(labels))
             feat_meta["categories"] = labels[:20]
 
-        ax.set_title(label_with_unit(feat), fontsize=9)
+        ax.set_title(alias_site_names(label_with_unit(feat)), fontsize=9)
         ax.set_xlabel(xname)
         ax.set_ylabel(yname)
         ax.grid(alpha=0.2)
@@ -138,7 +139,7 @@ def _render_feature_atlas(
     for ax in axes_flat[n:]:
         ax.axis("off")
 
-    fig.suptitle(title, fontsize=13)
+    fig.suptitle(alias_site_names(title), fontsize=13)
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=160)
     plt.close(fig)
@@ -272,8 +273,8 @@ def render_audio_pca_svm_overview(
         for label in labels:
             m = plot_df[col] == label
             if m.any():
-                ax.scatter(plot_df.loc[m, xcol], plot_df.loc[m, ycol], s=8, alpha=0.45, c=[colors[label]], label=label)
-        ax.set_title(panel_title)
+                ax.scatter(plot_df.loc[m, xcol], plot_df.loc[m, ycol], s=8, alpha=0.45, c=[colors[label]], label=alias_site_names(label))
+        ax.set_title(alias_site_names(panel_title))
         ax.set_xlabel(xname)
         ax.set_ylabel(yname)
         ax.grid(alpha=0.2)
@@ -353,7 +354,7 @@ def render_audio_pca_svm_overview(
         cbar = fig.colorbar(sc, ax=axes[:, 2].ravel().tolist() if nrows > 1 else axes[0, 2])
         cbar.set_label(score_label or "prediction confidence")
 
-    fig.suptitle(title, fontsize=14)
+    fig.suptitle(alias_site_names(title), fontsize=14)
     fig.text(
         0.99,
         0.985,

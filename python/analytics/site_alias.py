@@ -3,12 +3,14 @@ from __future__ import annotations
 
 SITE_TITLE_ALIASES = (
     ("Bluerock", "Site A"),
+    ("Blue Rock", "Site A"),
     ("Santa Teresa", "Site B"),
+    ("Pryor Farms", "Site C"),
     ("Pryor Farm", "Site C"),
     ("Pryorfarm", "Site C"),
-    ("santateresa", "site B"),
-    ("pryorfarm", "site C"),
-    ("bluerock", "site A"),
+    ("santateresa", "Site B"),
+    ("pryorfarm", "Site C"),
+    ("bluerock", "Site A"),
 )
 
 

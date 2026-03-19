@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
 
 
@@ -177,8 +178,8 @@ def main() -> None:
                     alpha=float(args.alpha), linewidths=0,
                     label=str(label),
                 )
-                handles.append(plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=str(label)))
-            ax.legend(handles=handles, title=label_with_unit(color_col), fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
+                handles.append(plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=alias_site_names(str(label))))
+            ax.legend(handles=handles, title=alias_site_names(label_with_unit(color_col)), fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
         else:
             cnum = pd.to_numeric(c, errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
             sc = ax.scatter(
@@ -198,7 +199,7 @@ def main() -> None:
     ax.set_xlabel("PC1")
     ax.set_ylabel("PC2")
     ax.set_zlabel("PC3")
-    ax.set_title(f"{args.title} (n={len(work):,})")
+    ax.set_title(alias_site_names(f"{args.title} (n={len(work):,})"))
 
     out = Path(args.out_png)
     out.parent.mkdir(parents=True, exist_ok=True)

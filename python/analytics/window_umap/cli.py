@@ -19,6 +19,7 @@ try:
 except Exception as e:
     raise SystemExit("Missing umap-learn. Install: pip install umap-learn") from e
 
+from python.analytics.site_alias import alias_site_names
 from window_pca.loader import load_many
 from window_pca.model import apply_controls_weight, extract_matrix
 
@@ -160,7 +161,7 @@ def main() -> None:
             color_col=args.plot_color_col,
             max_points=int(args.plot_max_points),
             point_size=float(args.plot_point_size),
-            title=f"{args.site or ''} UMAP (umap1 vs umap2)".strip(),
+            title=alias_site_names(f"{args.site or ''} UMAP (umap1 vs umap2)".strip()),
         )
 
     if args.write_parquet:

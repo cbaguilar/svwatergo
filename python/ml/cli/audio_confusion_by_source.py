@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import confusion_matrix
 
+from python.analytics.site_alias import alias_site_names
 
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Build confusion-matrix atlas by datasource from train_projection.parquet")
@@ -57,7 +58,7 @@ def _plot_grid(entries: List[Tuple[str, np.ndarray, int]], labels: List[str], ti
         ax = axes_arr[i]
         mat = np.asarray(cm, dtype=np.int64)
         ax.imshow(mat, cmap="Blues", vmin=0.0, vmax=vmax)
-        ax.set_title(f"{src}\nn={n_rows}", fontsize=9)
+        ax.set_title(alias_site_names(f"{src}\nn={n_rows}"), fontsize=9)
         ax.set_xlabel("Pred")
         ax.set_ylabel("True")
         ticks = np.arange(len(labels))
@@ -72,7 +73,7 @@ def _plot_grid(entries: List[Tuple[str, np.ndarray, int]], labels: List[str], ti
                 ax.text(c, r, str(v), ha="center", va="center", fontsize=8, color=color)
     for j in range(len(entries), len(axes_arr)):
         axes_arr[j].axis("off")
-    fig.suptitle(title)
+    fig.suptitle(alias_site_names(title))
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png)

@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
 from .model import apply_controls_weight, extract_matrix, fit_pca
 from .selection import select_pca_columns
@@ -257,11 +258,11 @@ def _render_heatmaps(
     mats = [(h12, "PC1 vs PC2"), (h13, "PC1 vs PC3"), (h23, "PC2 vs PC3")]
     for ax, (h, ttl) in zip(axes, mats):
         img = ax.imshow(np.log1p(h.T), origin="lower", aspect="auto", cmap="inferno")
-        ax.set_title(ttl)
+        ax.set_title(alias_site_names(ttl))
         ax.set_xlabel("bin-x")
         ax.set_ylabel("bin-y")
         fig.colorbar(img, ax=ax, fraction=0.046, pad=0.04, label="log(1 + count)")
-    fig.suptitle(title)
+    fig.suptitle(alias_site_names(title))
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=170)
     plt.close(fig)
@@ -285,7 +286,7 @@ def _render_points(sample_points: np.ndarray, *, out_png: Path, title: str) -> N
     ax.set_xlabel("PC1")
     ax.set_ylabel("PC2")
     ax.set_zlabel("PC3")
-    ax.set_title(title)
+    ax.set_title(alias_site_names(title))
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=180)
     plt.close(fig)
@@ -341,7 +342,7 @@ def _render_color_grid_pages(
             good = np.isfinite(d["pca1"]) & np.isfinite(d["pca2"]) & np.isfinite(d["pca3"])
             d = d.loc[good]
             if len(d) == 0:
-                ax.set_title(f"{label_with_unit(c)} (no finite points)")
+                ax.set_title(alias_site_names(f"{label_with_unit(c)} (no finite points)"))
                 continue
 
             s = d[c]
@@ -376,7 +377,7 @@ def _render_color_grid_pages(
                         alpha=0.95,
                         linewidths=0,
                     )
-                ax.set_title(f"{label_with_unit(c)} (alarm emphasis)")
+                ax.set_title(alias_site_names(f"{label_with_unit(c)} (alarm emphasis)"))
             elif _is_discrete_col(c, s):
                 codes, _ = pd.factorize(s.astype(str).fillna("nan"), sort=True)
                 ax.scatter(
@@ -403,12 +404,12 @@ def _render_color_grid_pages(
                 )
                 fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, label=label_with_unit(c))
 
-            ax.set_title(label_with_unit(c))
+            ax.set_title(alias_site_names(label_with_unit(c)))
             ax.set_xlabel("PC1")
             ax.set_ylabel("PC2")
             ax.set_zlabel("PC3")
 
-        fig.suptitle(f"{title_prefix} (page {p+1}/{n_pages})")
+        fig.suptitle(alias_site_names(f"{title_prefix} (page {p+1}/{n_pages})"))
         out = out_dir / f"{out_prefix}_pc123_color_grid_{p+1:02d}.png"
         fig.savefig(out, dpi=180)
         plt.close(fig)

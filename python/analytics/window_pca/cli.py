@@ -13,6 +13,7 @@ try:
 except Exception as e:
     raise SystemExit("Missing joblib. Install: pip install joblib") from e
 
+from python.analytics.site_alias import alias_site_names
 from .io import write_json_local, write_s3_bytes
 from .loader import load_many
 from .model import fit_pca, print_pca_loadings, transform_pca
@@ -219,7 +220,7 @@ def main() -> None:
             max_points=int(args.plot_max_points),
             alpha=float(args.plot_alpha),
             point_size=float(args.plot_point_size),
-            title=f"{args.site or ''} {plot_label} ({x_plot} vs {y_plot})  controls_weight={float(args.controls_weight):.2f}".strip(),
+            title=alias_site_names(f"{args.site or ''} {plot_label} ({x_plot} vs {y_plot})  controls_weight={float(args.controls_weight):.2f}".strip()),
             animate=bool(args.animate),
             time_col=args.time_col,
             trail_len=int(args.trail_len),
@@ -240,7 +241,7 @@ def main() -> None:
             color_col=args.plot_color_col,
             max_points=int(args.plot_max_points),
             point_size=float(args.plot_point_size),
-            title=f"{args.site or ''} {plot_label} ({x_plot} vs {y_plot})  controls_weight={float(args.controls_weight):.2f}".strip(),
+            title=alias_site_names(f"{args.site or ''} {plot_label} ({x_plot} vs {y_plot})  controls_weight={float(args.controls_weight):.2f}".strip()),
         )
     if args.plot_3d:
         plot_pca_3d(
@@ -251,7 +252,7 @@ def main() -> None:
             color_col=args.plot_3d_color_col or args.plot_color_col,
             max_points=int(args.plot_3d_max_points),
             point_size=float(args.plot_3d_point_size),
-            title=f"{args.site or ''} PCA (PC1 vs PC2 vs PC3)  controls_weight={float(args.controls_weight):.2f}".strip(),
+            title=alias_site_names(f"{args.site or ''} PCA (PC1 vs PC2 vs PC3)  controls_weight={float(args.controls_weight):.2f}".strip()),
             hover_col=args.plot_3d_hover_col,
             color_discrete=bool(args.plot_3d_color_discrete),
             path=bool(args.plot_3d_path),

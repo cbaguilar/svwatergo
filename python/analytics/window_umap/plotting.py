@@ -5,6 +5,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
 
 
@@ -61,7 +62,7 @@ def plot_umap_2d_webgl(
         )
     )
     fig.update_layout(
-        title=title or f"{label_with_unit(x_col)} vs {label_with_unit(y_col)}",
+        title=alias_site_names(title or f"{label_with_unit(x_col)} vs {label_with_unit(y_col)}"),
         xaxis_title=label_with_unit(x_col),
         yaxis_title=label_with_unit(y_col),
     )

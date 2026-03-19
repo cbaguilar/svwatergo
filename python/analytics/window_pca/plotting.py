@@ -5,6 +5,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
 from .model import decode_alarmword_bits, parse_int_maybe
 
@@ -154,7 +155,7 @@ def plot_pca_2d_live(
         bg_df = plot_df
 
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.set_title(title or f"{label_with_unit(x_col)} vs {label_with_unit(y_col)}")
+    ax.set_title(alias_site_names(title or f"{label_with_unit(x_col)} vs {label_with_unit(y_col)}"))
     ax.set_xlabel(label_with_unit(x_col))
     ax.set_ylabel(label_with_unit(y_col))
     if symlog_y:
