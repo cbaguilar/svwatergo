@@ -455,6 +455,8 @@ def _render_kmeans_clusters(
 
 def _is_discrete_col(name: str, s: pd.Series) -> bool:
     n = str(name).lower()
+    if "sec_since_transition" in n:
+        return False
     if ("state" in n) or ("mode" in n):
         return True
     if pd.api.types.is_bool_dtype(s):
@@ -516,7 +518,8 @@ def _render_color_grid_pages(
 
         for i, c in enumerate(sub, start=1):
             ax = fig.add_subplot(nrow, ncol, i, projection="3d")
-            use_df = df if str(c).lower().startswith("alarm__") else df_core
+            c_lower = str(c).lower()
+            use_df = df if (c_lower.startswith("alarm__") or "sec_since_transition" in c_lower) else df_core
             d = use_df[["pca1", "pca2", "pca3", c]].copy()
             for x in ("pca1", "pca2", "pca3"):
                 d[x] = pd.to_numeric(d[x], errors="coerce")
@@ -527,7 +530,6 @@ def _render_color_grid_pages(
                 continue
 
             s = d[c]
-            c_lower = str(c).lower()
             # Alarm emphasis panel: make alarm=true points larger/brighter than false.
             if c_lower.startswith("alarm__"):
                 s_num = pd.to_numeric(s, errors="coerce")
