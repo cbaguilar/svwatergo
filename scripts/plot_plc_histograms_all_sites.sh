@@ -17,7 +17,7 @@ MAX_COLS="${MAX_COLS:-24}"
 COLS_PER_PAGE="${COLS_PER_PAGE:-6}"
 DENSITY="${DENSITY:-no}"
 LOG_Y="${LOG_Y:-yes}"
-SPLIT_STATE_COL="${SPLIT_STATE_COL:-ropumprun}"
+SPLIT_STATE_COL="${SPLIT_STATE_COL:-state}"
 SITES_CSV="${SITES_CSV:-bluerock,pryorfarm,santateresa}"
 
 cd "$REPO"

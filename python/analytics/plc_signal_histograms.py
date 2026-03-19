@@ -83,8 +83,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--log-y", action="store_true", help="Use log scale on histogram y-axis")
     p.add_argument(
         "--split-state-col",
-        default=None,
-        help="Optional binary state column to split histograms, e.g. ropumprun",
+        default="state",
+        help="Optional categorical state column to split histograms. Default: state. Use 'none' to disable.",
     )
     p.add_argument("--out-dir", default="./hist_out", help="Output directory")
     p.add_argument("--out-prefix", default=None, help="Output prefix")
@@ -105,6 +105,15 @@ def _daterange(d0: dt.date, d1: dt.date) -> List[dt.date]:
 
 def _sanitize(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_")
+
+
+def _normalize_optional_col(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.lower() in {"none", "off", "false", "no"}:
+        return None
+    return text
 
 
 def _candidate_day_paths(root: Path, site: str, day: str) -> List[Path]:
@@ -209,6 +218,18 @@ def _load_data(
     if not rows:
         raise SystemExit("No rows found after filtering")
     return pd.concat(rows, axis=0, ignore_index=True)
+
+
+def _split_value_label(value: object) -> str:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "unknown"
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        if float(value).is_integer():
+            return str(int(value))
+        return f"{float(value):g}"
+    return str(value)
 
 
 def _summary_rows(
@@ -317,6 +338,7 @@ def _render_group_pages(
 
 def main() -> None:
     args = build_argparser().parse_args()
+    split_state_col = _normalize_optional_col(args.split_state_col)
 
     files = _discover_files(args.local_root, args.site, args.date_from, args.date_to)
     if not files:
@@ -325,8 +347,8 @@ def main() -> None:
     schema_cols = list(pd.read_parquet(files[0], engine="pyarrow").columns)
     if args.timestamp_col not in schema_cols:
         raise SystemExit(f"Timestamp column not found in schema: {args.timestamp_col}")
-    if args.split_state_col and args.split_state_col not in schema_cols:
-        raise SystemExit(f"Split state column not found in schema: {args.split_state_col}")
+    if split_state_col and split_state_col not in schema_cols:
+        raise SystemExit(f"Split state column not found in schema: {split_state_col}")
 
     signal_cols = _select_signal_cols(
         schema_cols=schema_cols,
@@ -345,7 +367,7 @@ def main() -> None:
         files=files,
         timestamp_col=args.timestamp_col,
         signal_cols=signal_cols,
-        split_state_col=args.split_state_col,
+        split_state_col=split_state_col,
         start=args.start,
         end=args.end,
     )
@@ -362,11 +384,12 @@ def main() -> None:
     }
 
     split_frames = [("all", df)]
-    if args.split_state_col:
-        split_frames = [
-            ("off", df[df["__split_state"] == 0].copy()),
-            ("on", df[df["__split_state"] == 1].copy()),
-        ]
+    if split_state_col:
+        split_frames = []
+        raw_values = [v for v in df["__split_state"].dropna().unique().tolist()]
+        raw_values = sorted(raw_values, key=lambda v: _split_value_label(v))
+        for raw_value in raw_values:
+            split_frames.append((_split_value_label(raw_value), df[df["__split_state"] == raw_value].copy()))
 
     for split_name, split_df in split_frames:
         if split_df.empty:
@@ -374,8 +397,8 @@ def main() -> None:
         summary_frames.append(_summary_rows(split_df, signal_cols=signal_cols, bins=int(args.bins), split_label=split_name))
         split_prefix = prefix if split_name == "all" else f"{prefix}_{split_name}"
         split_title_prefix = title_prefix
-        if args.split_state_col:
-            split_title_prefix = f"{title_prefix} | {args.split_state_col}={split_name}"
+        if split_state_col:
+            split_title_prefix = f"{title_prefix} | {split_state_col}={split_name}"
         for group_name in ("flow", "pressure", "water_quality", "other"):
             group_cols = [c for c in signal_cols if _group_for_column(c) == group_name]
             if not group_cols:
@@ -394,7 +417,8 @@ def main() -> None:
                 log_y=bool(args.log_y),
                 title_prefix=split_title_prefix,
             )
-            artifact_key = f"{group_name}_pages" if split_name == "all" else f"{split_name}_{group_name}_pages"
+            split_key = _sanitize(split_name)
+            artifact_key = f"{group_name}_pages" if split_name == "all" else f"{split_key}_{group_name}_pages"
             artifacts[artifact_key] = written
 
     if not summary_frames:
@@ -414,7 +438,7 @@ def main() -> None:
         "bins": int(args.bins),
         "density": bool(args.density),
         "log_y": bool(args.log_y),
-        "split_state_col": args.split_state_col,
+        "split_state_col": split_state_col,
         "files": [str(p) for p in files],
         "rows_loaded": int(df.shape[0]),
         "signal_cols": signal_cols,
