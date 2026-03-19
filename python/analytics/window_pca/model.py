@@ -23,6 +23,8 @@ class PCAModelBundle:
     control_mask: np.ndarray
     controls_weight: float
     controls_regex: List[str]
+    derivative_mask: np.ndarray
+    derivatives_weight: float
     feature_ranges: Dict[str, Dict[str, Any]]
 
 
@@ -69,6 +71,20 @@ def apply_controls_weight(
     return Xw
 
 
+def build_derivative_mask(cols: List[str]) -> np.ndarray:
+    return np.array([str(c).lower().endswith("__d1") for c in cols], dtype=bool)
+
+
+def apply_derivatives_weight(
+    Xs: np.ndarray, derivative_mask: np.ndarray, derivatives_weight: float
+) -> np.ndarray:
+    if derivatives_weight == 1.0:
+        return Xs
+    Xw = Xs.copy()
+    Xw[:, derivative_mask] *= float(derivatives_weight)
+    return Xw
+
+
 def fit_pca(
     df: pd.DataFrame,
     cols: List[str],
@@ -80,6 +96,7 @@ def fit_pca(
     clip_abs: Optional[float] = None,
     controls_weight: float = 1.0,
     control_regex: Optional[List[str]] = None,
+    derivatives_weight: float = 1.0,
 ) -> PCAModelBundle:
     feature_ranges = compute_feature_ranges(df, cols, q_lo=0.01, q_hi=0.99)
 
@@ -95,8 +112,10 @@ def fit_pca(
 
     creg = control_regex[:] if control_regex else DEFAULT_CONTROL_REGEX[:]
     control_mask = build_control_mask(cols, creg)
+    derivative_mask = build_derivative_mask(cols)
 
     Xw = apply_controls_weight(Xs, control_mask, controls_weight)
+    Xw = apply_derivatives_weight(Xw, derivative_mask, derivatives_weight)
 
     pca = PCA(n_components=n_components, whiten=whiten, random_state=0)
     pca.fit(Xw)
@@ -108,6 +127,8 @@ def fit_pca(
         control_mask=control_mask,
         controls_weight=float(controls_weight),
         controls_regex=creg,
+        derivative_mask=derivative_mask,
+        derivatives_weight=float(derivatives_weight),
         feature_ranges=feature_ranges,
     )
 
@@ -129,6 +150,7 @@ def transform_pca(
     Xs = bundle.scaler.transform(X)
 
     Xw = apply_controls_weight(Xs, bundle.control_mask, bundle.controls_weight)
+    Xw = apply_derivatives_weight(Xw, bundle.derivative_mask, bundle.derivatives_weight)
 
     Z = bundle.pca.transform(Xw)
 
@@ -181,6 +203,8 @@ def print_pca_loadings(
     print(f"controls_weight={bundle.controls_weight}")
     print(f"controls_regex={bundle.controls_regex}")
     print(f"n_control_features={int(bundle.control_mask.sum())} / {n_feat}")
+    print(f"derivatives_weight={bundle.derivatives_weight}")
+    print(f"n_derivative_features={int(bundle.derivative_mask.sum())} / {n_feat}")
     print("feature_ranges: shown as [p01,p99,min,max] from fit rows (raw, pre-clip/pre-fill)")
 
     for i in range(n_comp):

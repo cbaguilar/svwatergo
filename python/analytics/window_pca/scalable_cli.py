@@ -13,7 +13,7 @@ import pandas as pd
 
 from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
-from .model import apply_controls_weight, extract_matrix, fit_pca
+from .model import apply_controls_weight, apply_derivatives_weight, extract_matrix, fit_pca
 from .selection import select_pca_columns
 
 
@@ -59,6 +59,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--controls-weight", type=float, default=1.0)
     p.add_argument("--controls-off", action="store_true")
     p.add_argument("--control-regex", action="append", default=[])
+    p.add_argument("--derivatives-weight", type=float, default=1.0, help="Scale factor applied to __d1 features before PCA")
 
     p.add_argument("--fit-sample-per-file", type=int, default=2000)
     p.add_argument("--fit-max-samples", type=int, default=2_000_000)
@@ -92,6 +93,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--hdbscan", action="store_true", help="Run HDBSCAN on the PCA point sample and render clusters")
     p.add_argument("--hdbscan-min-cluster-size", type=int, default=500)
     p.add_argument("--hdbscan-min-samples", type=int, default=None)
+    p.add_argument("--hdbscan-max-points", type=int, default=100_000)
     p.add_argument("--kmeans", action="store_true", help="Run KMeans on the PCA point sample and render clusters")
     p.add_argument("--kmeans-k", type=int, default=8, help="Number of KMeans clusters")
     p.add_argument("--color-grid", action="store_true", help="Render 3D color-point grid atlas")
@@ -376,6 +378,19 @@ def _render_hdbscan_clusters(
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=180, bbox_inches="tight")
     plt.close(fig)
+
+
+def _subsample_points(
+    sample_points: np.ndarray,
+    *,
+    max_points: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    X = np.asarray(sample_points, dtype=np.float64)
+    if max_points <= 0 or len(X) <= int(max_points):
+        return X
+    idx = rng.choice(len(X), size=int(max_points), replace=False)
+    return X[np.asarray(idx, dtype=np.int64)]
 
 
 def _run_kmeans_labels(
@@ -1220,6 +1235,7 @@ def main() -> None:
         clip_abs=args.clip_abs,
         controls_weight=float(args.controls_weight),
         control_regex=control_regex,
+        derivatives_weight=float(args.derivatives_weight),
     )
     t_fit1 = time.time()
     if args.verbose:
@@ -1236,6 +1252,7 @@ def main() -> None:
     Xfit = extract_matrix(df_fit, cols, fill_value=float(args.fill_value), clip_abs=args.clip_abs)
     Xfit_s = bundle.scaler.transform(Xfit)
     Xfit_w = apply_controls_weight(Xfit_s, bundle.control_mask, bundle.controls_weight)
+    Xfit_w = apply_derivatives_weight(Xfit_w, bundle.derivative_mask, bundle.derivatives_weight)
     Zfit = _project_scores(Xfit_w, components, backend, cp_mod)
 
     qlo = float(args.range_q_low)
@@ -1276,6 +1293,7 @@ def main() -> None:
         X = extract_matrix(df, cols, fill_value=float(args.fill_value), clip_abs=args.clip_abs)
         Xs = bundle.scaler.transform(X)
         Xw = apply_controls_weight(Xs, bundle.control_mask, bundle.controls_weight)
+        Xw = apply_derivatives_weight(Xw, bundle.derivative_mask, bundle.derivatives_weight)
         Z = _project_scores(Xw, components, backend, cp_mod)
 
         finite = np.isfinite(Z[:, 0]) & np.isfinite(Z[:, 1]) & np.isfinite(Z[:, 2])
@@ -1376,6 +1394,8 @@ def main() -> None:
             "control_mask": bundle.control_mask,
             "controls_weight": bundle.controls_weight,
             "controls_regex": bundle.controls_regex,
+            "derivative_mask": bundle.derivative_mask,
+            "derivatives_weight": bundle.derivatives_weight,
             "feature_ranges": bundle.feature_ranges,
         },
         model_path,
@@ -1435,32 +1455,39 @@ def main() -> None:
 
     hdbscan_clusters = 0
     hdbscan_noise = 0
+    hdbscan_points_used = 0
     kmeans_clusters = 0
     if bool(args.hdbscan) and len(point_sample):
-        labels = _run_hdbscan_labels(
+        hdb_points = _subsample_points(
             point_sample,
+            max_points=int(args.hdbscan_max_points),
+            rng=rng,
+        )
+        labels = _run_hdbscan_labels(
+            hdb_points,
             min_cluster_size=int(args.hdbscan_min_cluster_size),
             min_samples=args.hdbscan_min_samples,
         )
         if len(labels):
             hdb_df = pd.DataFrame(
                 {
-                    "pca1": point_sample[:, 0],
-                    "pca2": point_sample[:, 1],
-                    "pca3": point_sample[:, 2],
+                    "pca1": hdb_points[:, 0],
+                    "pca2": hdb_points[:, 1],
+                    "pca3": hdb_points[:, 2],
                     "hdbscan_cluster": labels,
                 }
             )
             hdb_df.to_parquet(hdbscan_parquet, index=False)
             _render_hdbscan_clusters(
-                point_sample,
+                hdb_points,
                 labels,
                 out_png=hdbscan_png,
-                title=f"{args.site} PCA HDBSCAN clusters ({len(point_sample):,} points)",
+                title=f"{args.site} PCA HDBSCAN clusters ({len(hdb_points):,} points)",
             )
             uniq = np.unique(labels)
             hdbscan_clusters = int(np.sum(uniq >= 0))
             hdbscan_noise = int(np.sum(labels < 0))
+            hdbscan_points_used = int(len(hdb_points))
     if bool(args.kmeans) and len(point_sample):
         labels = _run_kmeans_labels(
             point_sample,
@@ -1523,6 +1550,7 @@ def main() -> None:
         "clip_abs": args.clip_abs,
         "controls_weight": float(bundle.controls_weight),
         "controls_regex": list(bundle.controls_regex),
+        "derivatives_weight": float(bundle.derivatives_weight),
         "backend_requested": str(args.backend),
         "backend_used": backend,
         "fit_sample_per_file": int(args.fit_sample_per_file),
@@ -1544,6 +1572,8 @@ def main() -> None:
         "hdbscan_min_samples": (
             int(args.hdbscan_min_samples) if args.hdbscan_min_samples is not None else None
         ),
+        "hdbscan_max_points": int(args.hdbscan_max_points),
+        "hdbscan_points_used": int(hdbscan_points_used),
         "hdbscan_clusters": int(hdbscan_clusters),
         "hdbscan_noise_points": int(hdbscan_noise),
         "kmeans": bool(args.kmeans),

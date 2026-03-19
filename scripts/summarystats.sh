@@ -11,6 +11,7 @@ DATE_TO="${DATE_TO:-2025-12-31}"
 WINDOW_S="${WINDOW_S:-10}"
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/plots/summarystats}"
 PCA_MEANS_ONLY="${PCA_MEANS_ONLY:-no}"
+DERIVATIVES_WEIGHT="${DERIVATIVES_WEIGHT:-1.0}"
 
 COLOR_GRID="${COLOR_GRID:-yes}"
 WINDOW_HISTOGRAMS="${WINDOW_HISTOGRAMS:-yes}"
@@ -27,6 +28,7 @@ export DATE_TO
 export WINDOW_S
 export OUT_DIR
 export PCA_MEANS_ONLY
+export DERIVATIVES_WEIGHT
 export COLOR_GRID
 export WINDOW_HISTOGRAMS
 export KMEANS

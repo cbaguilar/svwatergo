@@ -26,6 +26,7 @@ BACKEND="${BACKEND:-auto}" # auto|cpu|gpu
 PCA_CONTINUOUS_ONLY="${PCA_CONTINUOUS_ONLY:-yes}"
 PCA_INCLUDE_REGEX="${PCA_INCLUDE_REGEX:-__mean_tw$,__d1$}"
 PCA_EXCLUDE_REGEX="${PCA_EXCLUDE_REGEX:-__duty$,__mode_tw$,__transitions$,^state_unknown$,^residualtank(level|depth)__}"
+DERIVATIVES_WEIGHT="${DERIVATIVES_WEIGHT:-1.0}"
 
 RENDER_MODE="${RENDER_MODE:-both}" # none|heatmap|points|both
 HIST_BINS_2D="${HIST_BINS_2D:-1200}"
@@ -83,6 +84,7 @@ log "Color grid core fit: COLOR_GRID_FIT_QUANTILE=$COLOR_GRID_FIT_QUANTILE COLOR
 log "Clustering: HDBSCAN=$HDBSCAN KMEANS=$KMEANS"
 log "Window histograms: WINDOW_HISTOGRAMS=$WINDOW_HISTOGRAMS"
 log "PCA feature mode: PCA_CONTINUOUS_ONLY=$PCA_CONTINUOUS_ONLY"
+log "Derivative weight: DERIVATIVES_WEIGHT=$DERIVATIVES_WEIGHT"
 log "Window rebuild flags: GENERATE_MISSING_WINDOWS=$GENERATE_MISSING_WINDOWS REGENERATE_WINDOWS=$REGENERATE_WINDOWS"
 
 if [[ "$GENERATE_MISSING_WINDOWS" == "yes" ]]; then
@@ -226,6 +228,7 @@ args=(
   --window-s "$WINDOW_S"
   --n-components 3
   --controls-off
+  --derivatives-weight "$DERIVATIVES_WEIGHT"
   --fit-sample-per-file "$FIT_SAMPLE_PER_FILE"
   --fit-max-samples "$FIT_MAX_SAMPLES"
   --backend "$BACKEND"
