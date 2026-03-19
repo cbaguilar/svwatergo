@@ -497,6 +497,7 @@ def _render_color_grid_pages(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
 
     if len(df) == 0 or len(color_cols) == 0:
         return []
@@ -591,17 +592,26 @@ def _render_color_grid_pages(
                     ax.legend(handles=handles, title=alias_site_names(label_with_unit(c)), fontsize=7, loc="best")
             else:
                 cnum = pd.to_numeric(s, errors="coerce").to_numpy(dtype=np.float64)
+                positive = cnum[np.isfinite(cnum) & (cnum > 0)]
+                use_log = ("sec_since_transition" in c_lower) and (positive.size > 0)
+                norm = None
+                if use_log:
+                    norm = LogNorm(vmin=float(np.min(positive)), vmax=float(np.max(positive)))
                 sc = ax.scatter(
                     d["pca1"],
                     d["pca2"],
                     d["pca3"],
                     c=cnum,
                     cmap="viridis",
+                    norm=norm,
                     s=1,
                     alpha=0.18,
                     linewidths=0,
                 )
-                fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, label=label_with_unit(c))
+                cbar_label = label_with_unit(c)
+                if use_log:
+                    cbar_label = f"log {cbar_label}"
+                fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, label=cbar_label)
 
             ax.set_title(alias_site_names(label_with_unit(c)))
             ax.set_xlabel("PC1")
