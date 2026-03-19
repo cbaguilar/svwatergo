@@ -96,3 +96,16 @@ python3 python/analytics/audio_s3_copy_manifest.py \
   --manifest ./data/dataset=audio_manifest/site=bluerock/audio_manifest.parquet \
   --skip-existing
 ```
+
+## Daily power usage from PLC parquet
+
+Compute daily `powermeter` usage from raw PLC parquet partitions:
+
+```bash
+python3 python/analytics/calc_daily_power_usage.py \
+  --input-glob '/mnt/d/datasets/svwatergo/raw/plc/*/date=*/data.parquet' \
+  --year 2025
+```
+
+By default this writes a CSV, parquet copy, summary JSON, and a per-site bar chart PNG to
+`/mnt/d/datasets/svwatergo/derived/daily_power_usage`.
