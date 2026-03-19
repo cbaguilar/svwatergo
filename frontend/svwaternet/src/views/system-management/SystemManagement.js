@@ -2,6 +2,7 @@ import React, { useMemo } from 'react'
 import { useSelector } from 'react-redux'
 import { CCard, CCardBody, CCardHeader, CCol, CRow } from '@coreui/react'
 import OperatorReportsPanel from '../../components/OperatorReportsPanel'
+import GrabSamplesPanel from '../../components/GrabSamplesPanel'
 
 const SystemManagement = () => {
   const selectedSystem = useSelector((state) => state.selectedSystem)
@@ -29,6 +30,9 @@ const SystemManagement = () => {
       </CCol>
       <CCol lg={12} className="mt-4">
         <OperatorReportsPanel siteKey={siteKey} />
+      </CCol>
+      <CCol lg={12}>
+        <GrabSamplesPanel siteKey={siteKey} />
       </CCol>
     </CRow>
   )
