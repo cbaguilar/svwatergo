@@ -412,6 +412,53 @@ def _summary_rows(
     return pd.DataFrame(rows).sort_values(["group", "signal_col"]).reset_index(drop=True)
 
 
+def _kde_rows(
+    df: pd.DataFrame,
+    *,
+    signal_cols: Sequence[str],
+    bins: int,
+    args: argparse.Namespace,
+    split_label: Optional[str] = None,
+    points_per_signal: int = 256,
+) -> pd.DataFrame:
+    from scipy.stats import gaussian_kde
+
+    rows: List[Dict[str, object]] = []
+    for col in signal_cols:
+        x = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
+        if x.size < 2:
+            continue
+        if not np.isfinite(np.std(x)) or float(np.std(x)) <= 0:
+            continue
+        group_name = _group_for_column(col)
+        edges = _hist_edges(
+            x,
+            bins=max(2, int(bins)),
+            bin_width=_bin_width_for_signal(col, group_name, args),
+        )
+        lo = float(edges[0])
+        hi = float(edges[-1])
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            continue
+        grid = np.linspace(lo, hi, max(32, int(points_per_signal)), dtype=float)
+        try:
+            kde = gaussian_kde(x)
+            dens = kde(grid)
+        except Exception:
+            continue
+        for gx, gy in zip(grid.tolist(), np.asarray(dens, dtype=float).tolist()):
+            rows.append(
+                {
+                    "signal_col": col,
+                    "group": group_name,
+                    "split": split_label or "all",
+                    "x": float(gx),
+                    "density": float(gy),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def _render_group_pages(
     df: pd.DataFrame,
     *,
@@ -540,16 +587,18 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = _sanitize(args.out_prefix or f"{args.site}_{args.date_from}_to_{args.date_to}")
     summary_frames: List[pd.DataFrame] = []
+    kde_frames: List[pd.DataFrame] = []
     out_csv = out_dir / f"{prefix}_signal_hist_summary.csv"
+    out_kde_csv = out_dir / f"{prefix}_signal_kde.csv"
 
     title_prefix = alias_site_names(f"{args.site} | {args.date_from} to {args.date_to}")
     artifacts: Dict[str, List[str] | str] = {
         "summary_csv": str(out_csv),
+        "kde_csv": str(out_kde_csv),
     }
 
     split_frames = [("all", df)]
     if split_state_col:
-        split_frames = []
         raw_values = [v for v in df["__split_state"].dropna().unique().tolist()]
         raw_values = sorted(raw_values, key=lambda v: _split_value_label(v))
         for raw_value in raw_values:
@@ -573,9 +622,18 @@ def main() -> None:
         summary_frames[-1]["bin_width"] = summary_frames[-1]["signal_col"].map(
             lambda c: _bin_width_for_signal(str(c), _group_for_column(str(c)), args)
         )
+        kde_df = _kde_rows(
+            split_df,
+            signal_cols=signal_cols,
+            bins=int(args.bins),
+            args=args,
+            split_label=split_name,
+        )
+        if not kde_df.empty:
+            kde_frames.append(kde_df)
         split_prefix = prefix if split_name == "all" else f"{prefix}_{split_name}"
         split_title_prefix = title_prefix
-        if split_state_col:
+        if split_state_col and split_name != "all":
             split_title_prefix = f"{title_prefix} | {split_state_col}={split_name}"
         for group_name in ("flow", "pressure", "water_quality", "other"):
             group_cols = [c for c in signal_cols if _group_for_column(c) == group_name]
@@ -604,6 +662,8 @@ def main() -> None:
         raise SystemExit("No summary/stat rows produced after filtering")
     summary_df = pd.concat(summary_frames, axis=0, ignore_index=True)
     summary_df.to_csv(out_csv, index=False)
+    if kde_frames:
+        pd.concat(kde_frames, axis=0, ignore_index=True).to_csv(out_kde_csv, index=False)
 
     out_meta = out_dir / f"{prefix}_signal_hist_meta.json"
     meta = {
@@ -636,6 +696,8 @@ def main() -> None:
     out_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     print(f"[OK] wrote {out_csv}")
+    if kde_frames:
+        print(f"[OK] wrote {out_kde_csv}")
     print(f"[OK] wrote {out_meta}")
     for key, value in artifacts.items():
         if isinstance(value, list):
