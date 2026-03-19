@@ -36,6 +36,11 @@ COLOR_MAX_COLS="${COLOR_MAX_COLS:-18}"
 COLOR_COLS="${COLOR_COLS:-alarm__duty,state__mode_tw,ropumprun__duty,feedpumprun__duty,wellpumprun__duty,chlorinepumprun__duty,flushrun__duty,runflush__duty,permeateflow__mean_tw}"
 COLOR_GRID_FIT_QUANTILE="${COLOR_GRID_FIT_QUANTILE:-0.0}"
 COLOR_GRID_FIT_METHOD="${COLOR_GRID_FIT_METHOD:-mahal}"
+HDBSCAN="${HDBSCAN:-no}"
+HDBSCAN_MIN_CLUSTER_SIZE="${HDBSCAN_MIN_CLUSTER_SIZE:-500}"
+HDBSCAN_MIN_SAMPLES="${HDBSCAN_MIN_SAMPLES:-}"
+KMEANS="${KMEANS:-no}"
+KMEANS_K="${KMEANS_K:-8}"
 WINDOW_HISTOGRAMS="${WINDOW_HISTOGRAMS:-yes}"
 WINDOW_HIST_BINS="${WINDOW_HIST_BINS:-80}"
 WINDOW_HIST_MAX_COLS="${WINDOW_HIST_MAX_COLS:-24}"
@@ -75,6 +80,7 @@ log "Paths: RAW_ROOT=$RAW_ROOT WINDOW_FEATURES_ROOT=$WINDOW_FEATURES_ROOT WINDOW
 log "Headless mode: OPEN3D_RENDER=$OPEN3D_RENDER (no=skip Open3D image render)"
 log "Color grid: COLOR_GRID=$COLOR_GRID COLOR_MAX_COLS=$COLOR_MAX_COLS"
 log "Color grid core fit: COLOR_GRID_FIT_QUANTILE=$COLOR_GRID_FIT_QUANTILE COLOR_GRID_FIT_METHOD=$COLOR_GRID_FIT_METHOD"
+log "Clustering: HDBSCAN=$HDBSCAN KMEANS=$KMEANS"
 log "Window histograms: WINDOW_HISTOGRAMS=$WINDOW_HISTOGRAMS"
 log "PCA feature mode: PCA_CONTINUOUS_ONLY=$PCA_CONTINUOUS_ONLY"
 log "Window rebuild flags: GENERATE_MISSING_WINDOWS=$GENERATE_MISSING_WINDOWS REGENERATE_WINDOWS=$REGENERATE_WINDOWS"
@@ -255,6 +261,15 @@ if [[ "$COLOR_GRID" == "yes" ]]; then
   if [[ -n "$COLOR_COLS" ]]; then
     args+=(--color-cols "$COLOR_COLS")
   fi
+fi
+if [[ "$HDBSCAN" == "yes" ]]; then
+  args+=(--hdbscan --hdbscan-min-cluster-size "$HDBSCAN_MIN_CLUSTER_SIZE")
+  if [[ -n "$HDBSCAN_MIN_SAMPLES" ]]; then
+    args+=(--hdbscan-min-samples "$HDBSCAN_MIN_SAMPLES")
+  fi
+fi
+if [[ "$KMEANS" == "yes" ]]; then
+  args+=(--kmeans --kmeans-k "$KMEANS_K")
 fi
 
 log "Running scalable PCA projection + render artifact generation"
