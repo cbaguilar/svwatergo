@@ -89,6 +89,9 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--range-q-low", type=float, default=0.005)
     p.add_argument("--range-q-high", type=float, default=0.995)
     p.add_argument("--max-render-points", type=int, default=2_000_000)
+    p.add_argument("--hdbscan", action="store_true", help="Run HDBSCAN on the PCA point sample and render clusters")
+    p.add_argument("--hdbscan-min-cluster-size", type=int, default=500)
+    p.add_argument("--hdbscan-min-samples", type=int, default=None)
     p.add_argument("--color-grid", action="store_true", help="Render 3D color-point grid atlas")
     p.add_argument(
         "--color-cols",
@@ -295,6 +298,81 @@ def _render_points(sample_points: np.ndarray, *, out_png: Path, title: str) -> N
     ax.set_title(alias_site_names(title))
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=180)
+    plt.close(fig)
+
+
+def _run_hdbscan_labels(
+    sample_points: np.ndarray,
+    *,
+    min_cluster_size: int,
+    min_samples: Optional[int],
+) -> np.ndarray:
+    from sklearn.cluster import HDBSCAN
+
+    X = np.asarray(sample_points, dtype=np.float64)
+    if X.ndim != 2 or X.shape[1] != 3 or len(X) == 0:
+        return np.empty((0,), dtype=np.int64)
+    clusterer = HDBSCAN(
+        min_cluster_size=max(2, int(min_cluster_size)),
+        min_samples=None if min_samples is None else max(1, int(min_samples)),
+        allow_single_cluster=True,
+    )
+    return np.asarray(clusterer.fit_predict(X), dtype=np.int64)
+
+
+def _render_hdbscan_clusters(
+    sample_points: np.ndarray,
+    labels: np.ndarray,
+    *,
+    out_png: Path,
+    title: str,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if sample_points.size == 0 or labels.size == 0:
+        return
+    x = sample_points[:, 0]
+    y = sample_points[:, 1]
+    z = sample_points[:, 2]
+    uniq = sorted(np.unique(labels).tolist())
+
+    fig = plt.figure(figsize=(10, 9), constrained_layout=True)
+    ax = fig.add_subplot(111, projection="3d")
+    cmap = plt.get_cmap("tab20", max(len([u for u in uniq if u >= 0]), 1))
+
+    handles = []
+    color_i = 0
+    for lab in uniq:
+        mask = labels == lab
+        if not np.any(mask):
+            continue
+        if int(lab) < 0:
+            color = "#9aa0a6"
+            label = "noise"
+            alpha = 0.07
+            size = 0.8
+        else:
+            color = cmap(color_i)
+            label = f"cluster {int(lab)}"
+            alpha = 0.22
+            size = 1.2
+            color_i += 1
+        ax.scatter(x[mask], y[mask], z[mask], c=[color], s=size, alpha=alpha, linewidths=0)
+        handles.append(
+            plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=label)
+        )
+
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.set_zlabel("PC3")
+    ax.set_title(alias_site_names(title))
+    if handles:
+        ax.legend(handles=handles, fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=180, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -1213,6 +1291,8 @@ def main() -> None:
     contrib_bars_png = out_dir / f"{args.out_prefix}_pc_contrib_bars.png"
     contrib_bars_svg = out_dir / f"{args.out_prefix}_pc_contrib_bars.svg"
     points_parquet = out_dir / f"{args.out_prefix}_point_sample.parquet"
+    hdbscan_parquet = out_dir / f"{args.out_prefix}_pc123_hdbscan.parquet"
+    hdbscan_png = out_dir / f"{args.out_prefix}_pc123_hdbscan.png"
     heatmap_png = out_dir / f"{args.out_prefix}_pc_heatmaps.png"
     scatter_png = out_dir / f"{args.out_prefix}_pc123_points.png"
     voxels_parquet = out_dir / f"{args.out_prefix}_pc123_voxels.parquet"
@@ -1289,6 +1369,34 @@ def main() -> None:
             title=f"{args.site} PCA point sample ({len(point_sample):,} points)",
         )
 
+    hdbscan_clusters = 0
+    hdbscan_noise = 0
+    if bool(args.hdbscan) and len(point_sample):
+        labels = _run_hdbscan_labels(
+            point_sample,
+            min_cluster_size=int(args.hdbscan_min_cluster_size),
+            min_samples=args.hdbscan_min_samples,
+        )
+        if len(labels):
+            hdb_df = pd.DataFrame(
+                {
+                    "pca1": point_sample[:, 0],
+                    "pca2": point_sample[:, 1],
+                    "pca3": point_sample[:, 2],
+                    "hdbscan_cluster": labels,
+                }
+            )
+            hdb_df.to_parquet(hdbscan_parquet, index=False)
+            _render_hdbscan_clusters(
+                point_sample,
+                labels,
+                out_png=hdbscan_png,
+                title=f"{args.site} PCA HDBSCAN clusters ({len(point_sample):,} points)",
+            )
+            uniq = np.unique(labels)
+            hdbscan_clusters = int(np.sum(uniq >= 0))
+            hdbscan_noise = int(np.sum(labels < 0))
+
     color_grid_paths: List[str] = []
     color_grid_dir = out_dir / f"{args.out_prefix}_color_grids"
     if args.color_grid and args.render_mode in {"points", "both"} and len(color_sample_df):
@@ -1343,6 +1451,13 @@ def main() -> None:
         "explained_variance_ratio": explained,
         "explained_variance_ratio_sum": float(np.sum(bundle.pca.explained_variance_ratio_)),
         "render_mode": args.render_mode,
+        "hdbscan": bool(args.hdbscan),
+        "hdbscan_min_cluster_size": int(args.hdbscan_min_cluster_size),
+        "hdbscan_min_samples": (
+            int(args.hdbscan_min_samples) if args.hdbscan_min_samples is not None else None
+        ),
+        "hdbscan_clusters": int(hdbscan_clusters),
+        "hdbscan_noise_points": int(hdbscan_noise),
         "hist_bins_2d": bins2d,
         "hist_bins_3d": bins3d,
         "pc_ranges": {
@@ -1382,6 +1497,8 @@ def main() -> None:
             "hist_npz": str(hist_npz) if args.render_mode in {"heatmap", "both"} else "",
             "point_sample_parquet": str(points_parquet) if args.render_mode in {"points", "both"} else "",
             "point_sample_png": str(scatter_png) if args.render_mode in {"points", "both"} else "",
+            "hdbscan_parquet": str(hdbscan_parquet) if bool(args.hdbscan) and len(point_sample) else "",
+            "hdbscan_png": str(hdbscan_png) if bool(args.hdbscan) and len(point_sample) else "",
             "color_grid_dir": str(color_grid_dir) if len(color_grid_paths) else "",
             "color_grid_pngs": color_grid_paths,
         },
@@ -1410,6 +1527,9 @@ def main() -> None:
     if args.render_mode in {"points", "both"} and len(point_sample):
         print(f"[OK] point sample -> {points_parquet}")
         print(f"[OK] point plot -> {scatter_png}")
+    if bool(args.hdbscan) and len(point_sample):
+        print(f"[OK] hdbscan parquet -> {hdbscan_parquet}")
+        print(f"[OK] hdbscan plot -> {hdbscan_png}")
     if len(color_grid_paths):
         print(f"[OK] color grid -> {color_grid_dir}")
 
