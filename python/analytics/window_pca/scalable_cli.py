@@ -666,6 +666,10 @@ def _default_color_include_regex() -> List[str]:
     return [
         r"^alarm(__|$)",
         r"^state(__|$)",
+        r"pump.*__duty$",
+        r"__duty$",
+        r"^flushrun__duty$",
+        r"^runflush__duty$",
         r"^ropumprun__duty$",
         r"^wellpumprun__duty$",
         r"^feedpumprun__duty$",
@@ -714,6 +718,28 @@ def _pick_color_cols(
         s = state_pref[0]
         out = [x for x in out if x != s]
         out = [s] + out
+
+    actuator_pref: List[str] = []
+    actuator_exact = [
+        "ropumprun__duty",
+        "feedpumprun__duty",
+        "wellpumprun__duty",
+        "chlorinepumprun__duty",
+        "flushrun__duty",
+        "runflush__duty",
+    ]
+    for c in actuator_exact:
+        if c in schema_cols and c not in actuator_pref:
+            actuator_pref.append(c)
+    for c in schema_cols:
+        cl = str(c).lower()
+        if c in actuator_pref:
+            continue
+        if cl.endswith("__duty") and ("pump" in cl or "flush" in cl):
+            actuator_pref.append(c)
+    if actuator_pref:
+        kept = [x for x in out if x not in actuator_pref]
+        out = actuator_pref + kept
 
     # Force an alarm-state panel to appear first when available.
     alarm_pref = [c for c in schema_cols if c in {"alarm__last", "alarm__mode_tw", "alarm__duty"}]
