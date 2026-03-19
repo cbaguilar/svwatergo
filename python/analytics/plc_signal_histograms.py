@@ -350,6 +350,9 @@ def _hist_edges(x: np.ndarray, *, bins: int, bin_width: Optional[float]) -> np.n
         if hi <= lo:
             hi = lo + width
         n_steps = max(1, int(round((hi - lo) / width)))
+        max_steps = max(1, int(bins))
+        if n_steps > max_steps:
+            return np.linspace(lo, hi, max_steps + 1)
         return lo + np.arange(n_steps + 1, dtype=float) * width
 
     if x_max <= x_min:
