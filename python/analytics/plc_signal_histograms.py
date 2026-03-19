@@ -85,6 +85,12 @@ def build_argparser() -> argparse.ArgumentParser:
         default=0.02,
         help="Explicit conductivity/nitrate histogram bucket width",
     )
+    p.add_argument(
+        "--bin-width-nitrate",
+        type=float,
+        default=0.1,
+        help="Explicit nitrate histogram bucket width",
+    )
     p.add_argument("--bin-width-other", type=float, default=None, help="Explicit bucket width for uncategorized signals")
     p.add_argument(
         "--include-regex",
@@ -348,7 +354,10 @@ def _hist_edges(x: np.ndarray, *, bins: int, bin_width: Optional[float]) -> np.n
     return np.linspace(x_min, x_max, max(2, int(bins) + 1))
 
 
-def _bin_width_for_group(group_name: str, args: argparse.Namespace) -> Optional[float]:
+def _bin_width_for_signal(col: str, group_name: str, args: argparse.Namespace) -> Optional[float]:
+    cl = str(col).lower()
+    if "nitrate" in cl:
+        return args.bin_width_nitrate
     if group_name == "flow":
         return args.bin_width_flow
     if group_name == "pressure":
@@ -372,7 +381,11 @@ def _summary_rows(
             continue
         q05, q50, q95 = np.quantile(x, [0.05, 0.5, 0.95])
         group_name = _group_for_column(col)
-        edges = _hist_edges(x, bins=max(2, int(bins)), bin_width=_bin_width_for_group(group_name, args))
+        edges = _hist_edges(
+            x,
+            bins=max(2, int(bins)),
+            bin_width=_bin_width_for_signal(col, group_name, args),
+        )
         counts, _ = np.histogram(x, bins=edges)
         peak_idx = int(np.argmax(counts))
         rows.append(
@@ -440,7 +453,7 @@ def _render_group_pages(
             edges = _hist_edges(
                 x,
                 bins=max(2, int(bins)),
-                bin_width=_bin_width_for_group(group_name, args),
+                bin_width=_bin_width_for_signal(col, group_name, args),
             )
             ax.hist(
                 x,
@@ -552,7 +565,10 @@ def main() -> None:
             )
         )
         summary_frames[-1]["bin_width"] = summary_frames[-1]["group"].map(
-            lambda g: _bin_width_for_group(str(g), args)
+            lambda _g: np.nan
+        )
+        summary_frames[-1]["bin_width"] = summary_frames[-1]["signal_col"].map(
+            lambda c: _bin_width_for_signal(str(c), _group_for_column(str(c)), args)
         )
         split_prefix = prefix if split_name == "all" else f"{prefix}_{split_name}"
         split_title_prefix = title_prefix
@@ -605,6 +621,7 @@ def main() -> None:
             "flow": args.bin_width_flow,
             "pressure": args.bin_width_pressure,
             "water_quality": args.bin_width_water_quality,
+            "nitrate": args.bin_width_nitrate,
             "other": args.bin_width_other,
         },
         "split_state_col": split_state_col,
