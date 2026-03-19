@@ -58,3 +58,17 @@ func (s *Store) Get(site string) (*SiteConfig, bool) {
 	cfg, ok := s.Sites[strings.ToLower(strings.TrimSpace(site))]
 	return cfg, ok
 }
+
+func (s *Store) DisplayName(site string) string {
+	cfg, ok := s.Get(site)
+	if !ok {
+		return strings.TrimSpace(site)
+	}
+	if v := strings.TrimSpace(cfg.DisplayName); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(cfg.FormalName); v != "" {
+		return v
+	}
+	return strings.TrimSpace(cfg.Site)
+}

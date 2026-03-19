@@ -1,4 +1,6 @@
 site: pryorfarm
+display_name: Pryor Farms
+formal_name: Pryor Farms Water System
 sensors:
   - key: plctime
     name: PLC Time

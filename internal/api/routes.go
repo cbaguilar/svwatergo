@@ -59,11 +59,20 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 	})
 
+	// Dedicated probe for Apache mTLS rollout. This stays outside the auth
+	// middleware so Apache client-certificate enforcement can be tested in
+	// isolation before protecting real ingest routes.
+	r.POST("/api/v1/ingest/mtls-probe", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"ok": true,
+		})
+	})
+
 	state := NewStateAPI(reg, meta)
 	liveState := NewLiveStateAPI(reg, meta, dbClient)
 	site := NewSiteAPI(reg, meta)
 	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
-	alertFormsAPI := NewAlertFormsAPI()
+	alertFormsAPI := NewAlertFormsAPI(meta)
 	audioAPI := NewAudioAPI(audioStore)
 	usersAPI := NewUsersAPI(usersStore)
 	analyticsStore := analytics.NewStore()

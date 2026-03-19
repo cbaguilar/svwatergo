@@ -3,19 +3,23 @@ package api
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cbaguilar/svwatergo/internal/metadata"
 	"github.com/gin-gonic/gin"
 	"github.com/go-pdf/fpdf"
 )
 
-type AlertFormsAPI struct{}
+type AlertFormsAPI struct {
+	Meta *metadata.Store
+}
 
-func NewAlertFormsAPI() *AlertFormsAPI {
-	return &AlertFormsAPI{}
+func NewAlertFormsAPI(meta *metadata.Store) *AlertFormsAPI {
+	return &AlertFormsAPI{Meta: meta}
 }
 
 type generateAlertFormPDFRequest struct {
@@ -61,6 +65,13 @@ var (
 	}
 )
 
+type alertSiteProfile struct {
+	StreetAddr   string
+	SystemID     string
+	ContactNames string
+	ContactPhone string
+}
+
 func (a *AlertFormsAPI) GeneratePDF(c *gin.Context) {
 	var req generateAlertFormPDFRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -90,7 +101,7 @@ func (a *AlertFormsAPI) GeneratePDF(c *gin.Context) {
 		return
 	}
 
-	pdfBytes, err := renderAlertFormPDF(site, req)
+	pdfBytes, err := renderAlertFormPDF(a.Meta, site, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errJSON("Internal", "failed to render pdf", gin.H{"err": err.Error()}))
 		return
@@ -102,11 +113,15 @@ func (a *AlertFormsAPI) GeneratePDF(c *gin.Context) {
 	c.Data(http.StatusOK, "application/pdf", pdfBytes)
 }
 
-func renderAlertFormPDF(site string, req generateAlertFormPDFRequest) ([]byte, error) {
+func renderAlertFormPDF(meta *metadata.Store, site string, req generateAlertFormPDFRequest) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "Letter", "")
 	pdf.SetMargins(15, 15, 15)
 	pdf.SetAutoPageBreak(true, 15)
 	pdf.AddPage()
+
+	if req.AlertType == "resolved" {
+		return renderResolvedAlertStyledPDF(pdf, meta, site, req)
+	}
 
 	pdf.SetFont("Helvetica", "B", 16)
 	pdf.CellFormat(0, 8, "WaTeR System Alert Form", "", 1, "L", false, 0, "")
@@ -144,6 +159,39 @@ func renderAlertFormPDF(site string, req generateAlertFormPDFRequest) ([]byte, e
 	return out.Bytes(), nil
 }
 
+func renderResolvedAlertStyledPDF(pdf *fpdf.Fpdf, meta *metadata.Store, site string, req generateAlertFormPDFRequest) ([]byte, error) {
+	left, _, right, _ := pdf.GetMargins()
+	pageW, pageH := pdf.GetPageSize()
+	contentW := pageW - left - right
+	profile := alertProfileForSite(meta, site)
+
+	drawHeaderBanner(pdf, left, contentW)
+	drawHeadlineBox(pdf, left, contentW, "DRINKING WATER PROBLEM CORRECTED")
+
+	pdf.SetFont("Helvetica", "", 11)
+	pdf.MultiCell(contentW, 6, buildResolvedIntro(profile, req), "", "L", false)
+	pdf.Ln(1)
+	writeBulletList(pdf, describeAlertDetailsResolved(req.AlertDetails, req.CustomDetail))
+	pdf.Ln(1)
+
+	pdf.MultiCell(contentW, 6, "You were advised on that date to do one of the following:", "", "L", false)
+	pdf.Ln(1)
+	writeBulletList(pdf, buildResolvedActions(req))
+	pdf.Ln(1)
+
+	pdf.MultiCell(contentW, 6, buildResolvedClosing(), "", "L", false)
+	pdf.Ln(2)
+
+	writeContactSection(pdf, profile)
+	drawResolvedFooter(pdf, left, pageW-right, pageH, profile, req)
+
+	var out bytes.Buffer
+	if err := pdf.Output(&out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 func writeSection(pdf *fpdf.Fpdf, title string, lines []string) {
 	pdf.SetFont("Helvetica", "B", 12)
 	pdf.CellFormat(0, 7, title, "", 1, "L", false, 0, "")
@@ -168,6 +216,183 @@ func describeAlertDetails(keys []string, customDetail string) []string {
 		}
 	}
 	return out
+}
+
+func drawHeaderBanner(pdf *fpdf.Fpdf, left, width float64) {
+	startY := pdf.GetY()
+	pdf.SetFillColor(245, 237, 145)
+	pdf.Rect(left+8, startY, width-16, 7, "F")
+	pdf.SetXY(left, startY+0.6)
+	pdf.SetFont("Helvetica", "B", 12)
+	pdf.CellFormat(width, 5, "IMPORTANT INFORMATION ABOUT YOUR DRINKING WATER", "", 1, "C", false, 0, "")
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.CellFormat(width, 5, "Este informe contiene informacion muy importante sobre su agua potable.", "", 1, "C", false, 0, "")
+	pdf.Ln(4)
+}
+
+func drawHeadlineBox(pdf *fpdf.Fpdf, left, width float64, headline string) {
+	startY := pdf.GetY()
+	boxH := 18.0
+	pdf.Rect(left+5, startY, width-10, boxH, "")
+	pdf.SetXY(left+10, startY+3)
+	pdf.SetFont("Helvetica", "B", 15)
+	pdf.MultiCell(width-20, 6, headline, "", "C", false)
+	pdf.SetY(startY + boxH + 6)
+}
+
+func buildResolvedIntro(profile alertSiteProfile, req generateAlertFormPDFRequest) string {
+	noticeDate := fallbackValue(req.NoticeDate)
+	return fmt.Sprintf(
+		"Dear residents of %s:\nYou were notified on %s that the water treatment system (ID: %s) had to stop producing because of the following:",
+		profile.StreetAddr,
+		noticeDate,
+		profile.SystemID,
+	)
+}
+
+func buildResolvedActions(req generateAlertFormPDFRequest) []string {
+	lines := describeResponseDetailsResolved(req.ResponseDetails, req.DaysWaterLeft)
+	lines = append(lines, describeReplacementDetailsResolved(req.ReplacementDetails)...)
+	return lines
+}
+
+func buildResolvedClosing() string {
+	return "We are pleased to report that the problem has now been corrected and treated water service and storage is back to normal. You may now drink the water. It is not necessary to restrict your water use. We apologize for any inconvenience and thank you for your patience."
+}
+
+func writeContactSection(pdf *fpdf.Fpdf, profile alertSiteProfile) {
+	pdf.SetFont("Helvetica", "", 11)
+	contactCopy := "This notice is being sent to you by the Project Team at UCLA Smart Water Treatment System. You can reach us to discuss questions about the Water Treatment System by any of the following methods:"
+	pdf.MultiCell(0, 6, contactCopy, "", "L", false)
+	pdf.Ln(1)
+	lines := []string{
+		"Send us a message via the UCLA Water Treatment System Website: https://svwaternet.org/",
+		"Text or call us at (323) 364-5535",
+		"Email us at: svwaternet@gmail.com",
+	}
+	writeBulletList(pdf, lines)
+	pdf.Ln(2)
+	pdf.MultiCell(0, 6, "If the problem is a well repair or water distribution system repair, please contact the owner for further information on time to repair.", "", "L", false)
+	pdf.Ln(1)
+	pdf.MultiCell(0, 6, profile.ContactNames, "", "L", false)
+	pdf.MultiCell(0, 6, profile.ContactPhone, "", "L", false)
+}
+
+func drawResolvedFooter(pdf *fpdf.Fpdf, left, right, pageH float64, profile alertSiteProfile, req generateAlertFormPDFRequest) {
+	footerY := math.Max(pdf.GetY()+6, pageH-28)
+	if footerY > pageH-22 {
+		pdf.AddPage()
+		footerY = pageH - 28
+	}
+	pdf.SetY(footerY)
+	pdf.SetFont("Helvetica", "", 11)
+	pdf.SetX(left)
+	pdf.CellFormat((right-left)/2, 6, "State Water System ID#: "+profile.SystemID, "", 0, "L", false, 0, "")
+	pdf.CellFormat((right-left)/2, 6, "Date Distributed: "+fallbackValue(req.NoticeDate), "", 1, "R", false, 0, "")
+}
+
+func bulletPrefix(line string) string {
+	return "- " + line
+}
+
+func writeBulletList(pdf *fpdf.Fpdf, lines []string) {
+	pdf.SetFont("Helvetica", "", 11)
+	for _, line := range nonEmptyOrFallback(lines) {
+		pdf.MultiCell(0, 6, bulletPrefix(line), "", "L", false)
+	}
+}
+
+func describeAlertDetailsResolved(keys []string, customDetail string) []string {
+	out := make([]string, 0, len(keys)+1)
+	for _, key := range keys {
+		if key == "custom" {
+			if trimmed := strings.TrimSpace(customDetail); trimmed != "" {
+				out = append(out, trimmed)
+			}
+			continue
+		}
+		switch key {
+		case "wellRepair":
+			out = append(out, "The well needed to be repaired")
+		case "connectionRepair":
+			out = append(out, "The connection from the well to the treatment system needed to be repaired")
+		case "highBacteria":
+			out = append(out, "Regular testing showed that there were bacteria in the water system that had to be flushed out")
+		case "systemRepair":
+			out = append(out, "The water treatment system had to be repaired")
+		case "powerOut":
+			out = append(out, "The power was out and the pumps necessary for delivering water were not working")
+		}
+	}
+	return out
+}
+
+func describeResponseDetailsResolved(keys []string, daysWaterLeft *int) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "daysWaterLeft":
+			if daysWaterLeft != nil {
+				dayWord := "days"
+				if *daysWaterLeft == 1 {
+					dayWord = "day"
+				}
+				out = append(out, fmt.Sprintf("Conserve water as there was only enough storage for %d %s of normal service", *daysWaterLeft, dayWord))
+			}
+		case "stopUsage":
+			out = append(out, "Stop using the water while the system was being flushed.")
+		}
+	}
+	return out
+}
+
+func describeReplacementDetailsResolved(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "waterHaul":
+			out = append(out, "Expect that drinking water will be hauled to the site to replenish stored treated water and that normal water service will be resumed.")
+		case "useBottled":
+			out = append(out, "Until further notice, please PURCHASE AND only use bottled water.")
+		case "bottleDelivery":
+			out = append(out, "Bottled water will be delivered to you until service resumes.")
+		}
+	}
+	return out
+}
+
+func alertProfileForSite(meta *metadata.Store, site string) alertSiteProfile {
+	cfg, ok := meta.Get(site)
+	if ok {
+		profile := alertSiteProfile{
+			StreetAddr:   strings.TrimSpace(cfg.AlertStreetAddr),
+			SystemID:     strings.TrimSpace(cfg.StateWaterSystemID),
+			ContactNames: strings.TrimSpace(cfg.AlertContactNames),
+			ContactPhone: strings.TrimSpace(cfg.AlertContactPhone),
+		}
+		if profile.StreetAddr == "" {
+			if v := strings.TrimSpace(cfg.DisplayName); v != "" {
+				profile.StreetAddr = v
+			} else if v := strings.TrimSpace(cfg.FormalName); v != "" {
+				profile.StreetAddr = v
+			} else {
+				profile.StreetAddr = strings.TrimSpace(cfg.Site)
+			}
+		}
+		if profile.SystemID == "" {
+			profile.SystemID = "N/A"
+		}
+		if profile.ContactNames == "" {
+			profile.ContactNames = "Water system owner contact not configured."
+		}
+		return profile
+	}
+	return alertSiteProfile{
+		StreetAddr:   strings.TrimSpace(site),
+		SystemID:     "N/A",
+		ContactNames: "Water system owner contact not configured.",
+		ContactPhone: "",
+	}
 }
 
 func describeResponseDetails(keys []string, daysWaterLeft *int) []string {

@@ -1,4 +1,10 @@
 site: bluerock
+display_name: Bluerock
+formal_name: Blue Rock Water System
+alert_street_addr: 16 Market Circle
+state_water_system_id: "2701229"
+alert_contact_names: Market Circle Partners, Rick Sagin and Babette Sagin, Blue Rock Water System Owners
+alert_contact_phone: "+1 (831) 917-8380"
 sensors:
   - key: plctime
     name: PLC Time

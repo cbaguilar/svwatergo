@@ -1,4 +1,6 @@
 site: santateresa
+display_name: Santa Teresa
+formal_name: Santa Teresa Water System
 sensors:
   - key: plctime
     name: PLC Time
