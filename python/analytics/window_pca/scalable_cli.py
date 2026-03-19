@@ -92,6 +92,8 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--hdbscan", action="store_true", help="Run HDBSCAN on the PCA point sample and render clusters")
     p.add_argument("--hdbscan-min-cluster-size", type=int, default=500)
     p.add_argument("--hdbscan-min-samples", type=int, default=None)
+    p.add_argument("--kmeans", action="store_true", help="Run KMeans on the PCA point sample and render clusters")
+    p.add_argument("--kmeans-k", type=int, default=8, help="Number of KMeans clusters")
     p.add_argument("--color-grid", action="store_true", help="Render 3D color-point grid atlas")
     p.add_argument(
         "--color-cols",
@@ -363,6 +365,66 @@ def _render_hdbscan_clusters(
         ax.scatter(x[mask], y[mask], z[mask], c=[color], s=size, alpha=alpha, linewidths=0)
         handles.append(
             plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=label)
+        )
+
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.set_zlabel("PC3")
+    ax.set_title(alias_site_names(title))
+    if handles:
+        ax.legend(handles=handles, fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _run_kmeans_labels(
+    sample_points: np.ndarray,
+    *,
+    n_clusters: int,
+    seed: int,
+) -> np.ndarray:
+    from sklearn.cluster import KMeans
+
+    X = np.asarray(sample_points, dtype=np.float64)
+    if X.ndim != 2 or X.shape[1] != 3 or len(X) == 0:
+        return np.empty((0,), dtype=np.int64)
+    k = max(2, min(int(n_clusters), len(X)))
+    km = KMeans(n_clusters=k, random_state=int(seed), n_init="auto")
+    return np.asarray(km.fit_predict(X), dtype=np.int64)
+
+
+def _render_kmeans_clusters(
+    sample_points: np.ndarray,
+    labels: np.ndarray,
+    *,
+    out_png: Path,
+    title: str,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if sample_points.size == 0 or labels.size == 0:
+        return
+    x = sample_points[:, 0]
+    y = sample_points[:, 1]
+    z = sample_points[:, 2]
+    uniq = sorted(np.unique(labels).tolist())
+
+    fig = plt.figure(figsize=(10, 9), constrained_layout=True)
+    ax = fig.add_subplot(111, projection="3d")
+    cmap = plt.get_cmap("tab20", max(len(uniq), 1))
+    handles = []
+    for i, lab in enumerate(uniq):
+        mask = labels == lab
+        if not np.any(mask):
+            continue
+        color = cmap(i)
+        ax.scatter(x[mask], y[mask], z[mask], c=[color], s=1.2, alpha=0.22, linewidths=0)
+        handles.append(
+            plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=f"cluster {int(lab)}")
         )
 
     ax.set_xlabel("PC1")
@@ -1293,6 +1355,8 @@ def main() -> None:
     points_parquet = out_dir / f"{args.out_prefix}_point_sample.parquet"
     hdbscan_parquet = out_dir / f"{args.out_prefix}_pc123_hdbscan.parquet"
     hdbscan_png = out_dir / f"{args.out_prefix}_pc123_hdbscan.png"
+    kmeans_parquet = out_dir / f"{args.out_prefix}_pc123_kmeans.parquet"
+    kmeans_png = out_dir / f"{args.out_prefix}_pc123_kmeans.png"
     heatmap_png = out_dir / f"{args.out_prefix}_pc_heatmaps.png"
     scatter_png = out_dir / f"{args.out_prefix}_pc123_points.png"
     voxels_parquet = out_dir / f"{args.out_prefix}_pc123_voxels.parquet"
@@ -1371,6 +1435,7 @@ def main() -> None:
 
     hdbscan_clusters = 0
     hdbscan_noise = 0
+    kmeans_clusters = 0
     if bool(args.hdbscan) and len(point_sample):
         labels = _run_hdbscan_labels(
             point_sample,
@@ -1396,6 +1461,29 @@ def main() -> None:
             uniq = np.unique(labels)
             hdbscan_clusters = int(np.sum(uniq >= 0))
             hdbscan_noise = int(np.sum(labels < 0))
+    if bool(args.kmeans) and len(point_sample):
+        labels = _run_kmeans_labels(
+            point_sample,
+            n_clusters=int(args.kmeans_k),
+            seed=int(args.fit_seed),
+        )
+        if len(labels):
+            km_df = pd.DataFrame(
+                {
+                    "pca1": point_sample[:, 0],
+                    "pca2": point_sample[:, 1],
+                    "pca3": point_sample[:, 2],
+                    "kmeans_cluster": labels,
+                }
+            )
+            km_df.to_parquet(kmeans_parquet, index=False)
+            _render_kmeans_clusters(
+                point_sample,
+                labels,
+                out_png=kmeans_png,
+                title=f"{args.site} PCA KMeans clusters ({len(point_sample):,} points)",
+            )
+            kmeans_clusters = int(len(np.unique(labels)))
 
     color_grid_paths: List[str] = []
     color_grid_dir = out_dir / f"{args.out_prefix}_color_grids"
@@ -1458,6 +1546,9 @@ def main() -> None:
         ),
         "hdbscan_clusters": int(hdbscan_clusters),
         "hdbscan_noise_points": int(hdbscan_noise),
+        "kmeans": bool(args.kmeans),
+        "kmeans_k": int(args.kmeans_k),
+        "kmeans_clusters": int(kmeans_clusters),
         "hist_bins_2d": bins2d,
         "hist_bins_3d": bins3d,
         "pc_ranges": {
@@ -1499,6 +1590,8 @@ def main() -> None:
             "point_sample_png": str(scatter_png) if args.render_mode in {"points", "both"} else "",
             "hdbscan_parquet": str(hdbscan_parquet) if bool(args.hdbscan) and len(point_sample) else "",
             "hdbscan_png": str(hdbscan_png) if bool(args.hdbscan) and len(point_sample) else "",
+            "kmeans_parquet": str(kmeans_parquet) if bool(args.kmeans) and len(point_sample) else "",
+            "kmeans_png": str(kmeans_png) if bool(args.kmeans) and len(point_sample) else "",
             "color_grid_dir": str(color_grid_dir) if len(color_grid_paths) else "",
             "color_grid_pngs": color_grid_paths,
         },
@@ -1530,6 +1623,9 @@ def main() -> None:
     if bool(args.hdbscan) and len(point_sample):
         print(f"[OK] hdbscan parquet -> {hdbscan_parquet}")
         print(f"[OK] hdbscan plot -> {hdbscan_png}")
+    if bool(args.kmeans) and len(point_sample):
+        print(f"[OK] kmeans parquet -> {kmeans_parquet}")
+        print(f"[OK] kmeans plot -> {kmeans_png}")
     if len(color_grid_paths):
         print(f"[OK] color grid -> {color_grid_dir}")
 
