@@ -12,11 +12,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+from window_pca.model import decode_alarmword_bits
 
 
 DEFAULT_RAW_ROOT = "/mnt/d/datasets/svwatergo/raw/plc"
 DEFAULT_OUT_DIR = "/mnt/d/datasets/svwatergo/derived/daily_power_usage"
 DEFAULT_TICK_KWH = 1.25 / 1000.0
+DEFAULT_PERMEATE_COL = "totalroflow"
+DEFAULT_ALARM_COL = "alarm"
+DEFAULT_ALARMWORD_COL = "alarmword"
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -39,6 +43,13 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--year", type=int, default=2025, help="Calendar year filter for output and plotting.")
     p.add_argument("--timestamp-col", default="plctime", help="Timestamp column name.")
     p.add_argument("--powermeter-col", default="powermeter", help="Totalizing power meter column name.")
+    p.add_argument(
+        "--permeate-col",
+        default=DEFAULT_PERMEATE_COL,
+        help="Totalizing permeate flow column name used for daily delta calculations.",
+    )
+    p.add_argument("--alarm-col", default=DEFAULT_ALARM_COL, help="Alarm boolean/status column name.")
+    p.add_argument("--alarmword-col", default=DEFAULT_ALARMWORD_COL, help="Alarm word/status code column name.")
     p.add_argument(
         "--tick-kwh",
         type=float,
@@ -95,6 +106,9 @@ def compute_daily_usage(
     sites: set[str] | None,
     timestamp_col: str,
     powermeter_col: str,
+    permeate_col: str,
+    alarm_col: str,
+    alarmword_col: str,
     year: int,
     tick_kwh: float,
 ) -> pd.DataFrame:
@@ -115,12 +129,18 @@ def compute_daily_usage(
             continue
 
         try:
-            df = pd.read_parquet(fp, columns=[timestamp_col, powermeter_col])
+            read_cols = [timestamp_col, powermeter_col, permeate_col, alarm_col, alarmword_col]
+            df = pd.read_parquet(fp, columns=read_cols)
         except Exception:
             df = pd.read_parquet(fp)
-            if timestamp_col not in df.columns or powermeter_col not in df.columns:
+            if timestamp_col not in df.columns or powermeter_col not in df.columns or permeate_col not in df.columns:
                 continue
-            df = df[[timestamp_col, powermeter_col]]
+            keep = [timestamp_col, powermeter_col, permeate_col]
+            if alarm_col in df.columns:
+                keep.append(alarm_col)
+            if alarmword_col in df.columns:
+                keep.append(alarmword_col)
+            df = df[keep]
 
         if df.empty:
             continue
@@ -128,25 +148,66 @@ def compute_daily_usage(
         d = df.copy()
         d["ts"] = pd.to_datetime(d[timestamp_col], utc=True, errors="coerce")
         d["powermeter_num"] = pd.to_numeric(d[powermeter_col], errors="coerce")
-        d = d[d["ts"].notna() & d["powermeter_num"].notna()].sort_values("ts")
+        d["permeate_num"] = pd.to_numeric(d[permeate_col], errors="coerce")
+        if alarm_col in d.columns:
+            alarm_series = d[alarm_col]
+            if alarm_series.dtype == bool:
+                d["alarm_active"] = alarm_series.fillna(False)
+            else:
+                norm = alarm_series.astype(str).str.strip().str.lower()
+                d["alarm_active"] = norm.isin({"1", "true", "t", "yes", "y", "alarm"})
+        else:
+            d["alarm_active"] = False
+        if alarmword_col in d.columns:
+            d["alarmword_num"] = pd.to_numeric(d[alarmword_col], errors="coerce").fillna(0)
+        else:
+            d["alarmword_num"] = 0
+        d = d[d["ts"].notna()].sort_values("ts")
         if d.empty:
             continue
 
-        first = d.iloc[0]
-        last = d.iloc[-1]
-        delta_ticks = float(last["powermeter_num"] - first["powermeter_num"])
+        power_rows = d[d["powermeter_num"].notna()]
+        if power_rows.empty:
+            continue
+        power_first = power_rows.iloc[0]
+        power_last = power_rows.iloc[-1]
+        delta_ticks = float(power_last["powermeter_num"] - power_first["powermeter_num"])
+
+        permeate_rows = d[d["permeate_num"].notna()]
+        permeate_first = permeate_rows.iloc[0] if not permeate_rows.empty else None
+        permeate_last = permeate_rows.iloc[-1] if not permeate_rows.empty else None
+        permeate_delta = (
+            float(permeate_last["permeate_num"] - permeate_first["permeate_num"])
+            if permeate_first is not None and permeate_last is not None
+            else None
+        )
+        had_alarm = bool(d["alarm_active"].any() or (d["alarmword_num"] != 0).any())
+        active_alarmwords = sorted({int(v) for v in d.loc[d["alarmword_num"] != 0, "alarmword_num"].tolist()})
+        alarm_labels: list[str] = []
+        for word in active_alarmwords:
+            alarm_labels.extend(decode_alarmword_bits(word))
+        alarm_labels = sorted(dict.fromkeys(alarm_labels))
 
         rows.append(
             {
                 "site": site,
                 "date": pd.Timestamp(day),
-                "row_count": int(len(d)),
-                "first_plctime_utc": first["ts"],
-                "last_plctime_utc": last["ts"],
-                "powermeter_start": float(first["powermeter_num"]),
-                "powermeter_end": float(last["powermeter_num"]),
+                "row_count": int(len(power_rows)),
+                "first_plctime_utc": power_first["ts"],
+                "last_plctime_utc": power_last["ts"],
+                "powermeter_start": float(power_first["powermeter_num"]),
+                "powermeter_end": float(power_last["powermeter_num"]),
                 "powermeter_delta_ticks": delta_ticks,
                 "power_kwh": delta_ticks * tick_kwh,
+                "permeate_row_count": int(len(permeate_rows)),
+                "permeate_first_plctime_utc": permeate_first["ts"] if permeate_first is not None else pd.NaT,
+                "permeate_last_plctime_utc": permeate_last["ts"] if permeate_last is not None else pd.NaT,
+                "permeate_start_total": float(permeate_first["permeate_num"]) if permeate_first is not None else None,
+                "permeate_end_total": float(permeate_last["permeate_num"]) if permeate_last is not None else None,
+                "permeate_delta_gallons": permeate_delta,
+                "had_alarm": had_alarm,
+                "alarmword_values": ",".join(str(v) for v in active_alarmwords),
+                "alarm_labels": " | ".join(alarm_labels),
                 "source_file": str(fp),
             }
         )
@@ -163,6 +224,15 @@ def compute_daily_usage(
                 "powermeter_end",
                 "powermeter_delta_ticks",
                 "power_kwh",
+                "permeate_row_count",
+                "permeate_first_plctime_utc",
+                "permeate_last_plctime_utc",
+                "permeate_start_total",
+                "permeate_end_total",
+                "permeate_delta_gallons",
+                "had_alarm",
+                "alarmword_values",
+                "alarm_labels",
                 "source_file",
             ]
         )
@@ -176,7 +246,8 @@ def write_outputs(df: pd.DataFrame, *, out_dir: Path, prefix: str, year: int, ti
 
     csv_path = out_dir / f"{prefix}.csv"
     parquet_path = out_dir / f"{prefix}.parquet"
-    png_path = out_dir / f"{prefix}.png"
+    power_png_path = out_dir / f"{prefix}_power_kwh.png"
+    permeate_png_path = out_dir / f"{prefix}_permeate_gallons.png"
     summary_path = out_dir / f"{prefix}_summary.json"
 
     df.to_csv(csv_path, index=False)
@@ -188,19 +259,45 @@ def write_outputs(df: pd.DataFrame, *, out_dir: Path, prefix: str, year: int, ti
         "days": int(len(df)),
         "sites": sorted(df["site"].dropna().astype(str).unique().tolist()) if not df.empty else [],
         "total_power_kwh": float(df["power_kwh"].sum()) if not df.empty else 0.0,
+        "total_permeate_gallons": float(df["permeate_delta_gallons"].fillna(0).sum()) if not df.empty else 0.0,
+        "alarm_days": int(df["had_alarm"].fillna(False).sum()) if not df.empty else 0,
         "csv": str(csv_path),
         "parquet": str(parquet_path),
-        "chart_png": str(png_path),
+        "power_chart_png": str(power_png_path),
+        "permeate_chart_png": str(permeate_png_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    plot_daily_usage(df, png_path, year=year)
+    plot_daily_usage(
+        df,
+        power_png_path,
+        year=year,
+        value_col="power_kwh",
+        title=f"Daily Power Usage by Site ({year})",
+        ylabel="kWh/day",
+    )
+    plot_daily_usage(
+        df,
+        permeate_png_path,
+        year=year,
+        value_col="permeate_delta_gallons",
+        title=f"Daily Permeate Delta by Site ({year})",
+        ylabel="Gallons/day",
+    )
     return summary
 
 
-def plot_daily_usage(df: pd.DataFrame, out_png: Path, *, year: int) -> None:
+def plot_daily_usage(
+    df: pd.DataFrame,
+    out_png: Path,
+    *,
+    year: int,
+    value_col: str,
+    title: str,
+    ylabel: str,
+) -> None:
     if df.empty:
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.text(0.5, 0.5, f"No daily power usage rows found for {year}", ha="center", va="center")
+        ax.text(0.5, 0.5, f"No daily rows found for {year}", ha="center", va="center")
         ax.set_axis_off()
         fig.tight_layout()
         fig.savefig(out_png, dpi=160)
@@ -214,13 +311,48 @@ def plot_daily_usage(df: pd.DataFrame, out_png: Path, *, year: int) -> None:
 
     for ax, site in zip(axes, sites):
         sub = df[df["site"] == site].sort_values("date")
-        ax.bar(sub["date"], sub["power_kwh"], width=0.9, color="#2b6f8a", edgecolor="#18485a", linewidth=0.3)
+        vals = pd.to_numeric(sub[value_col], errors="coerce").fillna(0)
+        alarm_mask = sub["had_alarm"].fillna(False).astype(bool)
+        colors = ["#c0392b" if flagged else "#2b6f8a" for flagged in alarm_mask]
+        edges = ["#7b241c" if flagged else "#18485a" for flagged in alarm_mask]
+        ax.bar(sub["date"], vals, width=0.9, color=colors, edgecolor=edges, linewidth=0.3)
         ax.set_title(site)
-        ax.set_ylabel("kWh/day")
+        ax.set_ylabel(ylabel)
         ax.grid(axis="y", alpha=0.25)
+        ymax = float(vals.max()) if len(vals) else 0.0
+        label_y = ymax * 0.02 if ymax > 0 else 0.1
+        for _, row in sub[alarm_mask].iterrows():
+            value = pd.to_numeric(pd.Series([row[value_col]]), errors="coerce").fillna(0).iloc[0]
+            label_lines = [pd.Timestamp(row["date"]).strftime("%Y-%m-%d")]
+            if str(row.get("alarm_labels", "")).strip():
+                label_lines.extend(str(row["alarm_labels"]).split(" | "))
+            elif str(row.get("alarmword_values", "")).strip():
+                label_lines.append(f"alarmword={row['alarmword_values']}")
+            ax.annotate(
+                "\n".join(label_lines),
+                (row["date"], value),
+                textcoords="offset points",
+                xytext=(0, 4 if value >= 0 else -18),
+                ha="center",
+                va="bottom" if value >= 0 else "top",
+                rotation=90,
+                fontsize=7,
+                color="#7b241c",
+            )
+        if alarm_mask.any():
+            ax.text(
+                0.995,
+                0.95,
+                "Red = alarm day",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=8,
+                color="#7b241c",
+            )
 
     axes[-1].set_xlabel(f"Date ({year})")
-    fig.suptitle(f"Daily Power Usage by Site ({year})", y=0.995, fontsize=14)
+    fig.suptitle(title, y=0.995, fontsize=14)
     fig.tight_layout()
     fig.savefig(out_png, dpi=160)
     plt.close(fig)
@@ -237,6 +369,9 @@ def main() -> None:
         sites=sites,
         timestamp_col=args.timestamp_col,
         powermeter_col=args.powermeter_col,
+        permeate_col=args.permeate_col,
+        alarm_col=args.alarm_col,
+        alarmword_col=args.alarmword_col,
         year=args.year,
         tick_kwh=args.tick_kwh,
     )

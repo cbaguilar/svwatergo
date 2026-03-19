@@ -107,5 +107,6 @@ python3 python/analytics/calc_daily_power_usage.py \
   --year 2025
 ```
 
-By default this writes a CSV, parquet copy, summary JSON, and a per-site bar chart PNG to
+By default this writes a CSV, parquet copy, summary JSON, a per-site daily power bar chart PNG,
+and a per-site daily permeate-delta bar chart PNG to
 `/mnt/d/datasets/svwatergo/derived/daily_power_usage`.
