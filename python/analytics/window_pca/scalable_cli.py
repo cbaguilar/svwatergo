@@ -781,6 +781,7 @@ def _render_top_loadings_table(
     load_top: Dict[str, object],
     *,
     out_png: Path,
+    out_svg: Optional[Path] = None,
     top_k: int = 5,
     title: str,
 ) -> None:
@@ -798,7 +799,7 @@ def _render_top_loadings_table(
 
     nrows = len(pcs)
     fig_h = max(2.8 * nrows + 0.8, 3.5)
-    fig, axes = plt.subplots(nrows, 1, figsize=(12, fig_h), constrained_layout=True)
+    fig, axes = plt.subplots(nrows, 1, figsize=(9.0, fig_h), constrained_layout=True)
     if nrows == 1:
         axes = [axes]
 
@@ -822,11 +823,11 @@ def _render_top_loadings_table(
             cellLoc="left",
             colLoc="left",
             loc="center",
-            colWidths=[0.52, 0.16, 0.16, 0.16],
+            colWidths=[0.44, 0.18, 0.18, 0.14],
         )
         table.auto_set_font_size(False)
         table.set_fontsize(9)
-        table.scale(1.0, 1.35)
+        table.scale(0.95, 1.35)
         pc_num = int(pc_key[2:])
         evr_txt = f" ({float(evr) * 100.0:.2f}% var)" if evr is not None else ""
         ax.set_title(f"Top {min(len(rows), int(top_k))} contributors for PC{pc_num}{evr_txt}", fontsize=12, pad=10)
@@ -834,7 +835,70 @@ def _render_top_loadings_table(
     fig.suptitle(alias_site_names(title), fontsize=14)
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=180, bbox_inches="tight")
+    if out_svg is not None:
+        out_svg.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_svg, bbox_inches="tight")
     plt.close(fig)
+
+
+def _latex_escape(text: object) -> str:
+    s = str(text)
+    repl = {
+        "\\": r"\textbackslash{}",
+        "_": r"\_",
+        "%": r"\%",
+        "&": r"\&",
+        "#": r"\#",
+        "$": r"\$",
+        "{": r"\{",
+        "}": r"\}",
+    }
+    for src, dst in repl.items():
+        s = s.replace(src, dst)
+    return s
+
+
+def _write_top_loadings_latex(
+    load_top: Dict[str, object],
+    *,
+    out_tex: Path,
+    top_k: int = 5,
+) -> None:
+    pcs = sorted(
+        [k for k in load_top.keys() if re.fullmatch(r"pc\d+", str(k))],
+        key=lambda x: int(str(x)[2:]),
+    )
+    lines: List[str] = []
+    lines.append(r"\begin{table*}[t]")
+    lines.append(r"\centering")
+    lines.append(
+        r"\caption{Top PCA contributors for the first principal components. "
+        r"Loadings are signed PCA coefficients; contribution ratio is the squared-loading share within each component.}"
+    )
+    lines.append(r"\label{tab:pca_top_contributors}")
+    lines.append(r"\begin{tabular}{llrrr}")
+    lines.append(r"\hline")
+    lines.append(r"PC & Feature & Loading & $|\mathrm{loading}|$ & Contrib. ratio \\")
+    lines.append(r"\hline")
+    for pc_key in pcs:
+        payload = dict(load_top.get(pc_key) or {})
+        evr = payload.get("explained_variance_ratio")
+        rows = list(payload.get("top_features_by_abs_loading") or [])[: max(1, int(top_k))]
+        pc_num = int(str(pc_key)[2:])
+        evr_txt = f"{float(evr) * 100.0:.2f}\\%" if evr is not None else "?"
+        pc_label = f"PC{pc_num} (${evr_txt}$)"
+        for r in rows:
+            lines.append(
+                f"{pc_label} & {_latex_escape(r.get('feature', ''))} & "
+                f"{float(r.get('loading', 0.0)):.4f} & "
+                f"{float(r.get('abs_loading', 0.0)):.4f} & "
+                f"{float(r.get('contrib_ratio', 0.0)):.4f} \\\\"
+            )
+        lines.append(r"\hline")
+    lines.append(r"\end{tabular}")
+    lines.append(r"\end{table*}")
+    out_tex.parent.mkdir(parents=True, exist_ok=True)
+    out_tex.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -1065,6 +1129,8 @@ def main() -> None:
     loadings_long_path = out_dir / f"{args.out_prefix}_pc_loadings_long.parquet"
     loadings_top_json = out_dir / f"{args.out_prefix}_pc_top_contributors.json"
     loadings_table_png = out_dir / f"{args.out_prefix}_pc_top_contributors.png"
+    loadings_table_svg = out_dir / f"{args.out_prefix}_pc_top_contributors.svg"
+    loadings_table_tex = out_dir / f"{args.out_prefix}_pc_top_contributors.tex"
     points_parquet = out_dir / f"{args.out_prefix}_point_sample.parquet"
     heatmap_png = out_dir / f"{args.out_prefix}_pc_heatmaps.png"
     scatter_png = out_dir / f"{args.out_prefix}_pc123_points.png"
@@ -1096,8 +1162,14 @@ def main() -> None:
     _render_top_loadings_table(
         load_top,
         out_png=loadings_table_png,
+        out_svg=loadings_table_svg,
         top_k=int(args.loadings_table_top_k),
         title=f"{args.site} PCA top contributors ({args.date_from}..{args.date_to})",
+    )
+    _write_top_loadings_latex(
+        load_top,
+        out_tex=loadings_table_tex,
+        top_k=int(args.loadings_table_top_k),
     )
 
     if args.render_mode in {"heatmap", "both"}:
@@ -1211,6 +1283,8 @@ def main() -> None:
             "loadings_long_parquet": str(loadings_long_path),
             "loadings_top_json": str(loadings_top_json),
             "loadings_table_png": str(loadings_table_png),
+            "loadings_table_svg": str(loadings_table_svg),
+            "loadings_table_tex": str(loadings_table_tex),
             "projection_manifest_json": str(projection_manifest_path),
             "heatmap_png": str(heatmap_png) if args.render_mode in {"heatmap", "both"} else "",
             "voxel_parquet": str(voxels_parquet) if args.render_mode in {"heatmap", "both"} else "",
@@ -1232,6 +1306,8 @@ def main() -> None:
     print(f"[OK] loadings(long) -> {loadings_long_path}")
     print(f"[OK] top contributors -> {loadings_top_json}")
     print(f"[OK] top contributors table -> {loadings_table_png}")
+    print(f"[OK] top contributors table svg -> {loadings_table_svg}")
+    print(f"[OK] top contributors table tex -> {loadings_table_tex}")
     print(f"[OK] meta -> {meta_path}")
     if args.write_projections:
         print(f"[OK] projections manifest -> {projection_manifest_path}")
