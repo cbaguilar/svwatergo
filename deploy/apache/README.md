@@ -47,6 +47,71 @@ Replace only the old Go API rules (`/api` and websocket `/state/stream`), and ke
 If you want a separate dedicated API vhost instead, use:
 - `deploy/apache/apache/svwatergo-header-routing.conf`
 
+## mTLS rollout snippets
+
+To validate client-certificate auth without touching live uploads first, add:
+- `deploy/apache/apache/svwatergo-mtls-probe-snippet.conf`
+
+That protects only:
+- `POST /api/v1/ingest/mtls-probe`
+
+The backend exposes that probe route directly so Apache mTLS can be tested
+without application auth or upload side effects.
+
+When you are ready to enforce mTLS on uploads too, add:
+- `deploy/apache/apache/svwatergo-mtls-all-ingest-snippet.conf`
+
+That protects:
+- `/api/v1/ingest/mtls-probe`
+- `/UploadDataNew`
+- `/uploadDataNew`
+- `/uploadSensorDataNew`
+
+Both mTLS snippets assume your existing TLS vhost also includes:
+
+```apache
+SSLCACertificateFile /etc/apache2/ssl/upload-client-ca.pem
+SSLVerifyClient optional
+SSLVerifyDepth 2
+SSLOptions +StdEnvVars +ExportCertData
+```
+
+### Generate a private client CA and uploader certs
+
+Helper script:
+- `deploy/apache/scripts/generate-mtls-materials.sh`
+
+Create the CA Apache will trust:
+
+```bash
+mkdir -p deploy/apache/mtls
+deploy/apache/scripts/generate-mtls-materials.sh ca upload-client deploy/apache/mtls
+```
+
+That produces:
+- `deploy/apache/mtls/upload-client-ca.key`
+- `deploy/apache/mtls/upload-client-ca.pem`
+
+Issue one client cert per uploader:
+
+```bash
+deploy/apache/scripts/generate-mtls-materials.sh client uploader-01 deploy/apache/mtls
+```
+
+That produces:
+- `deploy/apache/mtls/uploader-01.key`
+- `deploy/apache/mtls/uploader-01.csr`
+- `deploy/apache/mtls/uploader-01.crt`
+
+Install the CA cert on Apache as:
+
+```bash
+sudo install -m 0644 deploy/apache/mtls/upload-client-ca.pem /etc/apache2/ssl/upload-client-ca.pem
+```
+
+Keep the CA private key off the Apache host if possible. Only the CA cert
+belongs on Apache; the CA key stays where you issue client certs.
+
 ### Enable required Apache modules
 
 ```bash
@@ -61,6 +126,8 @@ If you need TLS, use the commented `*:443` block in `svwatergo-header-routing.co
 sudo a2enmod ssl
 sudo systemctl reload apache2
 ```
+
+For the mTLS snippets, `headers` and `ssl` must both be enabled.
 
 ## 4) Verify routing behavior
 
@@ -83,6 +150,23 @@ curl -i 'http://api.svwaternet.org/health?backend=dev'
 ```
 
 Browser websocket clients can force dev using `?backend=dev`.
+
+### Verify mTLS probe
+
+Without a client cert, the probe should fail with `403`:
+
+```bash
+curl -i -X POST https://svwaternet.org/api/v1/ingest/mtls-probe
+```
+
+With a valid client cert, it should return `200`:
+
+```bash
+curl -i -X POST \
+  --cert /path/to/uploader.crt \
+  --key /path/to/uploader.key \
+  https://svwaternet.org/api/v1/ingest/mtls-probe
+```
 
 ## Notes
 

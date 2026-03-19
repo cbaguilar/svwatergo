@@ -267,8 +267,10 @@ const Dashboard = () => {
           ? 'RO Running'
           : stateCode === 3
             ? 'RO Standby'
-            : stateCode === 5 || stateCode === 8
-              ? 'Flushing'
+            : stateCode === 5
+              ? 'Permeate Flush'
+              : stateCode === 8
+                ? 'MMF Flush'
               : 'Unknown'
   const lastUpdatedRaw = latestState?.data?.plctime || latestState?.data?.recordtime
   const lastUpdated = lastUpdatedRaw ? new Date(lastUpdatedRaw) : null

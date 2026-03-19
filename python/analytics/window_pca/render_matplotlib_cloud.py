@@ -106,6 +106,7 @@ def _state_label_for_value(col: str, value: object) -> str:
         3: "3 Standby",
         4: "4 Feed Flush",
         5: "5 Permeate Flush",
+        8: "8 MMF Flush",
     }
     return labels.get(iv, alias_site_names(str(iv)))
 

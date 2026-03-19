@@ -663,7 +663,7 @@ const DetailedDashboard = () => {
     if (stateCode === 3) return <CBadge color="warning">RO Standby</CBadge>
     if (stateCode === 4) return <CBadge color="info">Feed Flush</CBadge>
     if (stateCode === 5) return <CBadge color="info">Permeate Flush</CBadge>
-    if (stateCode === 8) return <CBadge color="info">Flushing</CBadge>
+    if (stateCode === 8) return <CBadge color="info">MMF Flush</CBadge>
     return <CBadge color="secondary">Unknown</CBadge>
   }
 
