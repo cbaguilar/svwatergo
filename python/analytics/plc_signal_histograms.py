@@ -19,6 +19,7 @@ import pandas as pd
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from python.analytics.site_alias import alias_site_names
 from python.units import label_with_unit
 
 
@@ -458,7 +459,7 @@ def _render_group_pages(
         for ax in axes_list[len(chunk) :]:
             ax.axis("off")
         fig.suptitle(
-            f"{title_prefix} | {group_name.title()} Histograms | page {page_idx + 1}/{pages}",
+            alias_site_names(f"{title_prefix} | {group_name.title()} Histograms | page {page_idx + 1}/{pages}"),
             fontsize=13,
             fontweight="600",
         )
@@ -525,7 +526,7 @@ def main() -> None:
     summary_frames: List[pd.DataFrame] = []
     out_csv = out_dir / f"{prefix}_signal_hist_summary.csv"
 
-    title_prefix = f"{args.site} | {args.date_from} to {args.date_to}"
+    title_prefix = alias_site_names(f"{args.site} | {args.date_from} to {args.date_to}")
     artifacts: Dict[str, List[str] | str] = {
         "summary_csv": str(out_csv),
     }
