@@ -520,9 +520,15 @@ def _render_color_grid_pages(
             ax = fig.add_subplot(nrow, ncol, i, projection="3d")
             c_lower = str(c).lower()
             use_df = df if (c_lower.startswith("alarm__") or "sec_since_transition" in c_lower) else df_core
-            d = use_df[["pca1", "pca2", "pca3", c]].copy()
+            d_cols = ["pca1", "pca2", "pca3", c]
+            if "alarm__duty" in use_df.columns and "alarm__duty" not in d_cols:
+                d_cols.append("alarm__duty")
+            d = use_df[d_cols].copy()
             for x in ("pca1", "pca2", "pca3"):
                 d[x] = pd.to_numeric(d[x], errors="coerce")
+            if "sec_since_transition" in c_lower and "alarm__duty" in d.columns:
+                alarm_num = pd.to_numeric(d["alarm__duty"], errors="coerce")
+                d = d.loc[(alarm_num < 0.5) | alarm_num.isna()].copy()
             good = np.isfinite(d["pca1"]) & np.isfinite(d["pca2"]) & np.isfinite(d["pca3"])
             d = d.loc[good]
             if len(d) == 0:
@@ -637,7 +643,6 @@ def _render_color_grid_pages(
             ax.zaxis.labelpad = 8
 
         fig.suptitle(alias_site_names(f"{title_prefix} (page {p+1}/{n_pages})"))
-        fig.tight_layout(rect=[0, 0.03, 1, 0.95])
         out = out_dir / f"{out_prefix}_pc123_color_grid_{p+1:02d}.png"
         fig.savefig(out, dpi=180)
         plt.close(fig)
