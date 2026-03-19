@@ -13,6 +13,10 @@ START_TS="${START_TS:-}"
 END_TS="${END_TS:-}"
 OUT_DIR="${OUT_DIR:-/mnt/d/datasets/svwatergo/derived/plots/plc_histograms}"
 BINS="${BINS:-80}"
+BIN_WIDTH_FLOW="${BIN_WIDTH_FLOW:-0.02}"
+BIN_WIDTH_PRESSURE="${BIN_WIDTH_PRESSURE:-0.02}"
+BIN_WIDTH_WATER_QUALITY="${BIN_WIDTH_WATER_QUALITY:-0.02}"
+BIN_WIDTH_OTHER="${BIN_WIDTH_OTHER:-}"
 MAX_COLS="${MAX_COLS:-24}"
 COLS_PER_PAGE="${COLS_PER_PAGE:-6}"
 DENSITY="${DENSITY:-no}"
@@ -34,6 +38,9 @@ for SITE_RAW in "${SITES[@]}"; do
     --date-from "$DATE_FROM"
     --date-to "$DATE_TO"
     --bins "$BINS"
+    --bin-width-flow "$BIN_WIDTH_FLOW"
+    --bin-width-pressure "$BIN_WIDTH_PRESSURE"
+    --bin-width-water-quality "$BIN_WIDTH_WATER_QUALITY"
     --max-cols "$MAX_COLS"
     --cols-per-page "$COLS_PER_PAGE"
     --out-dir "$OUT_DIR/$SITE"
@@ -49,6 +56,9 @@ for SITE_RAW in "${SITES[@]}"; do
   fi
   if [[ "$DENSITY" == "yes" ]]; then
     args+=(--density)
+  fi
+  if [[ -n "$BIN_WIDTH_OTHER" ]]; then
+    args+=(--bin-width-other "$BIN_WIDTH_OTHER")
   fi
   if [[ "$LOG_Y" == "yes" ]]; then
     args+=(--log-y)

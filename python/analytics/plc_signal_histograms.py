@@ -57,6 +57,15 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--start", default=None, help="Optional UTC timestamp start filter (inclusive)")
     p.add_argument("--end", default=None, help="Optional UTC timestamp end filter (exclusive)")
     p.add_argument("--bins", type=int, default=80, help="Histogram bin count")
+    p.add_argument("--bin-width-flow", type=float, default=0.02, help="Explicit flow histogram bucket width")
+    p.add_argument("--bin-width-pressure", type=float, default=0.02, help="Explicit pressure histogram bucket width")
+    p.add_argument(
+        "--bin-width-water-quality",
+        type=float,
+        default=0.02,
+        help="Explicit conductivity/nitrate histogram bucket width",
+    )
+    p.add_argument("--bin-width-other", type=float, default=None, help="Explicit bucket width for uncategorized signals")
     p.add_argument(
         "--include-regex",
         action="append",
@@ -232,10 +241,43 @@ def _split_value_label(value: object) -> str:
     return str(value)
 
 
+def _hist_edges(x: np.ndarray, *, bins: int, bin_width: Optional[float]) -> np.ndarray:
+    x = np.asarray(x, dtype=float)
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        return np.linspace(0.0, 1.0, max(2, int(bins) + 1))
+
+    x_min = float(np.min(x))
+    x_max = float(np.max(x))
+    if bin_width is not None and float(bin_width) > 0:
+        width = float(bin_width)
+        lo = math.floor(x_min / width) * width
+        hi = math.ceil(x_max / width) * width
+        if hi <= lo:
+            hi = lo + width
+        n_steps = max(1, int(round((hi - lo) / width)))
+        return lo + np.arange(n_steps + 1, dtype=float) * width
+
+    if x_max <= x_min:
+        x_max = x_min + 1e-9
+    return np.linspace(x_min, x_max, max(2, int(bins) + 1))
+
+
+def _bin_width_for_group(group_name: str, args: argparse.Namespace) -> Optional[float]:
+    if group_name == "flow":
+        return args.bin_width_flow
+    if group_name == "pressure":
+        return args.bin_width_pressure
+    if group_name == "water_quality":
+        return args.bin_width_water_quality
+    return args.bin_width_other
+
+
 def _summary_rows(
     df: pd.DataFrame,
     signal_cols: Sequence[str],
     bins: int,
+    args: argparse.Namespace,
     split_label: Optional[str] = None,
 ) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
@@ -244,12 +286,14 @@ def _summary_rows(
         if x.size == 0:
             continue
         q05, q50, q95 = np.quantile(x, [0.05, 0.5, 0.95])
-        counts, edges = np.histogram(x, bins=max(2, int(bins)))
+        group_name = _group_for_column(col)
+        edges = _hist_edges(x, bins=max(2, int(bins)), bin_width=_bin_width_for_group(group_name, args))
+        counts, _ = np.histogram(x, bins=edges)
         peak_idx = int(np.argmax(counts))
         rows.append(
             {
                 "signal_col": col,
-                "group": _group_for_column(col),
+                "group": group_name,
                 "split": split_label or "all",
                 "n": int(x.size),
                 "mean": float(np.mean(x)),
@@ -280,6 +324,7 @@ def _render_group_pages(
     fig_row_height: float,
     density: bool,
     log_y: bool,
+    args: argparse.Namespace,
     title_prefix: str,
 ) -> List[str]:
     if not signal_cols:
@@ -307,9 +352,14 @@ def _render_group_pages(
                 ax.set_title(f"{label_with_unit(col)} (no data)")
                 ax.axis("off")
                 continue
-            ax.hist(
+            edges = _hist_edges(
                 x,
                 bins=max(2, int(bins)),
+                bin_width=_bin_width_for_group(group_name, args),
+            )
+            ax.hist(
+                x,
+                bins=edges,
                 color="#4c78a8",
                 edgecolor="#ffffff",
                 linewidth=0.6,
@@ -395,6 +445,9 @@ def main() -> None:
         if split_df.empty:
             continue
         summary_frames.append(_summary_rows(split_df, signal_cols=signal_cols, bins=int(args.bins), split_label=split_name))
+        summary_frames[-1]["bin_width"] = summary_frames[-1]["group"].map(
+            lambda g: _bin_width_for_group(str(g), args)
+        )
         split_prefix = prefix if split_name == "all" else f"{prefix}_{split_name}"
         split_title_prefix = title_prefix
         if split_state_col:
@@ -415,6 +468,7 @@ def main() -> None:
                 fig_row_height=float(args.fig_row_height),
                 density=bool(args.density),
                 log_y=bool(args.log_y),
+                args=args,
                 title_prefix=split_title_prefix,
             )
             split_key = _sanitize(split_name)
@@ -438,6 +492,12 @@ def main() -> None:
         "bins": int(args.bins),
         "density": bool(args.density),
         "log_y": bool(args.log_y),
+        "bin_widths": {
+            "flow": args.bin_width_flow,
+            "pressure": args.bin_width_pressure,
+            "water_quality": args.bin_width_water_quality,
+            "other": args.bin_width_other,
+        },
         "split_state_col": split_state_col,
         "files": [str(p) for p in files],
         "rows_loaded": int(df.shape[0]),
