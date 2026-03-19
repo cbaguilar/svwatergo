@@ -114,6 +114,12 @@ def _build_argparser() -> argparse.ArgumentParser:
 
     p.add_argument("--out-dir", default="./pca_out")
     p.add_argument("--out-prefix", default="bluerock_alltime")
+    p.add_argument(
+        "--loadings-table-top-k",
+        type=int,
+        default=5,
+        help="Top-K features per PC to render in the loadings table PNG",
+    )
     p.add_argument("--verbose", action="store_true")
     return p
 
@@ -771,6 +777,66 @@ def _build_loadings_tables(bundle) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str
     return wide, long, top_summary
 
 
+def _render_top_loadings_table(
+    load_top: Dict[str, object],
+    *,
+    out_png: Path,
+    top_k: int = 5,
+    title: str,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    pcs = sorted(
+        [k for k in load_top.keys() if re.fullmatch(r"pc\d+", str(k))],
+        key=lambda x: int(str(x)[2:]),
+    )
+    if not pcs:
+        return
+
+    nrows = len(pcs)
+    fig_h = max(2.8 * nrows + 0.8, 3.5)
+    fig, axes = plt.subplots(nrows, 1, figsize=(12, fig_h), constrained_layout=True)
+    if nrows == 1:
+        axes = [axes]
+
+    for ax, pc_key in zip(axes, pcs):
+        ax.axis("off")
+        payload = dict(load_top.get(pc_key) or {})
+        evr = payload.get("explained_variance_ratio")
+        rows = list(payload.get("top_features_by_abs_loading") or [])[: max(1, int(top_k))]
+        cell_text = [
+            [
+                str(r.get("feature", "")),
+                f"{float(r.get('loading', 0.0)):.4f}",
+                f"{float(r.get('abs_loading', 0.0)):.4f}",
+                f"{float(r.get('contrib_ratio', 0.0)):.4f}",
+            ]
+            for r in rows
+        ]
+        table = ax.table(
+            cellText=cell_text,
+            colLabels=["Feature", "Loading", "|Loading|", "Contrib."],
+            cellLoc="left",
+            colLoc="left",
+            loc="center",
+            colWidths=[0.52, 0.16, 0.16, 0.16],
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1.0, 1.35)
+        pc_num = int(pc_key[2:])
+        evr_txt = f" ({float(evr) * 100.0:.2f}% var)" if evr is not None else ""
+        ax.set_title(f"Top {min(len(rows), int(top_k))} contributors for PC{pc_num}{evr_txt}", fontsize=12, pad=10)
+
+    fig.suptitle(alias_site_names(title), fontsize=14)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     args = _build_argparser().parse_args()
     t0 = time.time()
@@ -998,6 +1064,7 @@ def main() -> None:
     loadings_wide_path = out_dir / f"{args.out_prefix}_pc_loadings_wide.parquet"
     loadings_long_path = out_dir / f"{args.out_prefix}_pc_loadings_long.parquet"
     loadings_top_json = out_dir / f"{args.out_prefix}_pc_top_contributors.json"
+    loadings_table_png = out_dir / f"{args.out_prefix}_pc_top_contributors.png"
     points_parquet = out_dir / f"{args.out_prefix}_point_sample.parquet"
     heatmap_png = out_dir / f"{args.out_prefix}_pc_heatmaps.png"
     scatter_png = out_dir / f"{args.out_prefix}_pc123_points.png"
@@ -1026,6 +1093,12 @@ def main() -> None:
     load_wide.to_parquet(loadings_wide_path, index=False)
     load_long.to_parquet(loadings_long_path, index=False)
     _save_json(load_top, loadings_top_json)
+    _render_top_loadings_table(
+        load_top,
+        out_png=loadings_table_png,
+        top_k=int(args.loadings_table_top_k),
+        title=f"{args.site} PCA top contributors ({args.date_from}..{args.date_to})",
+    )
 
     if args.render_mode in {"heatmap", "both"}:
         _render_heatmaps(
@@ -1137,6 +1210,7 @@ def main() -> None:
             "loadings_wide_parquet": str(loadings_wide_path),
             "loadings_long_parquet": str(loadings_long_path),
             "loadings_top_json": str(loadings_top_json),
+            "loadings_table_png": str(loadings_table_png),
             "projection_manifest_json": str(projection_manifest_path),
             "heatmap_png": str(heatmap_png) if args.render_mode in {"heatmap", "both"} else "",
             "voxel_parquet": str(voxels_parquet) if args.render_mode in {"heatmap", "both"} else "",
@@ -1157,6 +1231,7 @@ def main() -> None:
     print(f"[OK] loadings(wide) -> {loadings_wide_path}")
     print(f"[OK] loadings(long) -> {loadings_long_path}")
     print(f"[OK] top contributors -> {loadings_top_json}")
+    print(f"[OK] top contributors table -> {loadings_table_png}")
     print(f"[OK] meta -> {meta_path}")
     if args.write_projections:
         print(f"[OK] projections manifest -> {projection_manifest_path}")
