@@ -91,6 +91,25 @@ def _use_categorical_color(series: pd.Series, color_mode: str, categorical_max_u
     return 0 < nunique <= int(categorical_max_unique)
 
 
+def _state_label_for_value(col: str, value: object) -> str:
+    col_l = str(col).lower()
+    if not (col_l.startswith("state__") or col_l == "state"):
+        return alias_site_names(str(value))
+    try:
+        iv = int(float(value))
+    except Exception:
+        return alias_site_names(str(value))
+    labels = {
+        0: "0 RO Off",
+        1: "1 EStop Pressed",
+        2: "2 RO Running",
+        3: "3 Standby",
+        4: "4 Feed Flush",
+        5: "5 Permeate Flush",
+    }
+    return labels.get(iv, alias_site_names(str(iv)))
+
+
 def main() -> None:
     args = _build_argparser().parse_args()
     import matplotlib
@@ -178,7 +197,7 @@ def main() -> None:
                     alpha=float(args.alpha), linewidths=0,
                     label=str(label),
                 )
-                handles.append(plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=alias_site_names(str(label))))
+                handles.append(plt.Line2D([0], [0], marker="o", linestyle="", markersize=6, color=color, label=_state_label_for_value(color_col, label)))
             ax.legend(handles=handles, title=alias_site_names(label_with_unit(color_col)), fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
         else:
             cnum = pd.to_numeric(c, errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)

@@ -303,6 +303,25 @@ def _is_discrete_col(name: str, s: pd.Series) -> bool:
     return False
 
 
+def _state_label_for_value(col: str, value: object) -> str:
+    col_l = str(col).lower()
+    if not (col_l.startswith("state__") or col_l == "state"):
+        return alias_site_names(str(value))
+    try:
+        iv = int(float(value))
+    except Exception:
+        return alias_site_names(str(value))
+    labels = {
+        0: "0 RO Off",
+        1: "1 EStop Pressed",
+        2: "2 RO Running",
+        3: "3 Standby",
+        4: "4 Feed Flush",
+        5: "5 Permeate Flush",
+    }
+    return labels.get(iv, alias_site_names(str(iv)))
+
+
 def _render_color_grid_pages(
     df: pd.DataFrame,
     df_core: pd.DataFrame,
@@ -379,7 +398,10 @@ def _render_color_grid_pages(
                     )
                 ax.set_title(alias_site_names(f"{label_with_unit(c)} (alarm emphasis)"))
             elif _is_discrete_col(c, s):
-                codes, _ = pd.factorize(s.astype(str).fillna("nan"), sort=True)
+                labels = s.astype(str).fillna("nan")
+                uniq = sorted(labels.unique().tolist())
+                code_map = {lab: i for i, lab in enumerate(uniq)}
+                codes = np.asarray([code_map[x] for x in labels.tolist()], dtype=np.int64)
                 ax.scatter(
                     d["pca1"],
                     d["pca2"],
@@ -390,6 +412,22 @@ def _render_color_grid_pages(
                     alpha=0.18,
                     linewidths=0,
                 )
+                if len(uniq) <= 12:
+                    cmap = plt.get_cmap("tab20", max(len(uniq), 1))
+                    handles = []
+                    for i_u, lab in enumerate(uniq):
+                        handles.append(
+                            plt.Line2D(
+                                [0],
+                                [0],
+                                marker="o",
+                                linestyle="",
+                                markersize=5,
+                                color=cmap(i_u),
+                                label=_state_label_for_value(c, lab),
+                            )
+                        )
+                    ax.legend(handles=handles, title=alias_site_names(label_with_unit(c)), fontsize=7, loc="best")
             else:
                 cnum = pd.to_numeric(s, errors="coerce").to_numpy(dtype=np.float64)
                 sc = ax.scatter(
