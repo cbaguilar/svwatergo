@@ -901,6 +901,59 @@ def _write_top_loadings_latex(
     out_tex.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _render_contribution_bars(
+    load_top: Dict[str, object],
+    *,
+    out_png: Path,
+    out_svg: Optional[Path] = None,
+    top_k: int = 10,
+    n_features: int,
+    title: str,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    pcs = sorted(
+        [k for k in load_top.keys() if re.fullmatch(r"pc\d+", str(k))],
+        key=lambda x: int(str(x)[2:]),
+    )
+    if not pcs:
+        return
+
+    nrows = len(pcs)
+    fig_h = max(3.4 * nrows + 0.8, 4.0)
+    fig, axes = plt.subplots(nrows, 1, figsize=(10.0, fig_h), constrained_layout=True)
+    if nrows == 1:
+        axes = [axes]
+
+    avg_contrib = 100.0 / max(int(n_features), 1)
+    for ax, pc_key in zip(axes, pcs):
+        payload = dict(load_top.get(pc_key) or {})
+        evr = payload.get("explained_variance_ratio")
+        rows = list(payload.get("top_features_by_abs_loading") or [])[: max(1, int(top_k))]
+        feats = [str(r.get("feature", "")) for r in rows]
+        vals = [100.0 * float(r.get("contrib_ratio", 0.0)) for r in rows]
+        ax.bar(range(len(vals)), vals, color="#4c78a8", edgecolor="#ffffff", linewidth=0.6)
+        ax.axhline(avg_contrib, color="red", linestyle=(0, (4, 4)), linewidth=1.2, alpha=0.85)
+        ax.set_xticks(range(len(vals)))
+        ax.set_xticklabels(feats, rotation=40, ha="right")
+        ax.set_ylabel("Contribution (%)")
+        pc_num = int(pc_key[2:])
+        evr_txt = f" ({float(evr) * 100.0:.2f}% var)" if evr is not None else ""
+        ax.set_title(f"Contribution of variables to PC{pc_num}{evr_txt}", fontsize=12)
+        ax.grid(True, axis="y", alpha=0.22)
+
+    fig.suptitle(alias_site_names(title), fontsize=14)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=180, bbox_inches="tight")
+    if out_svg is not None:
+        out_svg.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_svg, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     args = _build_argparser().parse_args()
     t0 = time.time()
@@ -1131,6 +1184,8 @@ def main() -> None:
     loadings_table_png = out_dir / f"{args.out_prefix}_pc_top_contributors.png"
     loadings_table_svg = out_dir / f"{args.out_prefix}_pc_top_contributors.svg"
     loadings_table_tex = out_dir / f"{args.out_prefix}_pc_top_contributors.tex"
+    contrib_bars_png = out_dir / f"{args.out_prefix}_pc_contrib_bars.png"
+    contrib_bars_svg = out_dir / f"{args.out_prefix}_pc_contrib_bars.svg"
     points_parquet = out_dir / f"{args.out_prefix}_point_sample.parquet"
     heatmap_png = out_dir / f"{args.out_prefix}_pc_heatmaps.png"
     scatter_png = out_dir / f"{args.out_prefix}_pc123_points.png"
@@ -1170,6 +1225,14 @@ def main() -> None:
         load_top,
         out_tex=loadings_table_tex,
         top_k=int(args.loadings_table_top_k),
+    )
+    _render_contribution_bars(
+        load_top,
+        out_png=contrib_bars_png,
+        out_svg=contrib_bars_svg,
+        top_k=max(10, int(args.loadings_table_top_k)),
+        n_features=len(bundle.cols),
+        title=f"{args.site} PCA contribution bars ({args.date_from}..{args.date_to})",
     )
 
     if args.render_mode in {"heatmap", "both"}:
@@ -1285,6 +1348,8 @@ def main() -> None:
             "loadings_table_png": str(loadings_table_png),
             "loadings_table_svg": str(loadings_table_svg),
             "loadings_table_tex": str(loadings_table_tex),
+            "contrib_bars_png": str(contrib_bars_png),
+            "contrib_bars_svg": str(contrib_bars_svg),
             "projection_manifest_json": str(projection_manifest_path),
             "heatmap_png": str(heatmap_png) if args.render_mode in {"heatmap", "both"} else "",
             "voxel_parquet": str(voxels_parquet) if args.render_mode in {"heatmap", "both"} else "",
@@ -1308,6 +1373,8 @@ def main() -> None:
     print(f"[OK] top contributors table -> {loadings_table_png}")
     print(f"[OK] top contributors table svg -> {loadings_table_svg}")
     print(f"[OK] top contributors table tex -> {loadings_table_tex}")
+    print(f"[OK] contribution bars -> {contrib_bars_png}")
+    print(f"[OK] contribution bars svg -> {contrib_bars_svg}")
     print(f"[OK] meta -> {meta_path}")
     if args.write_projections:
         print(f"[OK] projections manifest -> {projection_manifest_path}")
