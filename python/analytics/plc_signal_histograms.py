@@ -49,11 +49,19 @@ def build_argparser() -> argparse.ArgumentParser:
             "Discovers daily raw PLC parquet files by site/date and writes per-group PNGs plus CSV/JSON summaries."
         )
     )
-    p.add_argument("--local-root", required=True, help="Root directory containing raw PLC parquet days")
+    p.add_argument("--local-root", required=True, help="Root directory containing parquet days")
+    p.add_argument(
+        "--dataset-kind",
+        choices=["raw_plc", "window_features"],
+        default="raw_plc",
+        help="Input dataset layout to discover and summarize",
+    )
     p.add_argument("--site", required=True, help="Site name, e.g. bluerock/pryorfarm/santateresa")
     p.add_argument("--date-from", required=True, help="Start date YYYY-MM-DD (inclusive)")
     p.add_argument("--date-to", required=True, help="End date YYYY-MM-DD (inclusive)")
-    p.add_argument("--timestamp-col", default="plctime", help="Timestamp column")
+    p.add_argument("--timestamp-col", default=None, help="Timestamp column; defaults depend on --dataset-kind")
+    p.add_argument("--window-s", type=int, default=None, help="Window size for --dataset-kind window_features")
+    p.add_argument("--stride-s", type=int, default=None, help="Optional stride for --dataset-kind window_features")
     p.add_argument("--start", default=None, help="Optional UTC timestamp start filter (inclusive)")
     p.add_argument("--end", default=None, help="Optional UTC timestamp end filter (exclusive)")
     p.add_argument("--bins", type=int, default=80, help="Histogram bin count")
@@ -93,7 +101,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--split-state-col",
         default="state",
-        help="Optional categorical state column to split histograms. Default: state. Use 'none' to disable.",
+        help="Optional categorical state column to split histograms. Defaults depend on --dataset-kind. Use 'none' to disable.",
     )
     p.add_argument("--out-dir", default="./hist_out", help="Output directory")
     p.add_argument("--out-prefix", default=None, help="Output prefix")
@@ -134,16 +142,72 @@ def _candidate_day_paths(root: Path, site: str, day: str) -> List[Path]:
     ]
 
 
-def _discover_files(local_root: str, site: str, date_from: str, date_to: str) -> List[Path]:
+def _candidate_window_feature_paths(
+    root: Path,
+    site: str,
+    day: str,
+    window_s: Optional[int],
+    stride_s: Optional[int],
+) -> List[Path]:
+    paths: List[Path] = []
+    if window_s is not None:
+        ws = int(window_s)
+        if stride_s is not None and int(stride_s) != ws:
+            paths.append(
+                root
+                / f"window_s={ws}"
+                / f"stride_s={int(stride_s)}"
+                / f"site={site}"
+                / f"date={day}"
+                / "window_features.parquet"
+            )
+        paths.append(
+            root
+            / f"window_s={ws}"
+            / f"site={site}"
+            / f"date={day}"
+            / "window_features.parquet"
+        )
+    else:
+        paths.append(root / f"site={site}" / f"date={day}" / "window_features.parquet")
+    return paths
+
+
+def _discover_files(
+    local_root: str,
+    site: str,
+    date_from: str,
+    date_to: str,
+    *,
+    dataset_kind: str,
+    window_s: Optional[int],
+    stride_s: Optional[int],
+) -> List[Path]:
     root = Path(local_root)
     out: List[Path] = []
     for day in _daterange(_parse_date(date_from), _parse_date(date_to)):
         day_str = day.isoformat()
-        for candidate in _candidate_day_paths(root, site, day_str):
+        if dataset_kind == "window_features":
+            candidates = _candidate_window_feature_paths(root, site, day_str, window_s, stride_s)
+        else:
+            candidates = _candidate_day_paths(root, site, day_str)
+        for candidate in candidates:
             if candidate.exists():
                 out.append(candidate)
                 break
     return out
+
+
+def _default_timestamp_col(dataset_kind: str) -> str:
+    if dataset_kind == "window_features":
+        return "window_start_ts"
+    return "plctime"
+
+
+def _default_split_state_col(dataset_kind: str) -> str:
+    if dataset_kind == "window_features":
+        return "state__last"
+    return "state"
 
 
 def _matches_any(text: str, patterns: Sequence[str]) -> bool:
@@ -388,9 +452,21 @@ def _render_group_pages(
 
 def main() -> None:
     args = build_argparser().parse_args()
+    if not args.timestamp_col:
+        args.timestamp_col = _default_timestamp_col(str(args.dataset_kind))
+    if str(args.split_state_col or "").strip() == "state":
+        args.split_state_col = _default_split_state_col(str(args.dataset_kind))
     split_state_col = _normalize_optional_col(args.split_state_col)
 
-    files = _discover_files(args.local_root, args.site, args.date_from, args.date_to)
+    files = _discover_files(
+        args.local_root,
+        args.site,
+        args.date_from,
+        args.date_to,
+        dataset_kind=str(args.dataset_kind),
+        window_s=args.window_s,
+        stride_s=args.stride_s,
+    )
     if not files:
         raise SystemExit("No parquet files found for site/date range")
 
@@ -488,6 +564,9 @@ def main() -> None:
         "start": args.start,
         "end": args.end,
         "local_root": args.local_root,
+        "dataset_kind": str(args.dataset_kind),
+        "window_s": int(args.window_s) if args.window_s is not None else None,
+        "stride_s": int(args.stride_s) if args.stride_s is not None else None,
         "timestamp_col": args.timestamp_col,
         "bins": int(args.bins),
         "density": bool(args.density),

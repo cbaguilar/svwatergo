@@ -36,6 +36,17 @@ COLOR_MAX_COLS="${COLOR_MAX_COLS:-18}"
 COLOR_COLS="${COLOR_COLS:-}"
 COLOR_GRID_FIT_QUANTILE="${COLOR_GRID_FIT_QUANTILE:-0.0}"
 COLOR_GRID_FIT_METHOD="${COLOR_GRID_FIT_METHOD:-mahal}"
+WINDOW_HISTOGRAMS="${WINDOW_HISTOGRAMS:-yes}"
+WINDOW_HIST_BINS="${WINDOW_HIST_BINS:-80}"
+WINDOW_HIST_MAX_COLS="${WINDOW_HIST_MAX_COLS:-24}"
+WINDOW_HIST_COLS_PER_PAGE="${WINDOW_HIST_COLS_PER_PAGE:-6}"
+WINDOW_HIST_SPLIT_STATE_COL="${WINDOW_HIST_SPLIT_STATE_COL:-state__last}"
+WINDOW_HIST_DENSITY="${WINDOW_HIST_DENSITY:-no}"
+WINDOW_HIST_LOG_Y="${WINDOW_HIST_LOG_Y:-yes}"
+WINDOW_HIST_BIN_WIDTH_FLOW="${WINDOW_HIST_BIN_WIDTH_FLOW:-0.02}"
+WINDOW_HIST_BIN_WIDTH_PRESSURE="${WINDOW_HIST_BIN_WIDTH_PRESSURE:-0.02}"
+WINDOW_HIST_BIN_WIDTH_WATER_QUALITY="${WINDOW_HIST_BIN_WIDTH_WATER_QUALITY:-0.02}"
+WINDOW_HIST_BIN_WIDTH_OTHER="${WINDOW_HIST_BIN_WIDTH_OTHER:-}"
 
 OPEN3D_MAX_POINTS="${OPEN3D_MAX_POINTS:-3000000}"
 OPEN3D_POINT_SIZE="${OPEN3D_POINT_SIZE:-1.0}"
@@ -64,6 +75,7 @@ log "Paths: RAW_ROOT=$RAW_ROOT WINDOW_FEATURES_ROOT=$WINDOW_FEATURES_ROOT WINDOW
 log "Headless mode: OPEN3D_RENDER=$OPEN3D_RENDER (no=skip Open3D image render)"
 log "Color grid: COLOR_GRID=$COLOR_GRID COLOR_MAX_COLS=$COLOR_MAX_COLS"
 log "Color grid core fit: COLOR_GRID_FIT_QUANTILE=$COLOR_GRID_FIT_QUANTILE COLOR_GRID_FIT_METHOD=$COLOR_GRID_FIT_METHOD"
+log "Window histograms: WINDOW_HISTOGRAMS=$WINDOW_HISTOGRAMS"
 log "PCA feature mode: PCA_CONTINUOUS_ONLY=$PCA_CONTINUOUS_ONLY"
 log "Window rebuild flags: GENERATE_MISSING_WINDOWS=$GENERATE_MISSING_WINDOWS REGENERATE_WINDOWS=$REGENERATE_WINDOWS"
 
@@ -158,6 +170,45 @@ PY
       log "Parallel window generation complete"
     fi
   fi
+fi
+
+if [[ "$WINDOW_HISTOGRAMS" == "yes" ]]; then
+  HIST_OUT_DIR="$RUN_OUT_DIR/window_feature_histograms"
+  hist_args=(
+    -m python.analytics.plc_signal_histograms
+    --dataset-kind window_features
+    --local-root "$WINDOW_FEATURES_ROOT"
+    --site "$SITE"
+    --date-from "$DATE_FROM"
+    --date-to "$DATE_TO"
+    --window-s "$WINDOW_S"
+    --bins "$WINDOW_HIST_BINS"
+    --bin-width-flow "$WINDOW_HIST_BIN_WIDTH_FLOW"
+    --bin-width-pressure "$WINDOW_HIST_BIN_WIDTH_PRESSURE"
+    --bin-width-water-quality "$WINDOW_HIST_BIN_WIDTH_WATER_QUALITY"
+    --max-cols "$WINDOW_HIST_MAX_COLS"
+    --cols-per-page "$WINDOW_HIST_COLS_PER_PAGE"
+    --split-state-col "$WINDOW_HIST_SPLIT_STATE_COL"
+    --out-dir "$HIST_OUT_DIR"
+    --out-prefix "${OUT_PREFIX}_${SITE}_${DATE_FROM}_to_${DATE_TO}_window_features"
+    --verbose
+  )
+  if [[ -n "$STRIDE_S" ]]; then
+    hist_args+=(--stride-s "$STRIDE_S")
+  fi
+  if [[ -n "$WINDOW_HIST_BIN_WIDTH_OTHER" ]]; then
+    hist_args+=(--bin-width-other "$WINDOW_HIST_BIN_WIDTH_OTHER")
+  fi
+  if [[ "$WINDOW_HIST_DENSITY" == "yes" ]]; then
+    hist_args+=(--density)
+  fi
+  if [[ "$WINDOW_HIST_LOG_Y" == "yes" ]]; then
+    hist_args+=(--log-y)
+  fi
+
+  log "Running window-feature histogram generation"
+  "$PYTHON" "${hist_args[@]}"
+  log "Window-feature histogram stage complete"
 fi
 
 args=(
