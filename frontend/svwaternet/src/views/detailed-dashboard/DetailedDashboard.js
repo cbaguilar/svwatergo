@@ -65,6 +65,7 @@ const SITE_SENSOR_OVERRIDES = {
   },
   santateresa: {
     runflush: { dataKey: 'flushrun' },
+    producttds: { abbreviation: 'CT3' },
   },
   pryorfarm: {
     runflush: { dataKey: 'flushrun' },
