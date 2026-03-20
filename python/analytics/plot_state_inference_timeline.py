@@ -27,6 +27,23 @@ def _load(df_path: str, *, time_col: str, state_col: Optional[str]) -> pd.DataFr
     return df.sort_values(time_col, kind="mergesort").reset_index(drop=True)
 
 
+def _filter_time_window(
+    df: Optional[pd.DataFrame],
+    *,
+    time_col: str,
+    start_utc: Optional[pd.Timestamp],
+    end_utc: Optional[pd.Timestamp],
+) -> Optional[pd.DataFrame]:
+    if df is None:
+        return None
+    out = df.copy()
+    if start_utc is not None:
+        out = out.loc[out[time_col] >= start_utc].copy()
+    if end_utc is not None:
+        out = out.loc[out[time_col] <= end_utc].copy()
+    return out.reset_index(drop=True)
+
+
 def _r2_score(y_true: pd.Series, y_pred: pd.Series) -> Optional[float]:
     yt = pd.to_numeric(y_true, errors="coerce")
     yp = pd.to_numeric(y_pred, errors="coerce")
@@ -102,6 +119,8 @@ def main() -> int:
     p.add_argument("--overlay-parquet", default="", help="Optional third parquet for extra numeric overlay traces")
     p.add_argument("--overlay-time-col", default="segment_start_ts_utc")
     p.add_argument("--overlay-label", default="overlay")
+    p.add_argument("--x-start", default="", help="Optional inclusive UTC start timestamp, e.g. 2025-07-04T18:00:00Z")
+    p.add_argument("--x-end", default="", help="Optional inclusive UTC end timestamp, e.g. 2025-07-04T20:00:00Z")
     p.add_argument("--value-cols", default="", help="Comma-separated numeric columns to plot as time-series instead of state ribbons")
     p.add_argument("--reference-value-cols", default="", help="Optional comma-separated numeric columns from reference parquet")
     p.add_argument("--overlay-value-cols", default="", help="Optional comma-separated numeric columns from overlay parquet")
@@ -129,6 +148,21 @@ def main() -> int:
             time_col=str(args.overlay_time_col),
             state_col=None,
         )
+
+    x_start = pd.to_datetime(str(args.x_start).strip(), utc=True, errors="coerce") if str(args.x_start).strip() else None
+    x_end = pd.to_datetime(str(args.x_end).strip(), utc=True, errors="coerce") if str(args.x_end).strip() else None
+    if x_start is not None and pd.isna(x_start):
+        raise ValueError(f"Invalid --x-start: {args.x_start}")
+    if x_end is not None and pd.isna(x_end):
+        raise ValueError(f"Invalid --x-end: {args.x_end}")
+    if x_start is not None and x_end is not None and x_start > x_end:
+        raise ValueError("--x-start must be <= --x-end")
+
+    primary = _filter_time_window(primary, time_col=str(args.time_col), start_utc=x_start, end_utc=x_end)
+    ref = _filter_time_window(ref, time_col=str(args.reference_time_col), start_utc=x_start, end_utc=x_end)
+    overlay = _filter_time_window(overlay, time_col=str(args.overlay_time_col), start_utc=x_start, end_utc=x_end)
+    if primary is None or primary.empty:
+        raise ValueError("No primary rows left after applying the requested time window")
 
     try:
         import matplotlib.pyplot as plt  # type: ignore

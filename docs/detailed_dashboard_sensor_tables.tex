@@ -1,0 +1,154 @@
+% Auto-generated from detailed dashboard schematic source files
+% Requires: \usepackage{booktabs,longtable}
+\section*{Detailed Dashboard Sensor Inventory}
+\noindent The tables below enumerate the sensors rendered in the detailed dashboard schematics for Bluerock, Santa Teresa, and Pryor Farms.
+
+\section*{Bluerock}
+\noindent Source schematic: \texttt{frontend/svwaternet/src/components/detailed/schematics/BluerockSchematic.js}
+
+\subsection*{Bluerock Instrumentation Table}
+{\footnotesize
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\begin{longtable}{p{3.4cm}p{1.5cm}p{2.8cm}p{1.6cm}p{1.3cm}p{4.6cm}}
+\toprule
+Item & Tag & PLC Tag & Unit & Type & Notes \\
+\midrule
+\endfirsthead
+\toprule
+Item & Tag & PLC Tag & Unit & Type & Notes \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Feed Tank Level & LT1 & \texttt{feedtanklevel} & \% & number &  \\
+Well Pump & WP & \texttt{wellpumprun} &  & boolean &  \\
+Inlet Pressure & PT1 & \texttt{inletpressure} & PSI & number &  \\
+Feed Pressure & PT2 & \texttt{feedpressure} & PSI & number &  \\
+Feed Conductivity & CT1 & \texttt{feedtds} & \ensuremath{\mu}S/cm & number &  \\
+Feed Flow & FT0 & \texttt{feedflow} & GPM & number &  \\
+RO Pressure & PT3 & \texttt{ropressure} & PSI & number &  \\
+Recycle Flow & FT2 & \texttt{recycleflow} & GPM & number &  \\
+Concentrate Pressure & PT4 & \texttt{concentratepressure} & PSI & number &  \\
+Concentrate Flow & FT5 & \texttt{concentrateflow} & GPM & sensor &  \\
+Residual Tank Level & LT3 & \texttt{residualtanklevel} & \% & number &  \\
+Permeate Temperature & TT1 & \texttt{permtemp} & \ensuremath{^\circ}C & number &  \\
+Permeate Flow & FT3 & \texttt{permeateflow} & GPM & number &  \\
+Permeate Nitrate & NT1 & \texttt{permnitrate} & mg/L as NO3-N & number &  \\
+Permeate Conductivity & CTP & \texttt{permtds} & \ensuremath{\mu}S/cm & number &  \\
+Permeate Pressure & PT5 & \texttt{permeatepressure} & PSI & number &  \\
+P1 Feed Pump & P1 & \texttt{feedpumprun} &  & boolean &  \\
+P2 RO Pump & P2 & \texttt{ropumprun} &  & boolean &  \\
+AV2 Flush Valve & AV2 & \texttt{flushrun} &  & boolean &  \\
+AV1 Inlet Valve & AV1 & \texttt{inletrun} &  & boolean &  \\
+AV5 Concentrate Bypass & AV5 & \texttt{concbypassrun} &  & boolean &  \\
+Recycle Valve Position & AV4 & \texttt{recyclevalveposition} & \% & control valve &  \\
+RO Pressure Control Valve Position & AV3 & \texttt{ropressctrlvalveposition} & \% & control valve &  \\
+AV7 Residual Valve & AV7 & \texttt{residtankvalverun} &  & boolean &  \\
+AV6 Product Diversion & AV6 & \texttt{proddiversionrun} &  & boolean &  \\
+Product Tank Level & LT2 & \texttt{prodtanklevel} & \% & number &  \\
+Delivery Flow & FT4 & \texttt{deliveryflow} & GPM & number &  \\
+Delivery Pressure & PT6 & \texttt{deliverypressure} & PSI & number &  \\
+P3 Delivery Pump & P3 & \texttt{deliveryrun} &  & boolean &  \\
+\end{longtable}
+}
+
+\section*{Santa Teresa}
+\noindent Source schematic: \texttt{frontend/svwaternet/src/components/detailed/schematics/SantaTeresaSchematic.js}
+
+\subsection*{Santa Teresa Instrumentation Table}
+{\footnotesize
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\begin{longtable}{p{3.4cm}p{1.5cm}p{2.8cm}p{1.6cm}p{1.3cm}p{4.6cm}}
+\toprule
+Item & Tag & PLC Tag & Unit & Type & Notes \\
+\midrule
+\endfirsthead
+\toprule
+Item & Tag & PLC Tag & Unit & Type & Notes \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Feed Tank Level & LT1 & \texttt{feedtanklevel} & \% & number &  \\
+Well Pump & WP & \texttt{wellpumprun} &  & boolean &  \\
+Flush Tank Level & LT4 & \texttt{flushtanklevel} & \% & sensor &  \\
+AV2 Flush Valve & AV2 & \texttt{flushrun} &  & boolean &  \\
+Inlet Pressure & PT1 & \texttt{inletpressure} & PSI & number &  \\
+Feed Pressure & PT2 & \texttt{feedpressure} & PSI & number &  \\
+Inlet Flow & FT0 & \texttt{inletflow} & GPM & number &  \\
+RO Pressure & PT3 & \texttt{ropressure} & PSI & number &  \\
+Feed Conductivity & CT1 & \texttt{feedtds} & \ensuremath{\mu}S/cm & number &  \\
+Feed Flow (Estimated) & FTF & \texttt{feedflow\_soft} & GPM & number &  \\
+Recycle Flow & FTR & \texttt{recycleflow} & GPM & number &  \\
+Concentrate Pressure & PT4 & \texttt{concentratepressure} & PSI & number &  \\
+Permeate Nitrate & NT1 & \texttt{permnitrate} & mg/L as NO3-N & number &  \\
+Permeate Conductivity & CTP & \texttt{permtds} & \ensuremath{\mu}S/cm & number &  \\
+Permeate Flow & FT3 & \texttt{permeateflow} & GPM & number &  \\
+Permeate Temperature & TT1 & \texttt{permtemp} & \ensuremath{^\circ}C & number &  \\
+Permeate Pressure & PT5 & \texttt{permeatepressure} & PSI & number &  \\
+P2 RO Pump & P2 & \texttt{ropumprun} &  & boolean &  \\
+AV1 Inlet Valve & AV1 & \texttt{inletrun} &  & boolean &  \\
+AV5 Concentrate Bypass & AV5 & \texttt{concbypassrun} &  & boolean &  \\
+RO Pressure Control Valve Position & AV3 & \texttt{ropressctrlvalveposition} & \% & control valve &  \\
+Recycle Valve Position & AV4 & \texttt{recyclevalveposition} & \% & control valve &  \\
+Concentrate Flow & FT5 & \texttt{concentrateflow} & GPM & sensor &  \\
+P1 Feed Pump & P1 & \texttt{feedpumprun} &  & boolean &  \\
+AV7 Residual Valve & AV7 & \texttt{residtankvalverun} &  & boolean &  \\
+AV6 Product Diversion & AV6 & \texttt{proddiversionrun} &  & boolean &  \\
+Product Tank Level & LT2 & \texttt{prodtanklevel} & \% & number &  \\
+Product TDS & PRO & \texttt{producttds} & \ensuremath{\mu}S/cm & sensor &  \\
+P3 Delivery Pump & P3 & \texttt{deliveryrun} &  & boolean &  \\
+\end{longtable}
+}
+
+\section*{Pryor Farms}
+\noindent Source schematic: \texttt{frontend/svwaternet/src/components/detailed/schematics/PryorFarmsSchematic.js}
+
+\subsection*{Pryor Farms Instrumentation Table}
+{\footnotesize
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\begin{longtable}{p{3.4cm}p{1.5cm}p{2.8cm}p{1.6cm}p{1.3cm}p{4.6cm}}
+\toprule
+Item & Tag & PLC Tag & Unit & Type & Notes \\
+\midrule
+\endfirsthead
+\toprule
+Item & Tag & PLC Tag & Unit & Type & Notes \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Feed Tank Level & LT1 & \texttt{feedtanklevel} & \% & number &  \\
+Well Pump & WP & \texttt{wellpumprun} &  & boolean &  \\
+Flush Tank Level & LT4 & \texttt{flushtanklevel} & \% & sensor &  \\
+AV2 Flush Valve & AV2 & \texttt{flushrun} &  & boolean &  \\
+Inlet Pressure & PT1 & \texttt{inletpressure} & PSI & number &  \\
+Feed Pressure & PT2 & \texttt{feedpressure} & PSI & number &  \\
+Inlet Flow & FT0 & \texttt{inletflow} & GPM & number &  \\
+RO Pressure & PT3 & \texttt{ropressure} & PSI & number &  \\
+Feed Conductivity & CT1 & \texttt{feedtds} & \ensuremath{\mu}S/cm & number &  \\
+Feed Flow (Estimated) & FTF & \texttt{feedflow\_soft} & GPM & number &  \\
+Recycle Flow & FTR & \texttt{recycleflow} & GPM & number &  \\
+Concentrate Pressure & PT4 & \texttt{concentratepressure} & PSI & number &  \\
+Permeate Nitrate & NT1 & \texttt{permnitrate} & mg/L as NO3-N & number &  \\
+Permeate Conductivity & CTP & \texttt{permtds} & \ensuremath{\mu}S/cm & number &  \\
+Permeate Flow & FT3 & \texttt{permeateflow} & GPM & number &  \\
+Permeate Temperature & TT1 & \texttt{permtemp} & \ensuremath{^\circ}C & number &  \\
+Permeate Pressure & PT5 & \texttt{permeatepressure} & PSI & number &  \\
+P2 RO Pump & P2 & \texttt{ropumprun} &  & boolean &  \\
+AV1 Inlet Valve & AV1 & \texttt{inletrun} &  & boolean &  \\
+AV5 Concentrate Bypass & AV5 & \texttt{concbypassrun} &  & boolean &  \\
+RO Pressure Control Valve Position & AV3 & \texttt{ropressctrlvalveposition} & \% & control valve &  \\
+Recycle Valve Position & AV4 & \texttt{recyclevalveposition} & \% & control valve &  \\
+Concentrate Flow & FT5 & \texttt{concentrateflow} & GPM & sensor &  \\
+P1 Feed Pump & P1 & \texttt{feedpumprun} &  & boolean &  \\
+AV7 Residual Valve & AV7 & \texttt{residtankvalverun} &  & boolean &  \\
+AV6 Product Diversion & AV6 & \texttt{proddiversionrun} &  & boolean &  \\
+Product Tank Level & LT2 & \texttt{prodtanklevel} & \% & number &  \\
+Product TDS & PRO & \texttt{producttds} & \ensuremath{\mu}S/cm & sensor &  \\
+P3 Delivery Pump & P3 & \texttt{deliveryrun} &  & boolean &  \\
+\end{longtable}
+}
