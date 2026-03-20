@@ -44,26 +44,70 @@ append_summary() {
   local train_domain="$2"
   local eval_domain="$3"
   local metrics_path="$4"
-  python3 - "$csv_path" "$train_domain" "$eval_domain" "$metrics_path" <<'PY'
+  local target_cols="$5"
+  python3 - "$csv_path" "$train_domain" "$eval_domain" "$metrics_path" "$target_cols" <<'PY'
 import csv, json, pathlib, sys
 csv_path = pathlib.Path(sys.argv[1])
 train_domain = sys.argv[2]
 eval_domain = sys.argv[3]
 metrics_path = pathlib.Path(sys.argv[4])
+target_cols = [c.strip() for c in sys.argv[5].split(",") if c.strip()]
 m = json.loads(metrics_path.read_text())
 tm = m.get("test_metrics") or {}
 per = tm.get("per_label") or {}
 row = {
     "train_domain": train_domain,
     "eval_domain": eval_domain,
+    "status": "ok",
+    "message": "",
     "macro_f1": tm.get("macro_f1"),
     "exact_match": tm.get("exact_match_accuracy"),
     "n_rows": tm.get("n_rows"),
 }
-for k, node in per.items():
+for k in target_cols:
+    node = per.get(k) or {}
     row[f"f1__{k}"] = node.get("f1")
     row[f"precision__{k}"] = node.get("precision")
     row[f"recall__{k}"] = node.get("recall")
+header = list(row.keys())
+exists = csv_path.exists()
+csv_path.parent.mkdir(parents=True, exist_ok=True)
+with csv_path.open("a", newline="", encoding="utf-8") as f:
+    w = csv.DictWriter(f, fieldnames=header)
+    if not exists:
+        w.writeheader()
+    w.writerow(row)
+PY
+}
+
+append_status_summary() {
+  local csv_path="$1"
+  local train_domain="$2"
+  local eval_domain="$3"
+  local status="$4"
+  local message="$5"
+  local target_cols="$6"
+  python3 - "$csv_path" "$train_domain" "$eval_domain" "$status" "$message" "$target_cols" <<'PY'
+import csv, pathlib, sys
+csv_path = pathlib.Path(sys.argv[1])
+train_domain = sys.argv[2]
+eval_domain = sys.argv[3]
+status = sys.argv[4]
+message = sys.argv[5]
+target_cols = [c.strip() for c in sys.argv[6].split(",") if c.strip()]
+row = {
+    "train_domain": train_domain,
+    "eval_domain": eval_domain,
+    "status": status,
+    "message": message,
+    "macro_f1": None,
+    "exact_match": None,
+    "n_rows": None,
+}
+for k in target_cols:
+    row[f"f1__{k}"] = None
+    row[f"precision__{k}"] = None
+    row[f"recall__{k}"] = None
 header = list(row.keys())
 exists = csv_path.exists()
 csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,27 +282,43 @@ train_svm_group() {
   local out_root="$1"
   shift
   local dataset_path="$1"
+  local trained_targets=()
   mkdir -p "$out_root"
   for TARGET in ${TARGET_COLS//,/ }; do
     local target_clean
+    local log_path
     target_clean="$(echo "$TARGET" | xargs)"
     [[ -n "$target_clean" ]] || continue
-    echo "[TRAIN] domain=$train_label target=$target_clean"
-    "$PYTHON" -m python.ml.cli.audio_pca_svm_train \
-      --dataset "$dataset_path" \
-      --split-col split \
-      --dataset-id-col sample_id \
-      --split-id-col sample_id \
-      --audio-path-col segment_path \
-      --out-dir "$out_root/$target_clean" \
-      --task binary \
-      --backend "$SVM_BACKEND" \
-      --target-col "$target_clean" \
-      --n-components "$N_COMPONENTS" \
-      --sample-rate "$SAMPLE_RATE" \
-      --target-seconds "$TARGET_SECONDS" \
-      --svm-class-weight "$SVM_CLASS_WEIGHT"
+    echo "[TRAIN] domain=$train_label target=$target_clean" >&2
+    log_path="$(mktemp)"
+    if "$PYTHON" -m python.ml.cli.audio_pca_svm_train \
+        --dataset "$dataset_path" \
+        --split-col split \
+        --dataset-id-col sample_id \
+        --split-id-col sample_id \
+        --audio-path-col segment_path \
+        --out-dir "$out_root/$target_clean" \
+        --task binary \
+        --backend "$SVM_BACKEND" \
+        --target-col "$target_clean" \
+        --n-components "$N_COMPONENTS" \
+        --sample-rate "$SAMPLE_RATE" \
+        --target-seconds "$TARGET_SECONDS" \
+        --svm-class-weight "$SVM_CLASS_WEIGHT" \
+        2>&1 | tee "$log_path" >&2; then
+      trained_targets+=("$target_clean")
+    else
+      if grep -q "Train split has only one class after filtering" "$log_path"; then
+        echo "[SKIP] domain=$train_label target=$target_clean reason=single_class_after_filter" >&2
+      else
+        cat "$log_path" >&2
+        rm -f "$log_path"
+        return 1
+      fi
+    fi
+    rm -f "$log_path"
   done
+  IFS=','; echo "${trained_targets[*]}"
 }
 
 for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
@@ -267,12 +327,17 @@ for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
   TRAIN_OUT="$MATRIX_ROOT/checkpoints/train_${TRAIN_LABEL}"
   TRAIN_FILTERED="$MATRIX_ROOT/prepared/train_${TRAIN_LABEL}.parquet"
   prepare_source_dataset "$TRAIN_DATASET" "$TRAIN_SOURCE" "$TRAIN_FILTERED"
-  train_svm_group "$TRAIN_LABEL" "$TRAIN_OUT" "$TRAIN_FILTERED"
+  TRAINED_TARGETS="$(train_svm_group "$TRAIN_LABEL" "$TRAIN_OUT" "$TRAIN_FILTERED")"
   for EVAL_SPEC in "${DOMAIN_SPECS[@]}"; do
     IFS='|' read -r EVAL_SITE EVAL_SOURCE EVAL_DATASET EVAL_SPLIT <<< "$EVAL_SPEC"
     EVAL_LABEL="${EVAL_SITE}__${EVAL_SOURCE}"
     EVAL_OUT="$MATRIX_ROOT/evals/train_${TRAIN_LABEL}__eval_${EVAL_LABEL}"
     mkdir -p "$EVAL_OUT"
+    if [[ -z "$TRAINED_TARGETS" ]]; then
+      echo "[SKIP] train=$TRAIN_LABEL eval=$EVAL_LABEL reason=no_trained_targets"
+      append_status_summary "$SUMMARY_CSV" "$TRAIN_LABEL" "$EVAL_LABEL" "skipped_train" "No targets trained for this train domain." "$TARGET_COLS"
+      continue
+    fi
     echo "[EVAL] train=$TRAIN_LABEL eval=$EVAL_LABEL"
     eval_svm_models \
       "$TRAIN_OUT" \
@@ -280,9 +345,9 @@ for TRAIN_SPEC in "${DOMAIN_SPECS[@]}"; do
       "$EVAL_SPLIT" \
       "$EVAL_SOURCE" \
       "$EVAL_OUT/audio_svm_eval_metrics.json" \
-      "$TARGET_COLS" \
+      "$TRAINED_TARGETS" \
       "$POSITIVE_THRESHOLD"
-    append_summary "$SUMMARY_CSV" "$TRAIN_LABEL" "$EVAL_LABEL" "$EVAL_OUT/audio_svm_eval_metrics.json"
+    append_summary "$SUMMARY_CSV" "$TRAIN_LABEL" "$EVAL_LABEL" "$EVAL_OUT/audio_svm_eval_metrics.json" "$TARGET_COLS"
   done
 done
 
