@@ -3,7 +3,11 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"image/png"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -170,6 +174,100 @@ func (a *AudioAPI) GetArtifact(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, item)
+}
+
+func (a *AudioAPI) PlayArtifact(c *gin.Context) {
+	if a.Store == nil {
+		c.JSON(http.StatusNotImplemented, errJSON("NotImplemented", "audio store not configured", nil))
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errJSON("BadRequest", "invalid id", gin.H{"id": c.Param("id")}))
+		return
+	}
+	item, err := a.Store.GetAudioArtifact(c.Request.Context(), id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, errJSON("NotFound", "audio artifact not found", gin.H{"id": id}))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "get audio artifact failed", gin.H{"err": err.Error()}))
+		return
+	}
+	if strings.TrimSpace(item.PublicURL) != "" {
+		c.Redirect(http.StatusFound, item.PublicURL)
+		return
+	}
+	c.JSON(http.StatusNotImplemented, errJSON("NotImplemented", "audio artifact playback requires public_url or S3 proxy support", gin.H{
+		"id":        id,
+		"s3_bucket": item.S3Bucket,
+		"s3_key":    item.S3Key,
+	}))
+}
+
+func (a *AudioAPI) PlayLocalFile(c *gin.Context) {
+	rawPath := strings.TrimSpace(c.Query("path"))
+	if rawPath == "" {
+		c.JSON(http.StatusBadRequest, errJSON("BadRequest", "path is required", nil))
+		return
+	}
+	resolved, err := audio.ResolvePlayablePath(rawPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errJSON("BadRequest", err.Error(), gin.H{"path": rawPath}))
+		return
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, errJSON("NotFound", "audio file not found", gin.H{"path": rawPath}))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "open audio file failed", gin.H{"err": err.Error()}))
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "stat audio file failed", gin.H{"err": err.Error()}))
+		return
+	}
+	if info.IsDir() {
+		c.JSON(http.StatusBadRequest, errJSON("BadRequest", "path must point to an audio file", gin.H{"path": rawPath}))
+		return
+	}
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(resolved)))
+	if contentType == "" {
+		contentType = "audio/wav"
+	}
+	c.Header("Content-Type", contentType)
+	http.ServeContent(c.Writer, c.Request, filepath.Base(resolved), info.ModTime(), file)
+}
+
+func (a *AudioAPI) LocalFileSpectrogram(c *gin.Context) {
+	rawPath := strings.TrimSpace(c.Query("path"))
+	if rawPath == "" {
+		c.JSON(http.StatusBadRequest, errJSON("BadRequest", "path is required", nil))
+		return
+	}
+	resolved, err := audio.ResolvePlayablePath(rawPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errJSON("BadRequest", err.Error(), gin.H{"path": rawPath}))
+		return
+	}
+	samples, sampleRate, err := audio.ReadWAVMonoFloat64(resolved)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errJSON("BadRequest", "read wav failed", gin.H{"err": err.Error()}))
+		return
+	}
+	img := audio.RenderMelSpectrogramPNG(samples, sampleRate, 720, 260, 64)
+	c.Header("Content-Type", "image/png")
+	c.Header("Cache-Control", "no-store")
+	if err := png.Encode(c.Writer, img); err != nil {
+		c.JSON(http.StatusInternalServerError, errJSON("Internal", "encode spectrogram failed", gin.H{"err": err.Error()}))
+		return
+	}
 }
 
 func (a *AudioAPI) UpsertArtifact(c *gin.Context) {

@@ -42,7 +42,11 @@ func TestSaveSensorDataHandler_207(t *testing.T) {
 	reg := systemservice.NewRegistry(map[string]systemservice.SystemManager{"fakesite": f})
 	ing := systemservice.DataIngestionService{Reg: reg}
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&ing, reg, meta, nil, nil, nil, nil, nil, nil, nil, false, false, nil)
+	r := api.SetupRouter(api.Dependencies{
+		Ingestion: &ing,
+		Registry:  reg,
+		Metadata:  meta,
+	})
 
 	// Two records, second has unknown site, expect fail
 
@@ -74,7 +78,11 @@ func TestSaveSensorDataHandler_InvalidJSON(t *testing.T) {
 	)
 	ing := systemservice.DataIngestionService{Reg: reg}
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&ing, reg, meta, nil, nil, nil, nil, nil, nil, nil, false, false, nil)
+	r := api.SetupRouter(api.Dependencies{
+		Ingestion: &ing,
+		Registry:  reg,
+		Metadata:  meta,
+	})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/uploadSensorDataNew", bytes.NewReader([]byte(`invalid json`)))

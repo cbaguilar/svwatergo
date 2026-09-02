@@ -51,6 +51,12 @@ const _nav = [
   },
   {
     component: CNavItem,
+    name: 'Audio Inference',
+    to: '/audio-inference',
+    icon: <CIcon icon={cilChartPie} customClassName="nav-icon" />,
+  },
+  {
+    component: CNavItem,
     name: 'Documentation',
     to: '/documentation',
     icon: <CIcon icon={cilNotes} customClassName="nav-icon" />,

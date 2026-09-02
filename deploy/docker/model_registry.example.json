@@ -1,0 +1,9 @@
+{
+  "models": {
+    "ropumprun-pca-svm": {
+      "model_kind": "pca_svm",
+      "model_path": "/app/data/checkpoints/ropumprun_on_pca_svm_Pryor_Farms_1_2026-02-25_10s/audio_pca_svm_model.joblib",
+      "version": "local"
+    }
+  }
+}

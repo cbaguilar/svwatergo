@@ -40,7 +40,11 @@ func TestLatest_NotFound(t *testing.T) {
 	})
 
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil, nil, nil, nil, nil, nil, false, false, nil)
+	r := api.SetupRouter(api.Dependencies{
+		Ingestion: &systemservice.DataIngestionService{Reg: reg},
+		Registry:  reg,
+		Metadata:  meta,
+	})
 
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/sites/unknownloc/state/latest", nil)
@@ -60,7 +64,11 @@ func TestLatest_Success(t *testing.T) {
 	})
 
 	meta := &metadata.Store{Sites: map[string]*metadata.SiteConfig{}}
-	r := api.SetupRouter(&systemservice.DataIngestionService{Reg: reg}, reg, meta, nil, nil, nil, nil, nil, nil, nil, false, false, nil)
+	r := api.SetupRouter(api.Dependencies{
+		Ingestion: &systemservice.DataIngestionService{Reg: reg},
+		Registry:  reg,
+		Metadata:  meta,
+	})
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/sites/testlocation/state/latest", nil)
 	r.ServeHTTP(rr, req)

@@ -1,22 +1,25 @@
 package main
 
 import (
+	"context"
+	"log"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 
+	"github.com/cbaguilar/svwatergo/config"
 	"github.com/cbaguilar/svwatergo/pkg/server"
 )
 
-var db = make(map[string]string)
-
 func main() {
-	port := strings.TrimSpace(os.Getenv("APP_PORT"))
-	if port == "" {
-		port = "8080"
+	if err := config.LoadDotEnv(".env"); err != nil {
+		log.Printf("Failed to load .env: %v", err)
 	}
-
-	server.New(&server.Config{
-		Port: port,
-	}).Start()
-
+	cfg := config.Load()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := server.New(&cfg).StartContext(ctx); err != nil {
+		log.Printf("server stopped: %v", err)
+		os.Exit(1)
+	}
 }

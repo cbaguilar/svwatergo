@@ -1,0 +1,17 @@
+.git
+.codex_tmp
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules
+**/build
+**/dist
+data
+*.png
+*.pdf
+*.parquet
+*.npz
+*.joblib
+*.pt
+*.pth
+deploy/apache/mtls

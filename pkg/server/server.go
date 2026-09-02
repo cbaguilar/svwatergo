@@ -2,15 +2,17 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"os"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cbaguilar/svwatergo/config"
+	appconfig "github.com/cbaguilar/svwatergo/config"
+	"github.com/cbaguilar/svwatergo/internal/analytics"
 	"github.com/cbaguilar/svwatergo/internal/api"
 	"github.com/cbaguilar/svwatergo/internal/audio"
 	"github.com/cbaguilar/svwatergo/internal/auth"
@@ -27,12 +29,10 @@ import (
 )
 
 type Server struct {
-	config *Config
+	config appconfig.Config
 }
 
-type Config struct {
-	Port string
-}
+type Config = appconfig.Config
 
 const (
 	staleDataThreshold      = 30 * time.Minute
@@ -45,23 +45,36 @@ const (
 var runtimePLCAlarmStateStore *plcAlarmStateStore
 
 func New(cfg *Config) *Server {
+	if cfg == nil {
+		if err := appconfig.LoadDotEnv(".env"); err != nil {
+			log.Printf("Failed to load .env: %v", err)
+		}
+		loaded := appconfig.Load()
+		cfg = &loaded
+	}
+	normalized := cfg.WithDefaults()
 	return &Server{
-		config: cfg,
+		config: normalized,
 	}
 }
 
 func (s *Server) Start() error {
-	if err := config.LoadDotEnv(".env"); err != nil {
+	return s.StartContext(context.Background())
+}
+
+func (s *Server) StartContext(ctx context.Context) error {
+	if err := appconfig.LoadDotEnv(".env"); err != nil {
 		log.Printf("Failed to load .env: %v", err)
 	}
 
 	// Here you would initialize and add your specific SystemManagers
 	// e.g., ourIngestionService.Managers["bluerock"] = bluerock.NewBluerockManager(...)
 
-	dbClient, err := loadDBClientFromEnv()
+	dbClient, err := loadDBClient(s.config)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		return fmt.Errorf("connect database: %w", err)
 	}
+	defer dbClient.DB.Close()
 
 	reg := systemservice.NewRegistry(map[string]systemservice.SystemManager{
 		"bluerock":    bluerock.NewBluerockManager(*dbClient),
@@ -72,34 +85,43 @@ func (s *Server) Start() error {
 		Reg: reg,
 	}
 
-	metaStore, err := metadata.LoadDir("config/sites")
+	metaStore, err := metadata.LoadDir(s.config.MetadataDir)
 	if err != nil {
-		log.Fatalf("Failed to load site metadata: %v", err)
+		return fmt.Errorf("load site metadata: %w", err)
 	}
 
 	reportsStore := reports.NewStore(dbClient)
-	if err := reportsStore.EnsureSchema(context.Background()); err != nil {
-		log.Fatalf("Failed to ensure reports schema: %v", err)
+	if err := reportsStore.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure reports schema: %w", err)
 	}
 	grabSamplesStore := grabsamples.NewStore(dbClient)
-	if err := grabSamplesStore.EnsureSchema(context.Background()); err != nil {
-		log.Fatalf("Failed to ensure grab samples schema: %v", err)
+	if err := grabSamplesStore.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure grab samples schema: %w", err)
 	}
 	audioStore := audio.NewStore(dbClient)
-	if err := audioStore.EnsureSchema(context.Background()); err != nil {
-		log.Fatalf("Failed to ensure audio schema: %v", err)
+	if err := audioStore.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure audio schema: %w", err)
 	}
 	usersStore := users.NewStore(dbClient)
-	if err := usersStore.EnsureSchema(context.Background()); err != nil {
-		log.Fatalf("Failed to ensure users schema: %v", err)
+	if err := usersStore.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure users schema: %w", err)
 	}
+
+	analyticsStore := analytics.NewSQLStore(dbClient)
+	if err := analyticsStore.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure analytics schema: %w", err)
+	}
+	analyticsRunner := analytics.NewRunner(analyticsStore)
 
 	var authn *auth.Auth
 	adminEmails := auth.AdminEmailsFromEnv()
-	if strings.TrimSpace(os.Getenv("AUTH_DISABLED")) == "" {
-		authn = auth.MustNewFromEnv(context.Background())
+	if !s.config.AuthDisabled {
+		authn, err = auth.NewFromEnv(ctx)
+		if err != nil {
+			return fmt.Errorf("configure auth: %w", err)
+		}
 		authn.SetUserStore(usersStore)
-		bootstrapUsers(context.Background(), usersStore, authn.AdminEmails(), authn.AllowedEmails())
+		bootstrapUsers(ctx, usersStore, authn.AdminEmails(), authn.AllowedEmails())
 		if len(authn.AdminEmails()) > 0 {
 			adminEmails = authn.AdminEmails()
 		}
@@ -112,16 +134,16 @@ func (s *Server) Start() error {
 		mailSender = sender
 	}
 	runtimePLCAlarmStateStore = newPLCAlarmStateStore(dbClient)
-	if err := runtimePLCAlarmStateStore.EnsureSchema(context.Background()); err != nil {
-		log.Fatalf("Failed to ensure plc alarm state schema: %v", err)
+	if err := runtimePLCAlarmStateStore.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure plc alarm state schema: %w", err)
 	}
 
 	checkStartupStaleData(ing.Reg, mailSender, adminEmails, staleDataThreshold)
-	startStaleDataMonitor(ing.Reg, mailSender, adminEmails, staleDataThreshold, staleDataCheckInterval, staleDataRepeatInterval)
-	startPLCAlarmMonitor(ing.Reg, mailSender, adminEmails, plcAlarmCheckInterval, plcAlarmRepeatInterval)
+	startStaleDataMonitor(ctx, ing.Reg, mailSender, adminEmails, staleDataThreshold, staleDataCheckInterval, staleDataRepeatInterval)
+	startPLCAlarmMonitor(ctx, ing.Reg, mailSender, adminEmails, plcAlarmCheckInterval, plcAlarmRepeatInterval)
 
-	ingestDisabled := envEnabled("INGEST_DISABLED")
-	readOnly := envEnabled("READ_ONLY_MODE")
+	ingestDisabled := s.config.IngestDisabled
+	readOnly := s.config.ReadOnlyMode
 	if readOnly {
 		log.Printf("READ_ONLY_MODE enabled: mutating API routes are disabled")
 	}
@@ -129,9 +151,52 @@ func (s *Server) Start() error {
 		log.Printf("INGEST_DISABLED enabled: upload ingestion endpoints are disabled")
 	}
 
-	router := api.SetupRouter(ing, ing.Reg, metaStore, authn, reportsStore, grabSamplesStore, audioStore, usersStore, mailSender, adminEmails, ingestDisabled, readOnly, dbClient)
+	router := api.SetupRouter(api.Dependencies{
+		Ingestion:        ing,
+		Registry:         ing.Reg,
+		Metadata:         metaStore,
+		Auth:             authn,
+		ReportsStore:     reportsStore,
+		GrabSamplesStore: grabSamplesStore,
+		AudioStore:       audioStore,
+		UsersStore:       usersStore,
+		AnalyticsStore:   analyticsStore,
+		AnalyticsRunner:  analyticsRunner,
+		MailSender:       mailSender,
+		AdminEmails:      adminEmails,
+		IngestDisabled:   ingestDisabled,
+		ReadOnly:         readOnly,
+		DBClient:         dbClient,
+	})
 	log.Printf("Server starting on port %s", s.config.Port)
-	return router.Run(":" + s.config.Port)
+	httpServer := &http.Server{
+		Addr:              ":" + s.config.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown http server: %w", err)
+		}
+		if err := <-errCh; err != nil {
+			return err
+		}
+		return nil
+	case err := <-errCh:
+		return err
+	}
 }
 
 func bootstrapUsers(ctx context.Context, usersStore *users.Store, admins []string, allowed []string) {
@@ -234,7 +299,7 @@ func checkStartupStaleData(reg systemservice.Registry, mailSender mail.Sender, r
 	}
 }
 
-func startStaleDataMonitor(reg systemservice.Registry, mailSender mail.Sender, recipients []string, maxAge, checkEvery, repeatEvery time.Duration) {
+func startStaleDataMonitor(ctx context.Context, reg systemservice.Registry, mailSender mail.Sender, recipients []string, maxAge, checkEvery, repeatEvery time.Duration) {
 	if reg == nil || maxAge <= 0 || checkEvery <= 0 {
 		return
 	}
@@ -243,8 +308,13 @@ func startStaleDataMonitor(reg systemservice.Registry, mailSender mail.Sender, r
 		defer ticker.Stop()
 
 		stateBySite := map[string]staleMonitorState{}
-		for range ticker.C {
-			checkPeriodicStaleData(reg, mailSender, recipients, maxAge, repeatEvery, stateBySite)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				checkPeriodicStaleData(reg, mailSender, recipients, maxAge, repeatEvery, stateBySite)
+			}
 		}
 	}()
 }
@@ -361,7 +431,7 @@ func sendStaleSiteAlert(mailSender mail.Sender, recipients []string, site string
 	}
 }
 
-func startPLCAlarmMonitor(reg systemservice.Registry, mailSender mail.Sender, recipients []string, checkEvery, repeatEvery time.Duration) {
+func startPLCAlarmMonitor(ctx context.Context, reg systemservice.Registry, mailSender mail.Sender, recipients []string, checkEvery, repeatEvery time.Duration) {
 	if reg == nil || checkEvery <= 0 {
 		return
 	}
@@ -371,8 +441,13 @@ func startPLCAlarmMonitor(reg systemservice.Registry, mailSender mail.Sender, re
 
 		stateBySite := map[string]plcAlarmMonitorState{}
 		checkPeriodicPLCAlarms(reg, mailSender, recipients, repeatEvery, stateBySite)
-		for range ticker.C {
-			checkPeriodicPLCAlarms(reg, mailSender, recipients, repeatEvery, stateBySite)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				checkPeriodicPLCAlarms(reg, mailSender, recipients, repeatEvery, stateBySite)
+			}
 		}
 	}()
 }
@@ -646,25 +721,12 @@ func toIntAny(v interface{}) (int64, bool) {
 	}
 }
 
-func envEnabled(name string) bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
-	switch v {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func loadDBClientFromEnv() (*database.SQLXClient, error) {
-	if pg := strings.TrimSpace(os.Getenv("DATABASE_URL")); pg != "" {
+func loadDBClient(cfg appconfig.Config) (*database.SQLXClient, error) {
+	if pg := strings.TrimSpace(cfg.DatabaseURL); pg != "" {
 		log.Printf("Using Postgres backend from DATABASE_URL")
 		return database.NewPostgresClient(pg)
 	}
-	path := strings.TrimSpace(os.Getenv("SQLITE_PATH"))
-	if path == "" {
-		path = "./data/svwatergo.db"
-	}
+	path := strings.TrimSpace(cfg.SQLitePath)
 	log.Printf("Using SQLite backend at %s", path)
 	return database.NewSQLiteClient(path)
 }

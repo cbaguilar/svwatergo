@@ -19,7 +19,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservice.Registry, meta *metadata.Store, authn *auth.Auth, reportsStore *reports.Store, grabSamplesStore *grabsamples.Store, audioStore *audio.Store, usersStore *users.Store, mailSender mail.Sender, adminEmails []string, ingestDisabled bool, readOnly bool, dbClient *database.SQLXClient) *gin.Engine {
+type Dependencies struct {
+	Ingestion        *systemservice.DataIngestionService
+	Registry         systemservice.Registry
+	Metadata         *metadata.Store
+	Auth             *auth.Auth
+	ReportsStore     *reports.Store
+	GrabSamplesStore *grabsamples.Store
+	AudioStore       *audio.Store
+	UsersStore       *users.Store
+	AnalyticsStore   *analytics.Store
+	AnalyticsRunner  *analytics.Runner
+	MailSender       mail.Sender
+	AdminEmails      []string
+	IngestDisabled   bool
+	ReadOnly         bool
+	DBClient         *database.SQLXClient
+}
+
+func SetupRouter(deps Dependencies) *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
@@ -35,6 +53,7 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 				"https://127.0.0.1:3000",
 				"http://127.0.0.1:5173",
 				"https://127.0.0.1:5173",
+				"http://100.112.32.80:3000",
 				"https://new.svwaternet.org",
 				"https://svwaternet.org",
 				"https://www.svwaternet.org",
@@ -69,35 +88,35 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		})
 	})
 
-	state := NewStateAPI(reg, meta)
-	liveState := NewLiveStateAPI(reg, meta, dbClient)
-	site := NewSiteAPI(reg, meta)
-	reportsAPI := NewReportsAPI(reportsStore, mailSender, adminEmails)
-	grabSamplesAPI := NewGrabSamplesAPI(grabSamplesStore)
-	alertFormsAPI := NewAlertFormsAPI(meta)
-	audioAPI := NewAudioAPI(audioStore)
-	usersAPI := NewUsersAPI(usersStore)
-	analyticsStore := analytics.NewStore()
-	analyticsRunner := analytics.NewRunner(analyticsStore)
-	analyticsAPI := NewAnalyticsAPI(analyticsStore, analyticsRunner)
+	state := NewStateAPI(deps.Registry, deps.Metadata)
+	liveState := NewLiveStateAPI(deps.Registry, deps.Metadata, deps.DBClient)
+	site := NewSiteAPI(deps.Registry, deps.Metadata)
+	reportsAPI := NewReportsAPI(deps.ReportsStore, deps.MailSender, deps.AdminEmails)
+	grabSamplesAPI := NewGrabSamplesAPI(deps.GrabSamplesStore)
+	alertFormsAPI := NewAlertFormsAPI(deps.Metadata)
+	audioAPI := NewAudioAPI(deps.AudioStore)
+	usersAPI := NewUsersAPI(deps.UsersStore)
+	analyticsAPI := NewAnalyticsAPI(deps.AnalyticsStore, deps.AnalyticsRunner)
 	eventsAPI := NewEventsAPI()
-	authAPI := NewAuthAPI(authn)
-	ingestion.OnIngest = liveState.NotifySiteUpdated
+	authAPI := NewAuthAPI(deps.Auth)
+	if deps.Ingestion != nil {
+		deps.Ingestion.OnIngest = liveState.NotifySiteUpdated
+	}
 
 	authGroup := r.Group("/api/v1/auth")
 	{
 		authGroup.GET("/config", authAPI.GetConfig)
 		authGroup.POST("/google/exchange", authAPI.ExchangeGoogle)
-		if authn != nil {
-			authGroup.GET("/me", authn.GinMiddleware(), authAPI.Me)
+		if deps.Auth != nil {
+			authGroup.GET("/me", deps.Auth.GinMiddleware(), authAPI.Me)
 		} else {
 			authGroup.GET("/me", authAPI.Me)
 		}
 	}
 
 	v1 := r.Group("/api/v1")
-	if authn != nil {
-		v1.Use(authn.GinMiddleware())
+	if deps.Auth != nil {
+		v1.Use(deps.Auth.GinMiddleware())
 	}
 	{
 		analyticsGroup := v1.Group("/analytics")
@@ -110,9 +129,12 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 
 		audioGroup := v1.Group("/audio")
 		audioGroup.GET("/sources", audioAPI.ListSources)
+		audioGroup.GET("/local-file", audioAPI.PlayLocalFile)
+		audioGroup.GET("/local-file/spectrogram", audioAPI.LocalFileSpectrogram)
 		audioGroup.GET("/artifacts", audioAPI.ListArtifacts)
 		audioGroup.GET("/artifacts/:id", audioAPI.GetArtifact)
-		if readOnly {
+		audioGroup.GET("/artifacts/:id/play", audioAPI.PlayArtifact)
+		if deps.ReadOnly {
 			disabled := func(c *gin.Context) {
 				c.JSON(http.StatusServiceUnavailable, errJSON("ReadOnly", "server is in read-only mode", nil))
 			}
@@ -125,12 +147,12 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 
 		usersGroup := v1.Group("/users")
 		usersGroupAdmin := v1.Group("/users")
-		if authn != nil {
-			usersGroup.Use(authn.GinRequireAdmin())
-			usersGroupAdmin.Use(authn.GinRequireAdmin())
+		if deps.Auth != nil {
+			usersGroup.Use(deps.Auth.GinRequireAdmin())
+			usersGroupAdmin.Use(deps.Auth.GinRequireAdmin())
 		}
 		usersGroup.GET("", usersAPI.ListUsers)
-		if readOnly {
+		if deps.ReadOnly {
 			disabled := func(c *gin.Context) {
 				c.JSON(http.StatusServiceUnavailable, errJSON("ReadOnly", "server is in read-only mode", nil))
 			}
@@ -159,11 +181,11 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		operatorReports := sites.Group("/operator-reports")
 		operatorReportsAdmin := sites.Group("/operator-reports")
 		grabSamplesAdmin := sites.Group("/grab-samples")
-		if authn != nil {
-			operatorReportsAdmin.Use(authn.GinRequireAdmin())
-			grabSamplesAdmin.Use(authn.GinRequireAdmin())
+		if deps.Auth != nil {
+			operatorReportsAdmin.Use(deps.Auth.GinRequireAdmin())
+			grabSamplesAdmin.Use(deps.Auth.GinRequireAdmin())
 		}
-		if readOnly {
+		if deps.ReadOnly {
 			disabled := func(c *gin.Context) {
 				c.JSON(http.StatusServiceUnavailable, errJSON("ReadOnly", "server is in read-only mode", nil))
 			}
@@ -187,15 +209,15 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 
 	/// This is the v0 route, which we will re-implement for backwards compatibility
 	// with the old Javascript server.
-	if ingestDisabled {
+	if deps.IngestDisabled {
 		disabled := func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, errJSON("Unavailable", "ingestion is disabled", nil))
 		}
 		r.POST("/UploadDataNew", disabled)
 		r.POST("/uploadDataNew", disabled)       // alias for legacy mirror path
 		r.POST("/uploadSensorDataNew", disabled) // alias
-	} else if readOnly {
-		shadowIngestion := *ingestion
+	} else if deps.ReadOnly {
+		shadowIngestion := *deps.Ingestion
 		shadowIngestion.DryRun = true
 		shadowIngestion.OnIngest = nil
 		shadow := SaveSensorDataHandler(&shadowIngestion)
@@ -203,9 +225,9 @@ func SetupRouter(ingestion *systemservice.DataIngestionService, reg systemservic
 		r.POST("/uploadDataNew", shadow)       // alias for legacy mirror path
 		r.POST("/uploadSensorDataNew", shadow) // alias
 	} else {
-		r.POST("/UploadDataNew", SaveSensorDataHandler(ingestion))
-		r.POST("/uploadDataNew", SaveSensorDataHandler(ingestion))       // alias for legacy mirror path
-		r.POST("/uploadSensorDataNew", SaveSensorDataHandler(ingestion)) // alias
+		r.POST("/UploadDataNew", SaveSensorDataHandler(deps.Ingestion))
+		r.POST("/uploadDataNew", SaveSensorDataHandler(deps.Ingestion))       // alias for legacy mirror path
+		r.POST("/uploadSensorDataNew", SaveSensorDataHandler(deps.Ingestion)) // alias
 	}
 
 	return r

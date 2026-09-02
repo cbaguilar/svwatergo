@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -9,7 +10,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cbaguilar/svwatergo/internal/database"
+	"github.com/jmoiron/sqlx"
 )
+
+const analyticsJobsTable = "analytics_jobs"
 
 type JobType string
 
@@ -111,18 +117,83 @@ type Job struct {
 	Error       string          `json:"error,omitempty"`
 }
 
+type jobRow struct {
+	ID          string         `db:"id"`
+	Type        string         `db:"type"`
+	Status      string         `db:"status"`
+	CreatedAt   time.Time      `db:"created_at"`
+	UpdatedAt   time.Time      `db:"updated_at"`
+	StartedAt   sql.NullTime   `db:"started_at"`
+	FinishedAt  sql.NullTime   `db:"finished_at"`
+	Site        sql.NullString `db:"site"`
+	CreatedBy   sql.NullString `db:"created_by"`
+	RequestJSON sql.NullString `db:"request_json"`
+	ResultJSON  sql.NullString `db:"result_json"`
+	Error       sql.NullString `db:"error"`
+}
+
 type Store struct {
 	mu      sync.RWMutex
 	counter uint64
 	jobs    map[string]Job
+	DB      *sqlx.DB
+	Driver  string
 }
 
 func NewStore() *Store {
 	return &Store{jobs: make(map[string]Job)}
 }
 
+func NewSQLStore(client *database.SQLXClient) *Store {
+	if client == nil {
+		return NewStore()
+	}
+	return &Store{
+		jobs:   make(map[string]Job),
+		DB:     client.DB,
+		Driver: client.Driver,
+	}
+}
+
+func (s *Store) EnsureSchema(ctx context.Context) error {
+	if s == nil || s.DB == nil {
+		return nil
+	}
+	timeType := "TIMESTAMP"
+	jsonType := "TEXT"
+	if s.Driver == "postgres" {
+		timeType = "TIMESTAMPTZ"
+		jsonType = "JSONB"
+	}
+	query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_at %s NOT NULL,
+		updated_at %s NOT NULL,
+		started_at %s,
+		finished_at %s,
+		site TEXT,
+		created_by TEXT,
+		request_json %s,
+		result_json %s,
+		error TEXT
+	)`, analyticsJobsTable, timeType, timeType, timeType, timeType, jsonType, jsonType)
+	if _, err := s.DB.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("create analytics_jobs: %w", err)
+	}
+	for _, idx := range []string{
+		"CREATE INDEX IF NOT EXISTS analytics_jobs_status_updated_idx ON analytics_jobs(status, updated_at DESC)",
+		"CREATE INDEX IF NOT EXISTS analytics_jobs_site_created_idx ON analytics_jobs(site, created_at DESC)",
+	} {
+		if _, err := s.DB.ExecContext(ctx, idx); err != nil {
+			return fmt.Errorf("create analytics_jobs index: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) CreateJob(ctx context.Context, jobType JobType, site, createdBy string, req any) (Job, error) {
-	_ = ctx
 	if s == nil {
 		return Job{}, fmt.Errorf("analytics store not configured")
 	}
@@ -143,6 +214,29 @@ func (s *Store) CreateJob(ctx context.Context, jobType JobType, site, createdBy 
 		RequestJSON: raw,
 		Result:      map[string]any{},
 	}
+	if s.DB != nil {
+		resultRaw, _ := json.Marshal(job.Result)
+		_, err := s.namedExec(ctx, `INSERT INTO analytics_jobs
+			(id, type, status, created_at, updated_at, started_at, finished_at, site, created_by, request_json, result_json, error)
+			VALUES (:id, :type, :status, :created_at, :updated_at, :started_at, :finished_at, :site, :created_by, :request_json, :result_json, :error)`, map[string]any{
+			"id":           job.ID,
+			"type":         job.Type,
+			"status":       job.Status,
+			"created_at":   job.CreatedAt,
+			"updated_at":   job.UpdatedAt,
+			"started_at":   job.StartedAt,
+			"finished_at":  job.FinishedAt,
+			"site":         nullIfBlank(job.Site),
+			"created_by":   nullIfBlank(job.CreatedBy),
+			"request_json": string(raw),
+			"result_json":  string(resultRaw),
+			"error":        nullIfBlank(job.Error),
+		})
+		if err != nil {
+			return Job{}, fmt.Errorf("create analytics job: %w", err)
+		}
+		return job, nil
+	}
 	s.mu.Lock()
 	s.jobs[id] = job
 	s.mu.Unlock()
@@ -150,9 +244,20 @@ func (s *Store) CreateJob(ctx context.Context, jobType JobType, site, createdBy 
 }
 
 func (s *Store) MarkRunning(ctx context.Context, id string) (Job, error) {
-	_ = ctx
 	if s == nil {
 		return Job{}, fmt.Errorf("analytics store not configured")
+	}
+	if s.DB != nil {
+		now := time.Now().UTC()
+		if _, err := s.namedExec(ctx, `UPDATE analytics_jobs SET status = :status, updated_at = :updated_at, started_at = :started_at WHERE id = :id`, map[string]any{
+			"id":         id,
+			"status":     JobStatusRunning,
+			"updated_at": now,
+			"started_at": now,
+		}); err != nil {
+			return Job{}, fmt.Errorf("mark analytics job running: %w", err)
+		}
+		return s.getJobSQL(ctx, id)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,9 +274,25 @@ func (s *Store) MarkRunning(ctx context.Context, id string) (Job, error) {
 }
 
 func (s *Store) MarkSucceeded(ctx context.Context, id string, result map[string]any) (Job, error) {
-	_ = ctx
 	if s == nil {
 		return Job{}, fmt.Errorf("analytics store not configured")
+	}
+	if s.DB != nil {
+		now := time.Now().UTC()
+		resultRaw, err := json.Marshal(result)
+		if err != nil {
+			return Job{}, fmt.Errorf("marshal analytics job result: %w", err)
+		}
+		if _, err := s.namedExec(ctx, `UPDATE analytics_jobs SET status = :status, updated_at = :updated_at, finished_at = :finished_at, result_json = :result_json, error = '' WHERE id = :id`, map[string]any{
+			"id":          id,
+			"status":      JobStatusSucceeded,
+			"updated_at":  now,
+			"finished_at": now,
+			"result_json": string(resultRaw),
+		}); err != nil {
+			return Job{}, fmt.Errorf("mark analytics job succeeded: %w", err)
+		}
+		return s.getJobSQL(ctx, id)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,9 +313,30 @@ func (s *Store) MarkSucceeded(ctx context.Context, id string, result map[string]
 }
 
 func (s *Store) MarkFailed(ctx context.Context, id string, err error, partialResult map[string]any) (Job, error) {
-	_ = ctx
 	if s == nil {
 		return Job{}, fmt.Errorf("analytics store not configured")
+	}
+	if s.DB != nil {
+		now := time.Now().UTC()
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		resultRaw, marshalErr := json.Marshal(partialResult)
+		if marshalErr != nil {
+			return Job{}, fmt.Errorf("marshal analytics job partial result: %w", marshalErr)
+		}
+		if _, updateErr := s.namedExec(ctx, `UPDATE analytics_jobs SET status = :status, updated_at = :updated_at, finished_at = :finished_at, result_json = :result_json, error = :error WHERE id = :id`, map[string]any{
+			"id":          id,
+			"status":      JobStatusFailed,
+			"updated_at":  now,
+			"finished_at": now,
+			"result_json": string(resultRaw),
+			"error":       msg,
+		}); updateErr != nil {
+			return Job{}, fmt.Errorf("mark analytics job failed: %w", updateErr)
+		}
+		return s.getJobSQL(ctx, id)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -217,9 +359,12 @@ func (s *Store) MarkFailed(ctx context.Context, id string, err error, partialRes
 }
 
 func (s *Store) GetJob(ctx context.Context, id string) (Job, bool) {
-	_ = ctx
 	if s == nil {
 		return Job{}, false
+	}
+	if s.DB != nil {
+		job, err := s.getJobSQL(ctx, id)
+		return job, err == nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -228,7 +373,6 @@ func (s *Store) GetJob(ctx context.Context, id string) (Job, bool) {
 }
 
 func (s *Store) ListJobs(ctx context.Context, limit int, offset int) []Job {
-	_ = ctx
 	if s == nil {
 		return nil
 	}
@@ -238,6 +382,13 @@ func (s *Store) ListJobs(ctx context.Context, limit int, offset int) []Job {
 	if offset < 0 {
 		offset = 0
 	}
+	if s.DB != nil {
+		jobs, err := s.listJobsSQL(ctx, limit, offset)
+		if err != nil {
+			return nil
+		}
+		return jobs
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	all := make([]Job, 0, len(s.jobs))
@@ -245,6 +396,84 @@ func (s *Store) ListJobs(ctx context.Context, limit int, offset int) []Job {
 		all = append(all, j)
 	}
 	return sliceJobsNewest(all, limit, offset)
+}
+
+func (s *Store) getJobSQL(ctx context.Context, id string) (Job, error) {
+	var row jobRow
+	query := `SELECT id, type, status, created_at, updated_at, started_at, finished_at, site, created_by, request_json, result_json, error
+		FROM analytics_jobs WHERE id = ?`
+	if err := s.DB.GetContext(ctx, &row, s.DB.Rebind(query), strings.TrimSpace(id)); err != nil {
+		return Job{}, err
+	}
+	return row.toJob()
+}
+
+func (s *Store) listJobsSQL(ctx context.Context, limit, offset int) ([]Job, error) {
+	var rows []jobRow
+	query := `SELECT id, type, status, created_at, updated_at, started_at, finished_at, site, created_by, request_json, result_json, error
+		FROM analytics_jobs ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+	if err := s.DB.SelectContext(ctx, &rows, s.DB.Rebind(query), limit, offset); err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(rows))
+	for _, row := range rows {
+		job, err := row.toJob()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	return out, nil
+}
+
+func (s *Store) namedExec(ctx context.Context, query string, args map[string]any) (sql.Result, error) {
+	q, params, err := sqlx.Named(query, args)
+	if err != nil {
+		return nil, err
+	}
+	return s.DB.ExecContext(ctx, s.DB.Rebind(q), params...)
+}
+
+func (r jobRow) toJob() (Job, error) {
+	job := Job{
+		ID:        r.ID,
+		Type:      JobType(r.Type),
+		Status:    JobStatus(r.Status),
+		CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt,
+		Result:    map[string]any{},
+	}
+	if r.StartedAt.Valid {
+		job.StartedAt = &r.StartedAt.Time
+	}
+	if r.FinishedAt.Valid {
+		job.FinishedAt = &r.FinishedAt.Time
+	}
+	if r.Site.Valid {
+		job.Site = r.Site.String
+	}
+	if r.CreatedBy.Valid {
+		job.CreatedBy = r.CreatedBy.String
+	}
+	if r.RequestJSON.Valid && strings.TrimSpace(r.RequestJSON.String) != "" {
+		job.RequestJSON = json.RawMessage(r.RequestJSON.String)
+	}
+	if r.ResultJSON.Valid && strings.TrimSpace(r.ResultJSON.String) != "" {
+		if err := json.Unmarshal([]byte(r.ResultJSON.String), &job.Result); err != nil {
+			return Job{}, fmt.Errorf("decode analytics job result: %w", err)
+		}
+	}
+	if r.Error.Valid {
+		job.Error = r.Error.String
+	}
+	return job, nil
+}
+
+func nullIfBlank(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
 }
 
 func sliceJobsNewest(all []Job, limit, offset int) []Job {

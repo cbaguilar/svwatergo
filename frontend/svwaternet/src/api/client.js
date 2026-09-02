@@ -82,6 +82,18 @@ export async function apiPost(path, body, options = {}) {
   return handleJsonResponse(response, options)
 }
 
+export async function apiPostMultipart(path, formData, options = {}) {
+  const url = `${getApiBaseUrl()}${path}`
+  const headers = buildHeaders(options, false)
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+    signal: options.signal,
+  })
+  return handleJsonResponse(response, options)
+}
+
 export async function apiPut(path, body, options = {}) {
   const url = `${getApiBaseUrl()}${path}`
   const headers = buildHeaders(options, true)

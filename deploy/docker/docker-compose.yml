@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: svwatergo
+      POSTGRES_USER: svwatergo
+      POSTGRES_PASSWORD: svwatergo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U svwatergo -d svwatergo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  inference:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/inference.Dockerfile
+    environment:
+      ANALYTICS_AUDIO_MODEL_REGISTRY: /app/data/analytics/model_registry.json
+      AWS_REGION: ${AWS_REGION:-us-west-2}
+      AWS_PROFILE: ${AWS_PROFILE:-}
+    ports:
+      - "8788:8788"
+    volumes:
+      - ../../data:/app/data
+      - ${HOME}/.aws:/root/.aws:ro
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/api.Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      inference:
+        condition: service_started
+    environment:
+      APP_PORT: 8080
+      AUTH_DISABLED: "1"
+      DATABASE_URL: postgres://svwatergo:svwatergo@db:5432/svwatergo?sslmode=disable
+      ANALYTICS_INFERENCE_SERVICE_URL: http://inference:8788
+      ANALYTICS_AUDIO_STAGE_ROOT: /app/data/analytics/staging
+      ANALYTICS_ARTIFACTS_ROOT: /app/data/analytics
+      READ_ONLY_MODE: ${READ_ONLY_MODE:-0}
+      INGEST_DISABLED: ${INGEST_DISABLED:-0}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../data:/app/data
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/frontend.Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres-data:

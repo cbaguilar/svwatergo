@@ -19,7 +19,6 @@ func NewSQLXClient(driver string, conn string) (*SQLXClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	db = db.Unsafe()
 	db.Exec("SET TIME ZONE 'UTC'")
 	return &SQLXClient{DB: db, Driver: driver, Conn: conn}, nil
 }
@@ -42,7 +41,6 @@ func NewSQLiteClient(path string) (*SQLXClient, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	db = db.Unsafe()
 	return &SQLXClient{DB: db, Driver: "sqlite3", Conn: dsn}, nil
 }
 
@@ -58,6 +56,5 @@ func NewPostgresClient(conn string) (*SQLXClient, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	db = db.Unsafe()
 	return &SQLXClient{DB: db, Driver: "postgres", Conn: conn}, nil
 }

@@ -6,6 +6,9 @@ const UserManagement = React.lazy(() => import('./views/user-management/UserMana
 const DataManagement = React.lazy(() => import('./views/data-management/DataManagement'))
 const SystemManagement = React.lazy(() => import('./views/system-management/SystemManagement'))
 const AlertForms = React.lazy(() => import('./views/alert-forms/AlertForms'))
+const AudioInferenceExplorer = React.lazy(
+  () => import('./views/audio-inference/AudioInferenceExplorer'),
+)
 const Documentation = React.lazy(() => import('./views/documentation/Documentation'))
 const About = React.lazy(() => import('./views/about/About'))
 const FaqContact = React.lazy(() => import('./views/faq/FaqContact'))
@@ -19,6 +22,7 @@ const routes = [
   { path: '/data-management', name: 'Data Management', element: DataManagement },
   { path: '/system-management', name: 'System Management', element: SystemManagement },
   { path: '/alert-forms', name: 'Alert Forms', element: AlertForms },
+  { path: '/audio-inference', name: 'Audio Inference', element: AudioInferenceExplorer },
   { path: '/documentation', name: 'Documentation', element: Documentation },
   { path: '/about', name: 'About SVWaterNet', element: About },
   { path: '/faq', name: 'FAQ & Contact', element: FaqContact },
