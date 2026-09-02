@@ -151,6 +151,9 @@ def main() -> int:
         raise SystemExit(f"Unsupported task_mode for dataset inference: {mode!r}")
 
     df = pd.read_parquet(str(Path(args.dataset))).reset_index(drop=True)
+    # Preserve original dataset row positions so filtered inference rows can
+    # index into the aligned embedding cache without accidental reindex drift.
+    df["__row_idx__"] = np.arange(len(df), dtype=np.int64)
     df = _filter_df(
         df,
         filter_col=str(args.filter_col),
@@ -169,7 +172,7 @@ def main() -> int:
     X_full = np.asarray(z[emb_key], dtype=np.float32)
     if int(X_full.shape[0]) != int(len(pd.read_parquet(str(Path(args.dataset))))):
         raise SystemExit("Embedding cache rows do not match original dataset rows.")
-    row_idx = df.index.to_numpy(dtype=np.int64, copy=False)
+    row_idx = df["__row_idx__"].to_numpy(dtype=np.int64, copy=False)
     X = np.asarray(X_full[row_idx], dtype=np.float32, copy=False)
     df = df.reset_index(drop=True)
 

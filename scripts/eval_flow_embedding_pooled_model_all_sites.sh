@@ -8,7 +8,7 @@ REPO="${REPO:-$REPO_DEFAULT}"
 
 WINDOW_S="${WINDOW_S:-10}"
 SITE_LIST="${SITE_LIST:-bluerock,pryorfarm,santateresa}"
-MATRIX_ROOT="${MATRIX_ROOT:-/mnt/d/datasets/svwatergo/domain_matrix/flow_site}"
+MATRIX_ROOT="${MATRIX_ROOT:-/mnt/d/datasets/svwatergo/domain_matrix/flow_site_aux0_ep100_common}"
 CHECKPOINT="${CHECKPOINT:-$MATRIX_ROOT/checkpoints/train_all_sites/audio_pretrained_embedding_multitask_best.pt}"
 OUT_ROOT="${OUT_ROOT:-$MATRIX_ROOT/evals_pooled_all_sites}"
 SUMMARY_CSV="${SUMMARY_CSV:-$OUT_ROOT/pooled_model_eval_summary.csv}"
