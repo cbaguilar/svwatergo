@@ -91,9 +91,9 @@ picked AS (
   ) x
   WHERE rn = 1
 )
-SELECT * FROM picked
+SELECT %s FROM picked
 ORDER BY plctime ASC
-`, table)
+`, table, strings.Join(s.InsertCols, ", "))
 		q = s.Client.DB.Rebind(q)
 		return s.Client.DB.Select(dest, q, start, end, maxPoints)
 	default:

@@ -133,17 +133,19 @@ func (s *Server) StartContext(ctx context.Context) error {
 	} else {
 		mailSender = sender
 	}
-	runtimePLCAlarmStateStore = newPLCAlarmStateStore(dbClient)
-	if err := runtimePLCAlarmStateStore.EnsureSchema(ctx); err != nil {
-		return fmt.Errorf("ensure plc alarm state schema: %w", err)
+	readOnly := s.config.ReadOnlyMode
+	if !readOnly {
+		runtimePLCAlarmStateStore = newPLCAlarmStateStore(dbClient)
+		if err := runtimePLCAlarmStateStore.EnsureSchema(ctx); err != nil {
+			return fmt.Errorf("ensure plc alarm state schema: %w", err)
+		}
+
+		checkStartupStaleData(ing.Reg, mailSender, adminEmails, staleDataThreshold)
+		startStaleDataMonitor(ctx, ing.Reg, mailSender, adminEmails, staleDataThreshold, staleDataCheckInterval, staleDataRepeatInterval)
+		startPLCAlarmMonitor(ctx, ing.Reg, mailSender, adminEmails, plcAlarmCheckInterval, plcAlarmRepeatInterval)
 	}
 
-	checkStartupStaleData(ing.Reg, mailSender, adminEmails, staleDataThreshold)
-	startStaleDataMonitor(ctx, ing.Reg, mailSender, adminEmails, staleDataThreshold, staleDataCheckInterval, staleDataRepeatInterval)
-	startPLCAlarmMonitor(ctx, ing.Reg, mailSender, adminEmails, plcAlarmCheckInterval, plcAlarmRepeatInterval)
-
 	ingestDisabled := s.config.IngestDisabled
-	readOnly := s.config.ReadOnlyMode
 	if readOnly {
 		log.Printf("READ_ONLY_MODE enabled: mutating API routes are disabled")
 	}
