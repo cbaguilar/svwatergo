@@ -69,6 +69,7 @@ func SetupRouter(deps Dependencies) *gin.Engine {
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
 	}))
+	r.Use(apiRequestRateLimit())
 
 	// Ping test
 	r.GET("/ping", func(c *gin.Context) {
