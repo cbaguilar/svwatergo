@@ -4,7 +4,7 @@ const ROUTING_HEADER_STORAGE_KEY = 'svwaternet_api_routing_header'
 export const BACKEND_OPTIONS = [
   { value: 'local', label: 'Localhost', baseUrl: 'http://localhost:8080' },
   { value: 'tailscale', label: 'Tailscale', baseUrl: 'http://100.112.32.80:8080' },
-  { value: 'remote', label: 'svwaternet.org', baseUrl: 'https://svwaternet.org' },
+  { value: 'remote', label: 'Hetzner demo', baseUrl: window.location.origin },
 ]
 
 export const ROUTING_HEADER_OPTIONS = [
